@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta property="og:description" content="DraftSolver">
-<title>Draft Solver v6.0</title>
+<title>Draft Solver v6.0.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -118,7 +118,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 </head>
 <body>
 <header>
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v6.0</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v6.0.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
 </header>
 
@@ -260,18 +260,16 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Pre-sort order</label>
         <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:6px">
           <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="A" style="margin-top:2px"><span><b>A &mdash; Pure eval</b> &mdash; type + rarity + rating + position scarcity only. No board context, no clash penalties. Fastest.</span></label>
-          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="B" checked style="margin-top:2px"><span><b>B &mdash; Clash-aware</b> (default) &mdash; same as A plus clash &amp; saturation penalties against your full card pool. Same signal the helper uses, no solve needed.</span></label>
-          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="C" style="margin-top:2px"><span><b>C &mdash; Mini-solve</b> &mdash; B-sorts candidates, runs a 1M-node solve. If exact (most squads), done &mdash; no second pass. If capped, re-sorts against the mini&rsquo;s projected XI and runs the full solve.</span></label>
-          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="D" style="margin-top:2px" onchange="updateSortModeUI()"><span><b>D &mdash; Recursive mini-solve</b> &mdash; like C but iterates: after each 1M-node pass it re-sorts against the found XI and repeats until the XI stabilises or passes run out. Returns exact if any pass is non-capped; otherwise runs the full solve on the final bias order.</span></label>
+          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="B" checked style="margin-top:2px"><span><b>B &mdash; Clash-aware</b> (default) &mdash; same as A plus clash &amp; saturation penalties against your full card pool. Same signal the helper uses, no solve needed. Best pruning for complex boards.</span></label>
         </div>
-        <div id="sortModeDPanel" style="display:none;margin-top:8px;padding:8px 10px;background:var(--panel2);border-radius:7px">
-          <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Max passes &mdash; <span id="sortPassesLabel" style="color:var(--ink);font-weight:800">3</span></label>
-          <input type="range" id="sortPassesSlider" min="1" max="10" value="3" style="width:100%;margin:0 0 4px;accent-color:var(--cyan)" oninput="document.getElementById('sortPassesLabel').textContent=this.value">
-          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut)"><span>1</span><span>3 &mdash; default</span><span>10</span></div>
-          <p class="tiny" style="margin-top:6px;margin-bottom:0">Each pass runs a 1M-node mini-solve and re-sorts. Stops early if the projected XI doesn&rsquo;t change between passes. More passes = more startup time but tighter ordering for complex boards.</p>
-        </div>
-        <p class="tiny" style="margin-top:8px;margin-bottom:0">B is the best general choice for most boards. C and D are useful for very large, complex boards where 1M nodes is already enough to find the exact answer &mdash; in that case they return it instantly without a second pass. For boards that genuinely exceed 1M nodes, C/D bias the full search toward the mini-solve&rsquo;s best XI, which may or may not beat B.</p>
+        <p class="tiny" style="margin-top:8px;margin-bottom:0">B is correct for almost every board. A is useful to diagnose whether clash penalties are affecting candidate ordering.</p>
       </div>
+      <div style="margin-top:14px">
+        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Solver Node Cap (millions)</label>
+        <input type="number" id="nodeCapInput" min="1" value="10" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this)">
+        <p class="tiny" style="margin:4px 0 0">How many million nodes the solver searches. Under 3M finishes in ~5s, 10M takes ~12s, 100M+ takes 2+ minutes.</p>
+      </div>
+
     </div>
   </details>
   <div id="solveOut"></div>
@@ -1848,10 +1846,7 @@ function _hideSolverOverlay(){
 
 // Solver runs synchronously on the main thread (no Worker — avoids iOS stall between solve steps).
 function getRatingCeil(){const el=$('#ratingCeilSlider');return el?85+parseInt(el.value):95;}
-function updateSortModeUI(){
-  const el=document.getElementById('sortModeDPanel');
-  if(el){const checked=document.querySelector('input[name="sortMode"]:checked');el.style.display=(checked&&checked.value==='D')?'block':'none';}
-}
+function updateSortModeUI(){} // no-op: kept for any saved state that may reference it
 function updateRatingCeilLabel(){
   const el=$('#ratingCeilSlider');if(!el)return;
   const v=parseInt(el.value),ceil=85+v;
@@ -1859,104 +1854,36 @@ function updateRatingCeilLabel(){
   const warn=$('#ratingCeilWarn');if(warn)warn.style.display=v<10?'block':'none';
   const warnVal=$('#ratingCeilWarnVal');if(warnVal)warnVal.textContent=ceil;
 }
+// Node cap slider: steps are 3M * 3^n for n=0..8 → 3M, 9M, 27M, 81M, 243M, 729M, 2187M, 6561M, ~20B
+// We cap display at a readable max; values above ~2B are ludicrously large so we cap slider at index 8.
+function clampNodeCap(el){let v=parseInt(el.value,10);if(isNaN(v)||v<1)el.value=1;}
+function getNodeCap(){const el=$('#nodeCapInput');if(!el)return 10000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?10000000:v*1000000;}
+function getHelperCap(){return 3000000;}
 function runSolve(nodeCap){
   syncAllSlots();
   const out=$('#solveOut');
   if(!chosenForm){out.innerHTML='<div class="note">Pick a formation in the Formation tab first.</div>';return}
   if(cards.length<11){out.innerHTML='<div class="note">Add at least 11 cards (you have '+cards.length+').</div>';return}
-  const cap=nodeCap||3000000;
+  const cap=nodeCap||getNodeCap();
   _showSolverOverlay();
-  out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Solving\u2026'+(cap>3000000?' (extended search \u2014 '+Math.round(cap/1000000)+'M node cap)':'')+'</div>';
+  out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Solving\u2026'+(cap>10000000?' (extended search \u2014 '+Math.round(cap/1000000)+'M node cap)':'')+'</div>';
   setTimeout(()=>_runSolveInner(cap,getRatingCeil()),30);
 }
 function _runSolveInner(cap,ratingCeil){
   const out=$('#solveOut');
   const form=FORMS.find(f=>f.name===chosenForm),t0=performance.now();
-  // Pre-sort cards by helpValue descending. Mode is user-selectable in solver settings:
-  //   A = pure eval (no board context), B = clash-aware (default), C = 1M mini-solve, D = recursive passes
+  // Pre-sort cards by helpValue descending. A = pure eval (no board context), B = clash-aware (default).
   const _sortMode=(()=>{const el=document.querySelector('input[name="sortMode"]:checked');return el?el.value:'B';})();
   const _savedForceSquad=_forceSquad,_savedSquadOverride=_squadOverride;
-
-  // --- Compute the B-sorted order (used by B, C, D) ---
-  // B = squad-aware against the full card pool, no projected XI.
-  // Always a clean context: _forceSquad=true, _squadOverride=null so squadInfo() reads from 'cards'.
-  // This gives every clash/saturation signal the helper uses, without running any solve.
-  function _bSortedCards(){
-    _forceSquad=true;_squadOverride=null;
-    const out=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
-    return out;
-  }
-
-  if(_sortMode==='A'){
-    _forceSquad=false;
-    const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
-    _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
-    const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
-    _hideSolverOverlay();
-    _handleSolveResult(r,cap,form,ms,out);
-    return;
-  }
-
-  if(_sortMode==='B'){
-    const sortedCards=_bSortedCards();
-    _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
-    const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
-    _hideSolverOverlay();
-    _handleSolveResult(r,cap,form,ms,out);
-    return;
-  }
-
-  // C / D: start from B-sorted order, then refine with mini-solves.
-  // If any mini-solve is exact (non-capped) it IS the optimal XI — deliver it directly.
-  // Only fall through to a full solve when the mini was capped.
-  {
-    const _miniNodeCap=1000000;
-    let _exactResult=null;
-
-    if(_sortMode==='C'){
-      // One mini-solve on B-sorted candidates
-      const _miniR=solveBest(form,_bSortedCards(),_miniNodeCap,ratingCeil);
-      if(!_miniR.capped&&_miniR.bestXIs&&_miniR.bestXIs.length){
-        _exactResult=_miniR;
-      } else if(_miniR.bestXIs&&_miniR.bestXIs.length){
-        // Capped: bias the full solve toward the mini's best XI
-        _forceSquad=true;_squadOverride=_miniR.bestXIs[0].xi;
-      }
-    } else { // D — iterative passes, each starting from best available sort
-      const _maxPasses=parseInt((document.getElementById('sortPassesSlider')||{value:'3'}).value)||3;
-      let _prevXIKey='',_lastXI=null;
-      // Pass 0 uses B-sort (no projected XI yet); subsequent passes use the previous mini's XI
-      _forceSquad=true;_squadOverride=null;
-      for(let _pass=0;_pass<_maxPasses;_pass++){
-        const _passCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
-        const _miniR=solveBest(form,_passCards,_miniNodeCap,ratingCeil);
-        const _xi=(_miniR.bestXIs&&_miniR.bestXIs.length)?_miniR.bestXIs[0].xi:null;
-        if(!_miniR.capped&&_xi){_exactResult=_miniR;break;}
-        _lastXI=_xi;
-        const _xiKey=_xi?_xi.map(c=>c.id).sort().join(','):'';
-        if(_xiKey&&_xiKey===_prevXIKey)break; // converged
-        _prevXIKey=_xiKey;
-        _squadOverride=_xi; // next pass sorts against this projected XI
-      }
-      if(!_exactResult&&_lastXI){_forceSquad=true;_squadOverride=_lastXI;}
-    }
-
-    if(_exactResult){
-      _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
-      const ms=Math.round(performance.now()-t0);
-      _hideSolverOverlay();
-      _handleSolveResult(Object.assign({},_exactResult,{nodes:_exactResult.nodes,capped:false}),cap,form,ms,out);
-      return;
-    }
-
-    // Mini was capped — run the full solve with whatever bias was set above
-    const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
-    _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
-    const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
-    _hideSolverOverlay();
-    _handleSolveResult(r,cap,form,ms,out);
-    return;
-  }
+  // A: pure eval — no board context at all (squadAdjust skipped entirely)
+  // B: clash-aware — full card pool as context, same signals as the helper, no solve needed
+  if(_sortMode==='A'){_forceSquad=false;}
+  else{_forceSquad=true;_squadOverride=null;} // B: clean pool context, no stale override
+  const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
+  _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
+  const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
+  _hideSolverOverlay();
+  _handleSolveResult(r,cap,form,ms,out);
 }
 function _handleSolveResult(r,cap,form,ms,out){
   if(r.error&&!/no eligible card/.test(r.error)){out.innerHTML='<div class="note" style="border-color:var(--bad)">'+r.error+'</div>';return}
@@ -2007,7 +1934,7 @@ function _handleSolveResult(r,cap,form,ms,out){
     $('#mgrPanel').style.display='block';
     applyTie(bi);
     // prepend the capped warning + continue button above the result
-    const warn='<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Search capped at '+cap.toLocaleString()+' nodes</b> \u2014 this is the best found so far (score <b>'+r.bestXIs[bi].sc.total+'</b>, took '+ms+'ms). A deeper search may find a better solution \u2014 going from 3M to 81M nodes has improved results in practice.'
+    const warn='<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Search capped at '+(cap/1000000)+'M nodes</b> \u2014 this is the best found so far (score <b>'+r.bestXIs[bi].sc.total+'</b>, took '+ms+'ms). '+(nextCap>100000000?'Going much deeper may take very long and not be worthwhile.':'Jumping to '+(nextCap/1000000)+'M has improved results in practice.')
       +'<div class="row" style="margin-top:8px;gap:8px">'
       +'<button class="btn sm" onclick="runSolve('+nextCap+')">Keep searching ('+(nextCap/1000000)+'M nodes)</button>'
       +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept this result</button>'
@@ -2763,8 +2690,8 @@ function solveContext(nodeCap){
   if(missingSlots.length){
     ctx={key,ok:false,xis:[],missing:[...new Set(missingSlots)]};
   }else{
-    const r=solveBest(form,cards,nodeCap||3000000,getRatingCeil());
-    const _cap=nodeCap||3000000;ctx=(r.error||!r.bestXIs||!r.bestXIs.length)?{key,ok:false,xis:[],missing:[],cap:_cap}:{key,ok:true,xis:r.bestXIs.slice(0,8),missing:[],capped:r.capped,cap:_cap};
+    const r=solveBest(form,cards,nodeCap||getHelperCap(),getRatingCeil());
+    const _cap=nodeCap||getHelperCap();ctx=(r.error||!r.bestXIs||!r.bestXIs.length)?{key,ok:false,xis:[],missing:[],cap:_cap}:{key,ok:true,xis:r.bestXIs.slice(0,8),missing:[],capped:r.capped,cap:_cap};
   }
   if(!ctx.capped)_solveCache=ctx; // don't cache a capped result — a deeper search from the Solve tab may find better
   return ctx;
