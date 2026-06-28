@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta property="og:description" content="DraftSolver">
-<title>Draft Solver v5.0.3</title>
+<title>Draft Solver v5.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -118,7 +118,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 </head>
 <body>
 <header>
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v5.0.3</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v5.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
 </header>
 
@@ -1664,7 +1664,8 @@ function scoreXI(xi){
 function solveBest(form,cards,nodeCap,ratingCeil){
   const RC=ratingCeil!==undefined?ratingCeil:99;
   const slots=form.slots;
-  const cand=slots.map(s=>cards.filter(c=>c.pos.includes(s)));
+  const cand=slots.map(s=>cards.filter(c=>c.pos.includes(s))
+    .sort((a,b)=>b.rating-a.rating)); // v5.1: best-first — high-rated candidates tried first so the first complete path is near-optimal, making pruning bite much earlier on capped searches
   if(cand.some(l=>l.length===0))
     return {error:'A slot has no eligible card: '+slots.filter((s,i)=>cand[i].length===0).join(', ')};
   const order=slots.map((s,i)=>i).sort((a,b)=>cand[a].length-cand[b].length);
@@ -1840,9 +1841,29 @@ function runSolve(nodeCap){
   out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Solving\u2026'+(cap>3000000?' (extended search \u2014 '+Math.round(cap/1000000)+'M node cap)':'')+'</div>';
   setTimeout(()=>_runSolveInner(cap,getRatingCeil()),30);
 }
+// Prepended to solveOut whenever the synchronous fallback ran instead of the Worker.
+// The result below is real but may be shallower than a full Worker solve — flag it clearly.
+function _prependIosFallbackWarning(out){
+  const banner=document.createElement('div');
+  banner.className='note';
+  banner.style.borderColor='var(--warn)';
+  banner.style.marginBottom='10px';
+  banner.innerHTML='&#9888; <b>This result may not be optimal.</b> The background solver failed (likely an iOS limitation), so a fallback search ran with a reduced node cap. '
+    +'The squad below is valid but a deeper search might find a better one. '
+    +'If you are on iOS, please report this issue.';
+  out.insertBefore(banner,out.firstChild);
+}
 function _runSolveInner(cap,ratingCeil){
   const out=$('#solveOut');
   const form=FORMS.find(f=>f.name===chosenForm),t0=performance.now();
+  // v5.1: pre-sort cards by helpValue descending before handing to the worker.
+  // helpValue uses HW weights, rarity, position scarcity, and squad-awareness — all
+  // main-thread globals unavailable inside the worker. Sorting here once means the
+  // worker's per-slot candidate lists (built via cards.filter) are already in
+  // best-first order, so the first complete DFS path is near-optimal and pruning
+  // bites much harder on any subsequent branches. The rating sort inside solveBest
+  // is a backstop but this pre-sort carries the real signal.
+  const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
   // Terminate any leftover worker from a previous (interrupted) solve.
   if(_solverWorker){_solverWorker.terminate();_solverWorker=null;}
   if(typeof Worker!=='undefined'){
@@ -1850,8 +1871,25 @@ function _runSolveInner(cap,ratingCeil){
       const blob=new Blob([_buildWorkerSrc()],{type:'application/javascript'});
       const url=URL.createObjectURL(blob);
       _solverWorker=new Worker(url);
-      URL.revokeObjectURL(url);
+      // iOS Safari fix: do NOT revoke the Blob URL immediately — Safari may not have
+      // finished reading the worker source yet, causing a silent load failure and a
+      // worse-than-expected solve. Revoke only after the worker finishes or errors.
+      let _workerUrl=url;
+      function _revokeWorkerUrl(){if(_workerUrl){URL.revokeObjectURL(_workerUrl);_workerUrl=null;}}
+      // Safety net: if the worker dies silently (iOS memory pressure, background eviction),
+      // fall back to a synchronous solve after 90 s rather than hanging the overlay forever.
+      const _workerTimeout=setTimeout(function(){
+        if(!_solverWorker)return;
+        _solverWorker.terminate();_solverWorker=null;_revokeWorkerUrl();
+        out.innerHTML='<div class="note" style="border-color:var(--warn)">&#9888; Retrying&hellip;</div>';
+        setTimeout(function(){
+          const r2=solveBest(form,sortedCards,cap,ratingCeil),ms2=Math.round(performance.now()-t0);
+          _hideSolverOverlay();_handleSolveResult(r2,cap,form,ms2,out);
+          _prependIosFallbackWarning(out);
+        },30);
+      },90000);
       _solverWorker.onmessage=function(e){
+        clearTimeout(_workerTimeout);_revokeWorkerUrl();
         _solverWorker=null;
         const r=e.data,ms=Math.round(performance.now()-t0);
         // Restore Sets that were serialised as Arrays for structured-clone transfer.
@@ -1863,23 +1901,40 @@ function _runSolveInner(cap,ratingCeil){
         _handleSolveResult(r,cap,form,ms,out);
       };
       _solverWorker.onerror=function(err){
+        clearTimeout(_workerTimeout);_revokeWorkerUrl();
         _solverWorker=null;_hideSolverOverlay();
-        out.innerHTML='<div class="note" style="border-color:var(--bad)">Solver error: '+(err.message||err)+'</div>';
+        console.warn('[DraftSolver] Worker onerror — message:',err.message,'filename:',err.filename,'lineno:',err.lineno,err);
+        // iOS sometimes kills the worker with a non-descriptive error when the Blob
+        // URL was revoked too early or under memory pressure. Fall back synchronously
+        // with a reduced cap rather than showing a dead-end error message.
+        // We treat it as an iOS-style death only when there is genuinely no useful info.
+        const isLikelyIosWorkerDeath=(!err.message||err.message==='Script error.'||err.message==='')&&!err.filename&&!err.lineno;
+        if(isLikelyIosWorkerDeath){
+          out.innerHTML='<div class="note" style="border-color:var(--warn)">&#9888; Retrying&hellip;</div>';
+          setTimeout(function(){
+            const r2=solveBest(form,sortedCards,cap,ratingCeil),ms2=Math.round(performance.now()-t0);
+            _hideSolverOverlay();_handleSolveResult(r2,cap,form,ms2,out);
+            _prependIosFallbackWarning(out);
+          },30);
+        } else {
+          out.innerHTML='<div class="note" style="border-color:var(--bad)">Solver error: '+(err.message||err)+'</div>';
+        }
       };
       // Deep-copy cards so the worker has its own snapshot (avoids any main-thread race).
       _solverWorker.postMessage({
         form:{name:form.name,slots:form.slots.slice()},
-        cards:cards.map(c=>Object.assign({},c,{pos:c.pos.slice()})),
+        cards:sortedCards.map(c=>Object.assign({},c,{pos:c.pos.slice()})),
         nodeCap:cap,
         ratingCeil:ratingCeil
       });
       return;
-    }catch(ex){/* Worker creation failed — fall through to synchronous solve */}
+    }catch(ex){console.warn('[DraftSolver] Worker creation failed, using synchronous fallback. Reason:',ex);}
   }
   // Synchronous fallback (no Worker support or Blob URL unavailable).
-  const r=solveBest(form,cards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
+  const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
   _hideSolverOverlay();
   _handleSolveResult(r,cap,form,ms,out);
+  _prependIosFallbackWarning(out);
 }
 function _handleSolveResult(r,cap,form,ms,out){
   if(r.error&&!/no eligible card/.test(r.error)){out.innerHTML='<div class="note" style="border-color:var(--bad)">'+r.error+'</div>';return}
