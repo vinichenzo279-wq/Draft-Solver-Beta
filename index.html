@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta property="og:description" content="DraftSolver">
-<title>Draft Solver v5.0.2</title>
+<title>Draft Solver v5.0.2.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -118,7 +118,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 </head>
 <body>
 <header>
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v5.0.2</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v5.0.2.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
 </header>
 
@@ -749,11 +749,11 @@ let _solveCache=null,_squadOverride=null,_urgentPos=null,_pendFactor=1; // Phase
 let _lastFullRedundant=false; // set by squadAdjust; read by XI-boost phase to suppress boost for commit-clashing cards
 let _evalingSiblings=false; // recursion guard: prevents sibling helpValue calls from triggering further sibling evals
 let NAT_RANK={},LG_RANK={},NAT_COUNT={},CLB_COUNT={},LG_COUNT={},DB_M=1; // raw card counts per nation/club/hero-league + total, from the live DB
-const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:5,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroWaiverLow:1,premHeroWaiverHigh:1,premHeroPosWaiver:0.40,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonClubPenalty:0.25,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,dominantClashGap:5,outOfFormationPenalty:10};
+const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:5,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:0.40,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonClubPenalty:0.25,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,dominantClashGap:5,outOfFormationPenalty:10};
 // Inputs floored at 0 because a negative value here would flip the formula's intent (e.g. extra icons/heroes
 // getting MORE valuable instead of less). clashBase also gets a max: above 2 a mild clash can end up scoring
 // worse than a severe one (see clashBase's label below), so 2 is the point past which the slider works against itself.
-const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[80,105],premHeroRatingGap:[1,10],premHeroWaiverLow:[0,1],premHeroWaiverHigh:[0,1],premHeroPosWaiver:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],dominantClashGap:[0,30],outOfFormationPenalty:[0,50]};
+const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[80,105],premHeroRatingGap:[1,10],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],dominantClashGap:[0,30],outOfFormationPenalty:[0,50]};
 let SHAPE={...SHAPE_DEF}; // tunable: clash-draw count (rarity = P(no clash over this many random draws)) + icon/hero diminishing
 const _SHAPE_SAVE_KEY='pacwyn_shape_v1';
 function saveShapeLocal(){try{localStorage.setItem(_SHAPE_SAVE_KEY,JSON.stringify(SHAPE));}catch(e){}}
@@ -2250,11 +2250,11 @@ const SHAPE_LABEL={
   redundancySurcharge:'Full-redundancy surcharge — extra penalty when a card clashes on every dimension it has: nation + league for heroes, nation + club for normals, nation only for icons. Stacks on top of the per-dimension penalties.',
   iconRarityRefundCap:'Rare-nation refund cap — when evaluating a 2nd icon, how much of the icon penalty a sufficiently rare nation can cancel (default 0.6 = up to 60 % back). The effective ceiling is around 0.9 — values above that behave the same.',
   takeThreshold:'Take vs hold gap — how much better the top option must score before the helper calls TAKE instead of HOLD (default 5). Lower = quicker to recommend taking; higher = holds more boards for end-solve.',
-  premHeroRatingThreshold:'Prem-hero rating waiver threshold — rating at which the penalty waiver starts (default 96). Below this, full penalty applies. At this rating the low waiver is fully in effect; above it, the penalty eases further toward the high waiver across the gap.',
-  premHeroRatingGap:'Prem-hero rating waiver gap — rating points above the threshold at which the high waiver is fully in effect (default 2). The waiver interpolates smoothly between low and high across this range, so a card halfway through the gap gets halfway between the two waivers.',
-  premHeroWaiverLow:'Prem-hero low waiver — fraction of the penalty that survives at exactly the threshold rating (default 1.0 = off, full penalty always applies). Set below 1 to ease the penalty at high ratings; 0 = fully forgiven at threshold.',
-  premHeroWaiverHigh:'Prem-hero high waiver — fraction of the penalty that survives at threshold+gap and above (default 1.0 = off). Set below the low waiver to create a smooth ramp; lower = more forgiveness at elite ratings.',
-  premHeroPosWaiver:'Prem-hero position waiver — fraction of the penalty that survives when the card fills an urgent positional gap (default 0.40). Lower = more forgiving for positional emergencies.',
+  premHeroRatingThreshold:'Prem-hero rating threshold — below this rating the full penalty always applies (default 96). Above it, the penalty can ease depending on the fraction settings below. Has no effect unless at least one of those fractions is set below 1.0.',
+  premHeroRatingGap:'Prem-hero rating gap — how many points above the threshold it takes for the ceiling fraction to fully apply (default 2). The penalty fraction ramps smoothly from the low setting to the high setting across this range. Has no effect unless the two fractions differ.',
+  premHeroPenaltyFracLow:'Prem-hero penalty fraction at threshold — how much of the full penalty survives at exactly the threshold rating (1.0 = full penalty, 0 = completely forgiven). Default 1.0 = rating never softens the penalty. Lower this to start easing high-rated Prem heroes.',
+  premHeroPenaltyFracHigh:'Prem-hero penalty fraction at ceiling — fraction of the full penalty that survives at threshold + gap and above (1.0 = still full penalty, 0 = fully forgiven at elite ratings). Set lower than the threshold fraction to create a smooth ramp-down over elite ratings. Default 1.0.',
+  premHeroPenaltyFracUrgentPos:'Prem-hero urgent-position penalty fraction — fraction of the full penalty kept when the card directly fills a critical positional gap in your formation (0.40 = 40% retained, so a big discount for genuine positional need). 0 = free pass, 1 = no discount at all. Default 0.40.',
   commonNatCount:'Common-nation count — how many top nations (by DB card count) to penalise as overrepresented (default 10, roughly France/England/Brazil…). 0 disables. Affects icons, heroes, and normals.',
   commonClubCount:'Common-club count — how many top Prem clubs (by card count) to penalise (default 3, typically Man City/Arsenal/Liverpool). 0 disables. Normals only.',
   commonHeroLeagueCount:'Common hero-league count — how many top hero leagues (by card count) to penalise (default 0 = off). Increase to discourage clustering on the most common hero leagues.',
@@ -2267,7 +2267,7 @@ const SHAPE_LABEL={
   outOfFormationPenalty:'Out-of-formation penalty — points subtracted when a card\'s positions have zero overlap with the active formation (default 10). Only fires when squad-awareness is on and a formation is set. Set to 0 to disable.',
 };
 function renderShape(){const el=$('#shapeGrid');if(!el)return;
-  el.innerHTML=Object.keys(SHAPE_DEF).map(k=>{const dec=['iconKeep','iconErosion','heroPenalty','normalFloor','normalSlope','clashBase','clashStack','holdSizeBase','holdDomBoost','redundancySurcharge','iconRarityRefundCap','takeThreshold','premHeroWaiverLow','premHeroWaiverHigh','premHeroPosWaiver','commonNatPenalty','commonClubPenalty','commonHeroLeaguePenalty','lowIconPenaltyMin','lowIconPenaltyMax'];const step=dec.includes(k)?'0.01':'1';return'<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0"><span style="font-size:11px;color:var(--mut)">'+SHAPE_LABEL[k]+'</span>'+'<input type="number" step="'+step+'" id="shp-'+k+'" value="'+SHAPE[k]+'" style="width:78px;font-size:12px"'
+  el.innerHTML=Object.keys(SHAPE_DEF).map(k=>{const dec=['iconKeep','iconErosion','heroPenalty','normalFloor','normalSlope','clashBase','clashStack','holdSizeBase','holdDomBoost','redundancySurcharge','iconRarityRefundCap','takeThreshold','premHeroPenaltyFracLow','premHeroPenaltyFracHigh','premHeroPenaltyFracUrgentPos','commonNatPenalty','commonClubPenalty','commonHeroLeaguePenalty','lowIconPenaltyMin','lowIconPenaltyMax'];const step=dec.includes(k)?'0.01':'1';return'<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0"><span style="font-size:11px;color:var(--mut)">'+SHAPE_LABEL[k]+'</span>'+'<input type="number" step="'+step+'" id="shp-'+k+'" value="'+SHAPE[k]+'" style="width:78px;font-size:12px"'
     +' oninput="var _raw=parseFloat(this.value);if(!isNaN(_raw)){SHAPE[\''+k+'\']=_raw;_solveCache=null;}"'
     +' onchange="var _raw=parseFloat(this.value);if(isNaN(_raw))return;var _b=SHAPE_BOUNDS[\''+k+'\'];if(_b){if(_b[0]!==null&&_raw<_b[0]){_raw=_b[0];}if(_b[1]!==null&&_raw>_b[1]){_raw=_b[1];}}SHAPE[\''+k+'\']=_raw;this.value=_raw;_solveCache=null;saveShapeLocal();"'
     +'></div>';}).join('');}
@@ -2527,10 +2527,10 @@ function helpValue(c){
     const gap=SHAPE.premHeroRatingGap||2;
     if(c.rating>=thr){
       const t=Math.min(1,(c.rating-thr)/gap); // 0 at threshold, 1 at threshold+gap
-      const waiverMult=SHAPE.premHeroWaiverLow+t*t*(SHAPE.premHeroWaiverHigh-SHAPE.premHeroWaiverLow);
-      pen*=Math.max(0,Math.min(1,waiverMult));
+      const penFrac=SHAPE.premHeroPenaltyFracLow+t*t*(SHAPE.premHeroPenaltyFracHigh-SHAPE.premHeroPenaltyFracLow);
+      pen*=Math.max(0,Math.min(1,penFrac));
     }
-    if(_urgentPos&&c.pos&&c.pos.some(p=>_urgentPos.has(p)))pen*=Math.max(0,Math.min(1,SHAPE.premHeroPosWaiver));
+    if(_urgentPos&&c.pos&&c.pos.some(p=>_urgentPos.has(p)))pen*=Math.max(0,Math.min(1,SHAPE.premHeroPenaltyFracUrgentPos));
     v-=pen;
   }
   // Common nation/club/hero-league penalty: subtract a fraction of base type value for overrepresented attributes
@@ -2598,7 +2598,7 @@ function scoreExplain(){
   if(HW.rating>0)parts.push('rating');
   const pos=[];if(HW.posScarce>0)pos.push('scarce');if(HW.posFlex>0)pos.push('versatile');
   if(pos.length)parts.push(pos.join('/')+' positions (only where they apply)');
-  if(typeof squadAwareOn==='function'&&squadAwareOn()){if(HW.clashAvoid>0)parts.push('clash avoidance');if(HW.posNeed>0)parts.push('needed positions');if(HW.premHeroPenalty>0)parts.push('Prem-hero surcharge (waived for elite rating or urgent positional fit)');}
+  if(typeof squadAwareOn==='function'&&squadAwareOn()){if(HW.clashAvoid>0)parts.push('clash avoidance');if(HW.posNeed>0)parts.push('needed positions');if(HW.premHeroPenalty>0)parts.push('Prem-hero penalty (reduced for elite ratings or urgent positional fit if fractions are set below 1.0)');}
   return 'Score = '+parts.join(' + ')+'. Built from your current weights &mdash; a recommendation, you decide.';
 }
 function judgeBoard(){
