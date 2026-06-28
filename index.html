@@ -2347,7 +2347,7 @@ function squadAdjust(c){
     // Saturation only applies to non-Prem heroes, and only counts distinct leagues —
     // hold groups contribute at most one league (the freshest), so a 4-card hold of
     // LaLiga heroes counts as one distinct league, not four. Prem heroes are exempt
-    // from this curve entirely; they're handled exclusively by premHeroPenalty below.
+    // from this curve entirely; they're handled exclusively by premHeroPenalty in helpValue.
     if(c.league!=='England Premier League'){
       const src2=_squadOverride||cards;
       const heroLgGroups=new Map();
@@ -2365,23 +2365,6 @@ function squadAdjust(c){
       const over=Math.max(0,distinctHeroLeagues-SHAPE.heroFull);
       const m=Math.max(0.2,1-SHAPE.heroPenalty*over);
       adj-=HW.hero*(1-m);
-    }
-    // Prem heroes clash the Prem league slot AND bring no league-link value in a Prem squad —
-    // apply a dedicated surcharge, partially waived for elite ratings or urgent positional need.
-    if(c.league==='England Premier League'&&HW.premHeroPenalty>0){
-      let pen=HW.premHeroPenalty;
-      // high-rating waiver: linear ramp from no waiver below threshold, through low waiver at threshold,
-      // to high waiver at threshold+gap. Smooth — no cliff between the two tiers.
-      const thr=SHAPE.premHeroRatingThreshold||96;
-      const gap=SHAPE.premHeroRatingGap||2;
-      if(c.rating>=thr){
-        const t=Math.min(1,(c.rating-thr)/gap); // 0 at threshold, 1 at threshold+gap
-        const waiverMult=SHAPE.premHeroWaiverLow+t*t*(SHAPE.premHeroWaiverHigh-SHAPE.premHeroWaiverLow);
-        pen*=Math.max(0,Math.min(1,waiverMult));
-      }
-      // urgent position need waiver: only fraction of the penalty survives when filling a critical gap
-      if(_urgentPos&&c.pos&&c.pos.some(p=>_urgentPos.has(p)))pen*=Math.max(0,Math.min(1,SHAPE.premHeroPosWaiver));
-      adj-=pen;
     }
   } // heroes add DISTINCT leagues, so useful up to ~3; degrade after (gentler than icons)
   else{
@@ -2535,6 +2518,21 @@ function helpValue(c){
     v+=sc*HW.posScarce+(c.pos.length-1)/4*HW.posFlex;
   }
   if(squadAwareOn())v+=squadAdjust(c);
+  // Prem-hero penalty: applied always — not gated on squadAwareOn — because it reflects the
+  // inherent chem cost of a Prem-league hero regardless of board context. This means the pure
+  // card evaluator (squad-awareness off) correctly penalises Prem heroes just as the live helper does.
+  if(c.type==='hero'&&c.league==='England Premier League'&&HW.premHeroPenalty>0){
+    let pen=HW.premHeroPenalty;
+    const thr=SHAPE.premHeroRatingThreshold||96;
+    const gap=SHAPE.premHeroRatingGap||2;
+    if(c.rating>=thr){
+      const t=Math.min(1,(c.rating-thr)/gap); // 0 at threshold, 1 at threshold+gap
+      const waiverMult=SHAPE.premHeroWaiverLow+t*t*(SHAPE.premHeroWaiverHigh-SHAPE.premHeroWaiverLow);
+      pen*=Math.max(0,Math.min(1,waiverMult));
+    }
+    if(_urgentPos&&c.pos&&c.pos.some(p=>_urgentPos.has(p)))pen*=Math.max(0,Math.min(1,SHAPE.premHeroPosWaiver));
+    v-=pen;
+  }
   // Common nation/club/hero-league penalty: subtract a fraction of base type value for overrepresented attributes
   if(SHAPE.commonNatPenalty>0&&isCommonNat(c.nation)){
     const base=c.type==='icon'?HW.icon:c.type==='hero'?HW.hero:HW.normalBase;
