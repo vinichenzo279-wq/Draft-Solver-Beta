@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta property="og:description" content="DraftSolver">
-<title>Draft Solver v5.0</title>
+<title>Draft Solver v5.0.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -118,7 +118,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 </head>
 <body>
 <header>
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v5.0</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v5.0.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
 </header>
 
@@ -248,7 +248,16 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <div id="editFormList" style="display:flex;flex-direction:column;gap:7px;max-height:55vh;overflow-y:auto"></div>
     </div>
   </div>
-  <button class="btn" onclick="runSolve()" style="margin-bottom:12px">Solve best XI</button>
+  <button class="btn" onclick="runSolve()" style="margin-bottom:8px">Solve best XI</button>
+  <details class="hlp" style="margin-bottom:10px"><summary>Advanced &mdash; solver settings</summary>
+    <div style="margin-top:8px">
+      <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Rating Ceiling &mdash; <span id="ratingCeilLabel" style="color:var(--ink);font-weight:800">99</span></label>
+      <input type="range" id="ratingCeilSlider" min="0" max="10" value="5" style="width:100%;margin:0 0 4px;accent-color:var(--cyan)" oninput="updateRatingCeilLabel()">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:8px"><span>94 &mdash; fast</span><span>99 &mdash; default</span><span>104 &mdash; safe</span></div>
+      <p class="tiny" style="margin:0">The highest team rating the solver considers possible. <b>Lower = faster but may silently skip the optimal XI if your cards are high-rated. Higher = safer but slower.</b> Default (99) is correct for almost every draft.</p>
+      <div id="ratingCeilWarn" style="display:none;font-size:11px;color:var(--warn);background:var(--panel2);border-left:2px solid var(--warn);padding:7px 10px;border-radius:0 7px 7px 0;margin-top:8px">&#9888; Below default &mdash; the solver may miss the best XI if any card is high enough to push the team rating above <span id="ratingCeilWarnVal">99</span>. Only lower this if searches are crashing or too slow.</div>
+    </div>
+  </details>
   <div id="solveOut"></div>
 
   <div class="panel" id="mgrPanel" style="display:none">
@@ -1654,7 +1663,8 @@ function scoreXI(xi){
 }
 
 /* ============================ SOLVER (DFS + bound) ============================ */
-function solveBest(form,cards,nodeCap){
+function solveBest(form,cards,nodeCap,ratingCeil){
+  const RC=ratingCeil!==undefined?ratingCeil:99;
   const slots=form.slots;
   const cand=slots.map(s=>cards.filter(c=>c.pos.includes(s)));
   if(cand.some(l=>l.length===0))
@@ -1682,7 +1692,7 @@ function solveBest(form,cards,nodeCap){
       const partialHasHero=partial.some(c=>c.type==='hero')?1:0;
       const iconBonus=partialHasIcon||Math.min(1,remaining);
       const heroBonus=partialHasHero||Math.min(1,remaining);
-      const ub=99+33
+      const ub=RC+33
         +(new Set(partial.map(c=>c.nation)).size+remaining)
         +(new Set(partial.map(leagueOf)).size+remaining)
         +(new Set(partial.filter(c=>c.type==='normal').map(c=>c.club)).size+iconBonus+heroBonus+remaining);
@@ -1797,6 +1807,30 @@ function _hideSolverOverlay(){
   if(bd)bd.style.display='none';
 }
 
+let _solverWorker=null;
+// _buildWorkerSrc: copies the EXACT solver functions verbatim (via .toString()) into a Web
+// Worker so the DFS runs on a background thread without blocking iOS's main-thread watchdog.
+// The algorithm — and therefore the node count shown at the end — is byte-for-byte identical
+// to the original synchronous version.  scoreXI returns Sets; those are serialised as Arrays
+// for postMessage and reconstructed as Sets on the main thread before any result handling.
+function _buildWorkerSrc(){
+  return [futRating,leagueOf,trueChem,scoreXI,solveBest].map(f=>f.toString()).join('\n')
+  +'\nself.onmessage=function(e){'
+  +'var r=solveBest(e.data.form,e.data.cards,e.data.nodeCap,e.data.ratingCeil);'
+  +'r.bestXIs.forEach(function(t){var s=t.sc;'
+  +'s.nationSet=Array.from(s.nationSet);'
+  +'s.leagueSet=Array.from(s.leagueSet);'
+  +'s.clubSet=Array.from(s.clubSet);});'
+  +'self.postMessage(r);};';
+}
+function getRatingCeil(){const el=$('#ratingCeilSlider');return el?94+parseInt(el.value):99;}
+function updateRatingCeilLabel(){
+  const el=$('#ratingCeilSlider');if(!el)return;
+  const v=parseInt(el.value),ceil=94+v;
+  const lbl=$('#ratingCeilLabel');if(lbl)lbl.textContent=ceil;
+  const warn=$('#ratingCeilWarn');if(warn)warn.style.display=v<5?'block':'none';
+  const warnVal=$('#ratingCeilWarnVal');if(warnVal)warnVal.textContent=ceil;
+}
 function runSolve(nodeCap){
   syncAllSlots();
   const out=$('#solveOut');
@@ -1805,12 +1839,50 @@ function runSolve(nodeCap){
   const cap=nodeCap||3000000;
   _showSolverOverlay();
   out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Solving\u2026'+(cap>3000000?' (extended search \u2014 '+Math.round(cap/1000000)+'M node cap)':'')+'</div>';
-  setTimeout(()=>_runSolveInner(cap),30);
+  setTimeout(()=>_runSolveInner(cap,getRatingCeil()),30);
 }
-function _runSolveInner(cap){
+function _runSolveInner(cap,ratingCeil){
   const out=$('#solveOut');
-  const form=FORMS.find(f=>f.name===chosenForm),t0=performance.now(),r=solveBest(form,cards,cap),ms=Math.round(performance.now()-t0);
+  const form=FORMS.find(f=>f.name===chosenForm),t0=performance.now();
+  // Terminate any leftover worker from a previous (interrupted) solve.
+  if(_solverWorker){_solverWorker.terminate();_solverWorker=null;}
+  if(typeof Worker!=='undefined'){
+    try{
+      const blob=new Blob([_buildWorkerSrc()],{type:'application/javascript'});
+      const url=URL.createObjectURL(blob);
+      _solverWorker=new Worker(url);
+      URL.revokeObjectURL(url);
+      _solverWorker.onmessage=function(e){
+        _solverWorker=null;
+        const r=e.data,ms=Math.round(performance.now()-t0);
+        // Restore Sets that were serialised as Arrays for structured-clone transfer.
+        r.bestXIs.forEach(function(t){var s=t.sc;
+          s.nationSet=new Set(s.nationSet);
+          s.leagueSet=new Set(s.leagueSet);
+          s.clubSet=new Set(s.clubSet);});
+        _hideSolverOverlay();
+        _handleSolveResult(r,cap,form,ms,out);
+      };
+      _solverWorker.onerror=function(err){
+        _solverWorker=null;_hideSolverOverlay();
+        out.innerHTML='<div class="note" style="border-color:var(--bad)">Solver error: '+(err.message||err)+'</div>';
+      };
+      // Deep-copy cards so the worker has its own snapshot (avoids any main-thread race).
+      _solverWorker.postMessage({
+        form:{name:form.name,slots:form.slots.slice()},
+        cards:cards.map(c=>Object.assign({},c,{pos:c.pos.slice()})),
+        nodeCap:cap,
+        ratingCeil:ratingCeil
+      });
+      return;
+    }catch(ex){/* Worker creation failed — fall through to synchronous solve */}
+  }
+  // Synchronous fallback (no Worker support or Blob URL unavailable).
+  const r=solveBest(form,cards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
   _hideSolverOverlay();
+  _handleSolveResult(r,cap,form,ms,out);
+}
+function _handleSolveResult(r,cap,form,ms,out){
   if(r.error&&!/no eligible card/.test(r.error)){out.innerHTML='<div class="note" style="border-color:var(--bad)">'+r.error+'</div>';return}
   if(r.error||!r.bestXIs.length){const em=completeOOP(form);
     let rows='';
@@ -2586,7 +2658,7 @@ function solveContext(nodeCap){
   if(missingSlots.length){
     ctx={key,ok:false,xis:[],missing:[...new Set(missingSlots)]};
   }else{
-    const r=solveBest(form,cards,nodeCap||3000000);
+    const r=solveBest(form,cards,nodeCap||3000000,getRatingCeil());
     const _cap=nodeCap||3000000;ctx=(r.error||!r.bestXIs||!r.bestXIs.length)?{key,ok:false,xis:[],missing:[],cap:_cap}:{key,ok:true,xis:r.bestXIs.slice(0,8),missing:[],capped:r.capped,cap:_cap};
   }
   if(!ctx.capped)_solveCache=ctx; // don't cache a capped result — a deeper search from the Solve tab may find better
@@ -2622,7 +2694,7 @@ function runHelperDeep(cap){
     syncAllSlots();
     const missingSlots=greedyGaps(form.slots,cards);
     if(missingSlots.length){_hideSolverOverlay();judgeSlotInline();return;}
-    const r=solveBest(form,cards,nextCap);
+    const r=solveBest(form,cards,nextCap,getRatingCeil());
     _hideSolverOverlay();
     const ctx=(r.error||!r.bestXIs||!r.bestXIs.length)
       ?{key:boardKey(),ok:false,xis:[],missing:[],capped:false,cap:nextCap}
