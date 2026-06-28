@@ -1434,7 +1434,7 @@ function renderSlotEditor(){
   $('#capCancelBtn').style.display=isCap?'block':'none';
   $('#slotTitle').textContent=isCap?'Captain':s.label+(s.kind==='pos'?' (starting)':'');
   if(isCap){
-    $('#slotNote').innerHTML='Your first pick. Add this board\u2019s options \u2014 the helper rates them \u2014 then tap \u2605 to make one your captain (you\u2019ll choose which position he fills). Always committed, never benched.';
+    $('#slotNote').innerHTML='Your first pick. Add the options you\u2019re offered \u2014 the helper rates them \u2014 then tap \u2605 to commit one as captain (you\u2019ll choose which position). <b>Always TAKE</b> \u2014 the captain slot cannot be held or skipped. (Skipping the entire board is fine; but if you\u2019re picking, you must commit one now.)';
   }else{
     const st=slotState(s);
     $('#slotNote').innerHTML=st==='bust'?'Marked <b>busted</b> \u2014 ignored by the solver. Add a player to un-bust.':
@@ -1815,10 +1815,11 @@ function _buildWorkerSrc(){
   return [futRating,leagueOf,trueChem,scoreXI,solveBest].map(f=>f.toString()).join('\n')
   +'\nself.onmessage=function(e){'
   +'var r=solveBest(e.data.form,e.data.cards,e.data.nodeCap,e.data.ratingCeil);'
-  +'r.bestXIs.forEach(function(t){var s=t.sc;'
+  +'if(r.bestXIs){r.bestXIs.forEach(function(t){var s=t.sc;'
   +'s.nationSet=Array.from(s.nationSet);'
   +'s.leagueSet=Array.from(s.leagueSet);'
-  +'s.clubSet=Array.from(s.clubSet);});'
+  +'s.clubSet=Array.from(s.clubSet);});}'
+  +'else{r.bestXIs=[];}'
   +'self.postMessage(r);};';
 }
 function getRatingCeil(){const el=$('#ratingCeilSlider');return el?85+parseInt(el.value):95;}
@@ -2574,7 +2575,7 @@ function rankAndVerdict(list,isCap){
   else if(noHoldOn()&&!isCap){verdict='TAKE';detail='No-hold drafting \u2014 take <b>'+esc(cardName(top.c))+'</b>, the strongest option here, and move on. (Toggle off in Weights to let it suggest holds.)'+lowNote;}
   else{const dom=top.v-ranked[1].v>SHAPE.takeThreshold;
     if(dom){verdict='TAKE';detail='<b>'+esc(cardName(top.c))+'</b> is the clear pick \u2014 strongest on type / club / nation / league / fit. Holding any board with 2+ fieldable cards is theoretically a touch better (keeps end-solve freedom), but TAKE is the clean call.'+lowNote;}
-    else{verdict='HOLD';detail='Two or more undominated options \u2014 bank the board and let the end-solve decide which survives the clashes.'+(isCap?' Must pick now? Take <b>'+esc(cardName(top.c))+'</b>.':'')+lowNote;}
+    else{verdict=isCap?'TAKE':'HOLD';detail=isCap?'No single dominant option, but the captain slot is always a commit \u2014 take <b>'+esc(cardName(top.c))+'</b>, the top-rated pick here.'+lowNote:'Two or more undominated options \u2014 bank the board and let the end-solve decide which survives the clashes.'+lowNote;}
   }
   return {ranked,verdict,detail};
 }
@@ -2739,7 +2740,7 @@ function judgeSlotInline(preCtx){
   const _pickNumber=_decidedCount+1; // 1-indexed pick number for this board
   let soleNote='';
   let soleForce=null;
-  if(!isCap&&chosenForm&&_pickNumber>=12){
+  if(!isCap&&chosenForm&&_pickNumber>=13){
     const form=FORMS.find(f=>f.name===chosenForm);
     if(form){
       syncAllSlots();
@@ -2934,7 +2935,7 @@ function judgeSlotInline(preCtx){
   const ctxNote=ctx?(ctx.ok?'<span class="tiny" style="color:var(--mut)"> \u00b7 judged against your projected XI (starters boosted, bench penalised)</span>':'<span class="tiny" style="color:var(--mut)"> \u00b7 early-draft weights (no complete XI yet)</span>'):'';
   let head;
   if(isCap){
-    head='<div class="bigrow"><div class="tot" style="font-size:26px">'+(opts.length>1?verdict:'CAPTAIN')+'</div></div><div class="tiny" style="color:var(--ink)">'+(opts.length>1?detail:'Pick the strongest \u2014 or, since a captain board is skippable, skip it if everything here is weak (see the rating below).')+'</div>';
+    head='<div class="bigrow"><div class="tot" style="font-size:26px">TAKE</div></div><div class="tiny" style="color:var(--ink)">'+(opts.length>1?detail:'Only one option \u2014 commit it as captain. (Skip the whole board if everything here is too weak to justify picking.)')+'</div>';
   }else{
     head=opts.length===1?'<div class="tiny" style="color:var(--ink)">Committed \u2014 its value against the rest of your board'+ctxNote+':</div>'
       :'<div class="bigrow"><div class="tot" style="font-size:26px">'+verdict+'</div></div><div class="tiny" style="color:var(--ink)">'+detail+ctxNote+'</div>';
