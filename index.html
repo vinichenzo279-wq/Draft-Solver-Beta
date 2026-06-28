@@ -1684,10 +1684,18 @@ function solveBest(form,cards,nodeCap,ratingCeil){
     .sort((a,b)=>b.rating-a.rating)); // v5.1: best-first — high-rated candidates tried first so the first complete path is near-optimal, making pruning bite much earlier on capped searches
   if(cand.some(l=>l.length===0))
     return {error:'A slot has no eligible card: '+slots.filter((s,i)=>cand[i].length===0).join(', ')};
+  // v5.5 #2: cache _lg (leagueOf) and _group on every candidate once instead of recomputing in the hot loop
+  for(const slot of cand)for(const c of slot){
+    if(c._lg===undefined)c._lg=leagueOf(c);
+    if(c._group===undefined)c._group=c.hold||('C'+c.id);
+  }
   const order=slots.map((s,i)=>i).sort((a,b)=>cand[a].length-cand[b].length);
   let best=-1,bestXIs=[],nodes=0;const CAP=nodeCap||3000000;let capped=false;
   const usedGroups=new Set(),pick=new Array(slots.length).fill(null);
-  const groupOf=c=>c.hold||('C'+c.id);
+  // v5.5 #1: incremental diversity state — add on descent, delete on backtrack; eliminates
+  // ~9M Set allocations at the 3M-node cap that the old per-node filter/map/Set pattern caused.
+  const seenNat=new Set(),seenLg=new Set(),seenClub=new Set();
+  let partialIcon=0,partialHero=0;
   function dfs(k){
     if(nodes++>CAP){capped=true;return;}
     if(capped)return;
@@ -1701,23 +1709,39 @@ function solveBest(form,cards,nodeCap,ratingCeil){
       return;
     }
     const slotIdx=order[k],remaining=order.length-k;
+    // v5.5 tighter UB — models the actual per-type diversity ceiling:
+    //   normal card  → +2 max (nation + club; all normals share one league, never a new one)
+    //   1st icon     → +3 max (nation + "Icons" league + icon club-bonus)
+    //   1st hero     → +3 max (nation + hero's league + hero club-bonus)
+    //   2nd+ icon    → +1 max (nation only; Icons already counted, no extra club)
+    //   2nd+ hero    → +2 max (nation + hero's unique league; no extra club)
+    // Greedy budget: assign the two +3 slots to icon/hero (if not yet placed), rest at +2.
     if(best>=0){
-      const partial=pick.filter(Boolean);
-      const partialHasIcon=partial.some(c=>c.type==='icon')?1:0;
-      const partialHasHero=partial.some(c=>c.type==='hero')?1:0;
-      const iconBonus=partialHasIcon||Math.min(1,remaining);
-      const heroBonus=partialHasHero||Math.min(1,remaining);
+      const iconR=partialIcon?0:Math.min(1,remaining);
+      const heroR=partialHero?0:Math.min(1,remaining-iconR);
+      const normalR=remaining-iconR-heroR;
       const ub=RC+33
-        +(new Set(partial.map(c=>c.nation)).size+remaining)
-        +(new Set(partial.map(leagueOf)).size+remaining)
-        +(new Set(partial.filter(c=>c.type==='normal').map(c=>c.club)).size+iconBonus+heroBonus+remaining);
+        +seenNat.size+seenLg.size+seenClub.size+partialIcon+partialHero
+        +iconR*3+heroR*3+normalR*2;
       if(ub<best)return;
     }
     for(const c of cand[slotIdx]){
-      const g=groupOf(c);
+      const g=c._group;
       if(usedGroups.has(g))continue;
       usedGroups.add(g);pick[slotIdx]=c;
+      // Incremental updates (O(1) each)
+      const addNat=seenNat.has(c.nation)?0:(seenNat.add(c.nation),1);
+      const addLg =seenLg.has(c._lg)   ?0:(seenLg.add(c._lg),1);
+      const addClub=c.type==='normal'&&!seenClub.has(c.club)?(seenClub.add(c.club),1):0;
+      const addIcon=!partialIcon&&c.type==='icon'?1:0;if(addIcon)partialIcon=1;
+      const addHero=!partialHero&&c.type==='hero'?1:0;if(addHero)partialHero=1;
       dfs(k+1);
+      // Backtrack (O(1) each)
+      if(addNat) seenNat.delete(c.nation);
+      if(addLg)  seenLg.delete(c._lg);
+      if(addClub)seenClub.delete(c.club);
+      if(addIcon)partialIcon=0;
+      if(addHero)partialHero=0;
       usedGroups.delete(g);pick[slotIdx]=null;
       if(capped)return;
     }
