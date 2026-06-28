@@ -259,10 +259,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Pre-sort order</label>
         <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:6px">
-          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="A" style="margin-top:2px"><span><b>A &mdash; Pure eval</b> &mdash; type + rarity + rating only, no board context. Fastest.</span></label>
-          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="B" checked style="margin-top:2px"><span><b>B &mdash; Clash-aware</b> (default) &mdash; pure eval + clash &amp; saturation penalties against your current holds.</span></label>
-          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="C" style="margin-top:2px"><span><b>C &mdash; Mini-solve</b> &mdash; runs a quick 1M-node solve first, then sorts against the projected XI. Slightly slower to start.</span></label>
-          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="D" style="margin-top:2px" onchange="updateSortModeUI()"><span><b>D &mdash; Recursive</b> &mdash; iteratively re-sorts against each mini-solve&rsquo;s projected XI until stable or passes exhausted, then runs the real solve.</span></label>
+          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="A" style="margin-top:2px"><span><b>A &mdash; Pure eval</b> &mdash; type + rarity + rating + position scarcity only. No board context, no clash penalties. Fastest.</span></label>
+          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="B" checked style="margin-top:2px"><span><b>B &mdash; Clash-aware</b> (default) &mdash; same as A plus clash &amp; saturation penalties against your full card pool. Same signal the helper uses, no solve needed.</span></label>
+          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="C" style="margin-top:2px"><span><b>C &mdash; Mini-solve</b> &mdash; B-sorts candidates, runs a 1M-node solve. If exact (most squads), done &mdash; no second pass. If capped, re-sorts against the mini&rsquo;s projected XI and runs the full solve.</span></label>
+          <label style="font-size:12px;display:flex;align-items:flex-start;gap:7px;cursor:pointer"><input type="radio" name="sortMode" value="D" style="margin-top:2px" onchange="updateSortModeUI()"><span><b>D &mdash; Recursive mini-solve</b> &mdash; like C but iterates: after each 1M-node pass it re-sorts against the found XI and repeats until the XI stabilises or passes run out. Returns exact if any pass is non-capped; otherwise runs the full solve on the final bias order.</span></label>
         </div>
         <div id="sortModeDPanel" style="display:none;margin-top:8px;padding:8px 10px;background:var(--panel2);border-radius:7px">
           <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Max passes &mdash; <span id="sortPassesLabel" style="color:var(--ink);font-weight:800">3</span></label>
@@ -270,7 +270,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut)"><span>1</span><span>3 &mdash; default</span><span>10</span></div>
           <p class="tiny" style="margin-top:6px;margin-bottom:0">Each pass runs a 1M-node mini-solve and re-sorts. Stops early if the projected XI doesn&rsquo;t change between passes. More passes = more startup time but tighter ordering for complex boards.</p>
         </div>
-        <p class="tiny" style="margin-top:8px;margin-bottom:0">Controls which signal the solver uses to order candidates before searching. B is the best general choice; try C or D if you have a large complex board and don&rsquo;t mind a brief extra pause.</p>
+        <p class="tiny" style="margin-top:8px;margin-bottom:0">B is the best general choice for most boards. C and D are useful for very large, complex boards where 1M nodes is already enough to find the exact answer &mdash; in that case they return it instantly without a second pass. For boards that genuinely exceed 1M nodes, C/D bias the full search toward the mini-solve&rsquo;s best XI, which may or may not beat B.</p>
       </div>
     </div>
   </details>
@@ -1876,33 +1876,87 @@ function _runSolveInner(cap,ratingCeil){
   //   A = pure eval (no board context), B = clash-aware (default), C = 1M mini-solve, D = recursive passes
   const _sortMode=(()=>{const el=document.querySelector('input[name="sortMode"]:checked');return el?el.value:'B';})();
   const _savedForceSquad=_forceSquad,_savedSquadOverride=_squadOverride;
+
+  // --- Compute the B-sorted order (used by B, C, D) ---
+  // B = squad-aware against the full card pool, no projected XI.
+  // Always a clean context: _forceSquad=true, _squadOverride=null so squadInfo() reads from 'cards'.
+  // This gives every clash/saturation signal the helper uses, without running any solve.
+  function _bSortedCards(){
+    _forceSquad=true;_squadOverride=null;
+    const out=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
+    return out;
+  }
+
   if(_sortMode==='A'){
     _forceSquad=false;
-  } else if(_sortMode==='C'){
-    _forceSquad=true;
-    const _miniCtx=solveContext(1000000);
-    _squadOverride=(_miniCtx&&_miniCtx.ok&&_miniCtx.xis&&_miniCtx.xis[0])?_miniCtx.xis[0].xi:null;
-  } else if(_sortMode==='D'){
-    _forceSquad=true;
-    const _maxPasses=parseInt((document.getElementById('sortPassesSlider')||{value:'3'}).value)||3;
-    let _prevXIKey='';
-    for(let _pass=0;_pass<_maxPasses;_pass++){
-      const _miniCtx=solveContext(1000000);
-      const _xi=(_miniCtx&&_miniCtx.ok&&_miniCtx.xis&&_miniCtx.xis[0])?_miniCtx.xis[0].xi:null;
-      _squadOverride=_xi;
-      // Build a stable key from the XI card ids to detect convergence
-      const _xiKey=_xi?_xi.map(c=>c.id).sort().join(','):'';
-      if(_xiKey&&_xiKey===_prevXIKey)break; // XI didn't change — order has converged, stop early
-      _prevXIKey=_xiKey;
-      // Invalidate the solve cache so the next pass re-solves with the new order
-      _solveCache=null;
+    const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
+    _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
+    const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
+    _hideSolverOverlay();
+    _handleSolveResult(r,cap,form,ms,out);
+    return;
+  }
+
+  if(_sortMode==='B'){
+    const sortedCards=_bSortedCards();
+    _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
+    const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
+    _hideSolverOverlay();
+    _handleSolveResult(r,cap,form,ms,out);
+    return;
+  }
+
+  // C / D: start from B-sorted order, then refine with mini-solves.
+  // If any mini-solve is exact (non-capped) it IS the optimal XI — deliver it directly.
+  // Only fall through to a full solve when the mini was capped.
+  {
+    const _miniNodeCap=1000000;
+    let _exactResult=null;
+
+    if(_sortMode==='C'){
+      // One mini-solve on B-sorted candidates
+      const _miniR=solveBest(form,_bSortedCards(),_miniNodeCap,ratingCeil);
+      if(!_miniR.capped&&_miniR.bestXIs&&_miniR.bestXIs.length){
+        _exactResult=_miniR;
+      } else if(_miniR.bestXIs&&_miniR.bestXIs.length){
+        // Capped: bias the full solve toward the mini's best XI
+        _forceSquad=true;_squadOverride=_miniR.bestXIs[0].xi;
+      }
+    } else { // D — iterative passes, each starting from best available sort
+      const _maxPasses=parseInt((document.getElementById('sortPassesSlider')||{value:'3'}).value)||3;
+      let _prevXIKey='',_lastXI=null;
+      // Pass 0 uses B-sort (no projected XI yet); subsequent passes use the previous mini's XI
+      _forceSquad=true;_squadOverride=null;
+      for(let _pass=0;_pass<_maxPasses;_pass++){
+        const _passCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
+        const _miniR=solveBest(form,_passCards,_miniNodeCap,ratingCeil);
+        const _xi=(_miniR.bestXIs&&_miniR.bestXIs.length)?_miniR.bestXIs[0].xi:null;
+        if(!_miniR.capped&&_xi){_exactResult=_miniR;break;}
+        _lastXI=_xi;
+        const _xiKey=_xi?_xi.map(c=>c.id).sort().join(','):'';
+        if(_xiKey&&_xiKey===_prevXIKey)break; // converged
+        _prevXIKey=_xiKey;
+        _squadOverride=_xi; // next pass sorts against this projected XI
+      }
+      if(!_exactResult&&_lastXI){_forceSquad=true;_squadOverride=_lastXI;}
     }
-  } // B: leave _forceSquad and _squadOverride as-is
-  const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
-  _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
-  const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
-  _hideSolverOverlay();
-  _handleSolveResult(r,cap,form,ms,out);
+
+    if(_exactResult){
+      _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
+      const ms=Math.round(performance.now()-t0);
+      _hideSolverOverlay();
+      _handleSolveResult(Object.assign({},_exactResult,{nodes:_exactResult.nodes,capped:false}),cap,form,ms,out);
+      return;
+    }
+
+    // Mini was capped — run the full solve with whatever bias was set above
+    const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
+    _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
+    const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
+    _hideSolverOverlay();
+    _handleSolveResult(r,cap,form,ms,out);
+    return;
+  }
 }
 function _handleSolveResult(r,cap,form,ms,out){
   if(r.error&&!/no eligible card/.test(r.error)){out.innerHTML='<div class="note" style="border-color:var(--bad)">'+r.error+'</div>';return}
