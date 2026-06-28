@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta property="og:description" content="DraftSolver">
-<title>Draft Solver v5.0.2.1</title>
+<title>Draft Solver v5.0.3</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -118,7 +118,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 </head>
 <body>
 <header>
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v5.0.2.1</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v5.0.3</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
 </header>
 
@@ -1903,6 +1903,23 @@ function _handleSolveResult(r,cap,form,ms,out){
       const emSc=Object.assign({},em.sc,{chem:em.chem,total:em.sc.rating+em.chem+em.sc.nations+em.sc.leagues+em.sc.clubs});
       // oopIds: set of card ids that are OOP placeholders — pickMgr uses this to score subs correctly.
       const oopIds=new Set(em.pick.filter((_,i)=>em.oop[i]).map(c=>c&&c.id));
+      // Build pick-per-hold exactly like renderSummary does
+      const ord=id=>board?board.findIndex(s=>s.id===id):0;
+      const lblOf=id=>{const s=board&&board.find(x=>x.id===id);return s?s.label:id;};
+      const holdPicks={};em.pick.filter(Boolean).forEach(c=>{if(c.hold)holdPicks[c.hold]=c.label;});
+      const hpEntries=Object.entries(holdPicks).sort((a,b)=>ord(a[0])-ord(b[0]));
+      const hp=hpEntries.length?hpEntries.map(([h,l])=>'<span class="kv"><span>'+esc(lblOf(h))+'</span><b>'+esc(l)+'</b></span>').join(''):'<span class="tiny">none</span>';
+      const usedGroups=new Set(em.pick.filter(Boolean).map(c=>c.hold||('C'+c.id)));
+      const holdGroups={};cards.forEach(c=>{if(c.hold)(holdGroups[c.hold]=holdGroups[c.hold]||[]).push(c);});
+      const subPicks=[];
+      Object.entries(holdGroups).sort((a,b)=>ord(a[0])-ord(b[0])).forEach(([h,list])=>{
+        if(usedGroups.has(h))return;
+        let bestC=list[0],bestV=-1;
+        list.forEach(c=>{let v=c.rating/100;if(!emSc.nationSet.has(c.nation))v+=2;if(!emSc.leagueSet.has(leagueOf(c)))v+=2;if(c.type==='normal'&&!emSc.clubSet.has(c.club))v+=1;if(v>bestV){bestV=v;bestC=c;}});
+        subPicks.push({h,label:bestC.label});
+      });
+      const pickPerHold='<div class="panel"><h2>Pick per hold</h2>'+hp+'<div class="tiny" style="margin-top:6px">In hold order. Committed cards need no pick.</div>'+(subPicks.length?'<div class="tiny" style="margin:8px 0 4px;color:var(--mut)">The rest won\u2019t start \u2014 pick these for sub / manager-insurance value:</div>'+subPicks.map(s=>'<span class="kv"><span>'+esc(lblOf(s.h))+'</span><b>'+esc(s.label)+'</b></span>').join(''):'')+'</div>';
+      out.innerHTML=head+'<div class="panel"><h2>Emergency fill</h2><div class="xi">'+rows+'</div></div>'+score+pickPerHold;
       window._solved={main:{sc:emSc,xi:em.pick.filter(Boolean)},form,oopIds};window._bench=cards.filter(c=>!c.hold&&!usedIds.has(c.id)).map(c=>({c,why:''}));$('#mgrPanel').style.display='block';}else{$('#mgrPanel').style.display='none';}
     return;}
   // capped: show best-so-far with option to keep searching at 3x the cap
@@ -2740,7 +2757,7 @@ function judgeSlotInline(preCtx){
   const _pickNumber=_decidedCount+1; // 1-indexed pick number for this board
   let soleNote='';
   let soleForce=null;
-  if(!isCap&&chosenForm&&_pickNumber>=13){
+  if(!isCap&&chosenForm&&_pickNumber>=12){
     const form=FORMS.find(f=>f.name===chosenForm);
     if(form){
       syncAllSlots();
