@@ -2750,8 +2750,8 @@ function judgeSlotInline(preCtx){
   // Coverage flags: silent for the first 11 decided picks. From pick 12 onward, check what
   // this board covers (or doesn't) and flag urgency based on how many picks remain total.
   _urgentPos=null;
-  // Count all decided slots: filled (committed/hold) + busted — both are picks the user has made.
-  const _decidedCount=board?board.filter(sl=>sl.busted||slotState(sl)!=='pending').length:0;
+  // Count all decided slots EXCLUDING the current one — we're making this pick, not counting it as done yet.
+  const _decidedCount=board?board.filter(sl=>sl.id!==s.id&&(sl.busted||slotState(sl)!=='pending')).length:0;
   // Total picks in the draft = all non-busted slots (busts decided later don't add picks).
   // We track absolute pick number (decidedCount + 1 = the pick being made now).
   const _pickNumber=_decidedCount+1; // 1-indexed pick number for this board
