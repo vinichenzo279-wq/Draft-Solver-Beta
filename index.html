@@ -755,7 +755,7 @@ let _solveCache=null,_squadOverride=null,_urgentPos=null,_pendFactor=1; // Phase
 let _lastFullRedundant=false; // set by squadAdjust; read by XI-boost phase to suppress boost for commit-clashing cards
 let _evalingSiblings=false; // recursion guard: prevents sibling helpValue calls from triggering further sibling evals
 let NAT_RANK={},LG_RANK={},NAT_COUNT={},CLB_COUNT={},LG_COUNT={},DB_M=1; // raw card counts per nation/club/hero-league + total, from the live DB
-const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:5,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:0.40,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonClubPenalty:0.25,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,dominantClashGap:5,outOfFormationPenalty:10};
+const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:5,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonClubPenalty:0.25,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,dominantClashGap:5,outOfFormationPenalty:10};
 // Inputs floored at 0 because a negative value here would flip the formula's intent (e.g. extra icons/heroes
 // getting MORE valuable instead of less). clashBase also gets a max: above 2 a mild clash can end up scoring
 // worse than a severe one (see clashBase's label below), so 2 is the point past which the slider works against itself.
@@ -1864,13 +1864,8 @@ function runSolve(nodeCap){
 function _runSolveInner(cap,ratingCeil){
   const out=$('#solveOut');
   const form=FORMS.find(f=>f.name===chosenForm),t0=performance.now();
-  // Pre-sort cards by helpValue descending. A = pure eval (no board context), B = clash-aware (default).
-  const _sortMode=(()=>{const el=document.querySelector('input[name="sortMode"]:checked');return el?el.value:'B';})();
   const _savedForceSquad=_forceSquad,_savedSquadOverride=_squadOverride;
-  // A: pure eval — no board context at all (squadAdjust skipped entirely)
-  // B: clash-aware — full card pool as context, same signals as the helper, no solve needed
-  if(_sortMode==='A'){_forceSquad=false;}
-  else{_forceSquad=true;_squadOverride=null;} // B: clean pool context, no stale override
+  _forceSquad=true;_squadOverride=null; // always clash-aware (B)
   const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
   _forceSquad=_savedForceSquad;_squadOverride=_savedSquadOverride;
   const r=solveBest(form,sortedCards,cap,ratingCeil),ms=Math.round(performance.now()-t0);
@@ -1926,7 +1921,7 @@ function _handleSolveResult(r,cap,form,ms,out){
     $('#mgrPanel').style.display='block';
     applyTie(bi);
     // prepend the capped warning + continue button above the result
-    const warn='<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Search capped at '+(cap/1000000)+'M nodes</b> \u2014 this is the best found so far (score <b>'+r.bestXIs[bi].sc.total+'</b>, took '+ms+'ms). '+(nextCap>100000000?'Going much deeper may take very long and not be worthwhile.':'Jumping to '+(nextCap/1000000)+'M has improved results in practice.')
+    const warn='<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Search capped at '+(cap/1000000)+'M nodes</b> \u2014 this is the best found so far (score <b>'+r.bestXIs[bi].sc.total+'</b>, took '+ms+'ms). '+(nextCap>200000000?'Going much deeper may take very long and not be worthwhile.':'Jumping to '+(nextCap/1000000)+'M has improved results in practice.')
       +'<div class="row" style="margin-top:8px;gap:8px">'
       +'<button class="btn sm" onclick="runSolve('+nextCap+')">Keep searching ('+(nextCap/1000000)+'M nodes)</button>'
       +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept this result</button>'
@@ -2221,7 +2216,7 @@ function posScarceN(p){
 function ratingN(r){return Math.max(0,Math.min(1,(Math.max(75,Math.min(99,r))-75)/24));} // 75->0, 99->1, clamped
 /* tunable weights for the helper */
 const HW_DEF={icon:12,hero:10,normalBase:6,nation:2.0,heroLeague:1.5,clubRarity:2.5,rating:1.0,posScarce:1.0,posFlex:0.5,clashAvoid:1.0,posNeed:0,premHeroPenalty:6.5,lowIconRatingThreshold:90};
-const HW_LABEL={icon:'Icon (card type)',hero:'Hero (card type)',normalBase:'Normal (card type)',nation:'Nation rarity',heroLeague:'Hero-league rarity',clubRarity:'Prem club rarity',rating:'Rating',posScarce:'Scarce position',posFlex:'Position flexibility',clashAvoid:'Avoid clashes — squad mode',posNeed:'Fill needed positions — squad mode',premHeroPenalty:'Prem-hero penalty',lowIconRatingThreshold:'Low-rated icon penalty — below this rating'};
+const HW_LABEL={icon:'Icon (card type)',hero:'Hero (card type)',normalBase:'Normal (card type)',nation:'Nation rarity',heroLeague:'Hero-league rarity',clubRarity:'Prem club rarity',rating:'Rating',posScarce:'Scarce position',posFlex:'Position flexibility',clashAvoid:'Avoid clashes — squad mode',posNeed:'Fill needed positions — squad mode',premHeroPenalty:'Prem-hero penalty (from pick 12, discounted if urgent positional fill)',lowIconRatingThreshold:'Low-rated icon penalty — at and below this rating'};
 let HW={...HW_DEF};
 function renderWeights(){const el=$('#hwGrid');if(!el)return;
   el.innerHTML=Object.keys(HW_DEF).map(k=>{const isThresh=(k==='lowIconRatingThreshold');const step=isThresh?'1':'0.01';return'<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0"><span style="font-size:11px;color:var(--mut)">'+HW_LABEL[k]+'</span>'
@@ -2268,7 +2263,7 @@ const SHAPE_LABEL={
   premHeroRatingGap:'Prem-hero rating gap — how many points above the threshold it takes for the ceiling fraction to fully apply (default 2). The penalty fraction ramps smoothly from the low setting to the high setting across this range. Has no effect unless the two fractions differ.',
   premHeroPenaltyFracLow:'Prem-hero penalty fraction at threshold — how much of the full penalty survives at exactly the threshold rating (1.0 = full penalty, 0 = completely forgiven). Default 1.0 = rating never softens the penalty. Lower this to start easing high-rated Prem heroes.',
   premHeroPenaltyFracHigh:'Prem-hero penalty fraction at ceiling — fraction of the full penalty that survives at threshold + gap and above (1.0 = still full penalty, 0 = fully forgiven at elite ratings). Set lower than the threshold fraction to create a smooth ramp-down over elite ratings. Default 1.0.',
-  premHeroPenaltyFracUrgentPos:'Prem-hero urgent-position penalty fraction — fraction of the full penalty kept when the card directly fills a critical positional gap in your formation (0.40 = 40% retained, so a big discount for genuine positional need). 0 = free pass, 1 = no discount at all. Default 0.40.',
+  premHeroPenaltyFracUrgentPos:'Prem-hero urgent-position penalty fraction — fraction of the full penalty kept when the card directly fills a critical positional gap in your formation (from pick 12 onward). 1.0 = no discount (default, off). 0.40 = 60% forgiven. 0 = free pass.',
   commonNatCount:'Common-nation count — how many top nations (by DB card count) to penalise as overrepresented (default 10, roughly France/England/Brazil…). 0 disables. Affects icons, heroes, and normals.',
   commonClubCount:'Common-club count — how many top Prem clubs (by card count) to penalise (default 3, typically Man City/Arsenal/Liverpool). 0 disables. Normals only.',
   commonHeroLeagueCount:'Common hero-league count — how many top hero leagues (by card count) to penalise (default 0 = off). Increase to discourage clustering on the most common hero leagues.',
@@ -2562,7 +2557,7 @@ function helpValue(c){
   // base value. The penalty scales exponentially from lowIconPenaltyMin at the threshold down to
   // lowIconPenaltyMax at rating 85 (both set in Advanced). Applies even to the first icon — the
   // free icon slot is best spent on a strong card.
-  if(HW.lowIconRatingThreshold>0&&c.type==='icon'&&c.rating<HW.lowIconRatingThreshold){
+  if(HW.lowIconRatingThreshold>0&&c.type==='icon'&&c.rating<=HW.lowIconRatingThreshold){
     const thr=HW.lowIconRatingThreshold,hardFloor=85;
     const minPen=Math.max(0,SHAPE.lowIconPenaltyMin||0);
     const maxPen=Math.max(minPen,SHAPE.lowIconPenaltyMax||0);
