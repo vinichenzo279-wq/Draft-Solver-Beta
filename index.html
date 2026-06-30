@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta property="og:description" content="DraftSolver">
-<title>Draft Solver v7.1.3</title>
+<!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
+     small — see the longer note next to the <h1> for why this matters. -->
+<title>Draft Solver v7.1.4</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -118,7 +120,16 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 </head>
 <body>
 <header style="position:relative">
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.1.3</span></h1>
+  <!-- PATCH NOTE FOR FUTURE EDITORS (incl. AI assistants): whenever you change this file in any
+       way, bump the "v7.x.x" version text in the <span> below (and the <title> above it stays in
+       sync the same way). This isn't just cosmetic — _APP_VERSION further down reads this exact
+       span's text at runtime and stamps it onto every auto-save; on load, a save stamped with a
+       different version is treated as stale and discarded (see restoreLocal()). Skipping the bump
+       means the next edit silently shares a version with this one, which (a) makes it impossible
+       for the user to tell which build they're on, and (b) can let an incompatible old auto-save
+       load as if nothing changed. Bump on every patch, no matter how small.
+  -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.1.4</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:4px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -2966,45 +2977,57 @@ function judgeBoard(){
 // ---- Phase 4: solve as ground truth. One cached solve per board state tells us the real projected XI, what's benched, and any unfillable position. ----
 function pendingCount(){return board?board.filter(s=>slotState(s)==='pending').length:0;}
 function boardKey(){return chosenForm+'|'+(board?board.map(s=>s.id+(s.busted?'!':'')).join(','):'')+'|'+cards.map(c=>c.id+':'+c.slot+':'+c.hold+':'+c.rating+c.type+c.nation+c.league+c.club+(c.pos||[]).join('')).join(';');}
-// Greedy formation coverage check respecting hold groups.
-// Walks each formation slot in order; for each slot finds an unused hold group
-// that can fill it and marks that group consumed. Returns array of position names
-// that couldn't be filled (gaps). This correctly handles:
-//   - duplicate slots (two CBs need two independent sources)
-//   - holds with mixed positions (CDM+CB hold: the group fills whichever slot needs it first,
-//     but since we try all cards in the group, it won't mis-consume a versatile card)
-//   - holds where only one card can ever be picked (group consumed after first use)
-function greedyGaps(formSlots, cardList){
-  // Least-flexible-first assignment: sort both slots and cards so that positions
-  // with fewer covering cards (and cards covering fewer slots) are matched first.
-  // This prevents a flex card like Puyol (CB/RB) being consumed by a CB slot when
-  // a CB-only card exists, which would falsely show RB as uncoverable.
+// True formation coverage check via maximum bipartite matching (Kuhn's algorithm).
+// Each formation slot is matched against an unused hold group; a group's reach is
+// the UNION of every member card's positions (any one card from a multi-card hold
+// could end up being the one kept) — same modelling as before. What changes is HOW
+// the matching is built: this version can REASSIGN a group that's already matched to
+// a different slot mid-search (an "augmenting path") to free it up for a slot that
+// needs it more. A single greedy pass can't do that — it locks in its first choice
+// per slot and never revisits it, so a flexible hold (e.g. one card covering
+// CM/LM/RM/CAM/ST) can get burned filling a slot it didn't have to, starving a later
+// slot that had no other cover — which is exactly how a fully-fillable XI could get
+// a position falsely reported as missing. Augmenting-path matching always finds the
+// TRUE maximum match, so a slot is only ever reported missing when no arrangement of
+// the squad can cover it — the same guarantee the full DFS solver (solveBest) relies
+// on, so this check and the solver can never disagree.
+function trueGaps(formSlots, cardList){
   const groupOf=c=>c.hold||('_solo_'+c.id);
-  const entries=cardList.filter(c=>c.pos&&c.pos.length).map(c=>({pos:c.pos,g:groupOf(c)}));
-  // For slot-scarcity counting, represent each hold group by the UNION of all its members'
-  // positions — not just the first card. A group like [Buffon(GK), Matheus Nunes(RB/CM/RM)]
-  // can cover GK OR RB, so it must count toward RB's coverage even though Buffon came first.
+  // Union each hold group's coverage from all its members (a multi-card hold can
+  // fill whichever of its members' positions is actually needed elsewhere).
   const groupPosMap=new Map();
-  entries.forEach(e=>{
-    if(!groupPosMap.has(e.g))groupPosMap.set(e.g,[]);
-    e.pos.forEach(p=>{if(!groupPosMap.get(e.g).includes(p))groupPosMap.get(e.g).push(p);});
+  cardList.filter(c=>c.pos&&c.pos.length).forEach(c=>{
+    const g=groupOf(c);
+    if(!groupPosMap.has(g))groupPosMap.set(g,new Set());
+    c.pos.forEach(p=>groupPosMap.get(g).add(p));
   });
-  const uniqEntries=[...groupPosMap.entries()].map(([g,pos])=>({g,pos}));
-  const slotCoverage=slot=>uniqEntries.filter(e=>e.pos.includes(slot)).length;
-  // Sort slots: rarest first (fewest covering cards → must be filled first)
-  const sortedSlots=formSlots.slice().sort((a,b)=>slotCoverage(a)-slotCoverage(b));
-  const usedGroups=new Set();
-  const gaps=[];
-  for(const slot of sortedSlots){
-    // Among unused cards that cover this slot, pick the least flexible one
-    // (fewest positions it can play = least wasted if assigned here)
-    const eligible=entries.filter(e=>!usedGroups.has(e.g)&&e.pos.includes(slot));
-    if(!eligible.length){gaps.push(slot);}
-    else{
-      eligible.sort((a,b)=>a.pos.length-b.pos.length);
-      usedGroups.add(eligible[0].g);
+  const groups=[...groupPosMap.entries()].map(([g,pos])=>({g,pos}));
+  // slotGroups[i] = indices into `groups` that can cover formSlots[i]
+  const slotGroups=formSlots.map(slot=>{
+    const out=[];
+    groups.forEach((gr,gi)=>{if(gr.pos.has(slot))out.push(gi);});
+    return out;
+  });
+  const matchOfSlot=new Array(formSlots.length).fill(-1); // slot index -> group index
+  const matchOfGroup=new Array(groups.length).fill(-1);   // group index -> slot index
+  // Standard Kuhn's-algorithm augmenting path: try every candidate group for this
+  // slot; if a group is taken, try to bump its current slot onto a different group
+  // first (recursively) before giving up on this group.
+  function augment(slotIdx,visited){
+    for(const gi of slotGroups[slotIdx]){
+      if(visited.has(gi))continue;
+      visited.add(gi);
+      if(matchOfGroup[gi]===-1||augment(matchOfGroup[gi],visited)){
+        matchOfGroup[gi]=slotIdx;
+        matchOfSlot[slotIdx]=gi;
+        return true;
+      }
     }
+    return false;
   }
+  for(let i=0;i<formSlots.length;i++)augment(i,new Set());
+  const gaps=[];
+  for(let i=0;i<formSlots.length;i++)if(matchOfSlot[i]===-1)gaps.push(formSlots[i]);
   return gaps;
 }
 function solveContext(nodeCap){
@@ -3015,9 +3038,10 @@ function solveContext(nodeCap){
   if(!form){_solveCache={key,ok:false,xis:[],missing:[]};return _solveCache;}
   syncAllSlots();
   const cand=form.slots.map(s=>cards.filter(c=>c.pos.includes(s)));
-  // Greedy assignment to find truly uncoverable slots, respecting duplicates.
-  // e.g. one CB card can't fill two CB slots — greedy consumes it for the first, leaving the second missing.
-  const missingSlots=greedyGaps(form.slots,cards);
+  // Maximum-matching check for truly uncoverable slots, respecting duplicates.
+  // e.g. one CB card can't fill two CB slots, but unlike a greedy pass this can
+  // re-route an already-assigned hold elsewhere if a later slot needs it more.
+  const missingSlots=trueGaps(form.slots,cards);
   let ctx;
   if(missingSlots.length){
     ctx={key,ok:false,xis:[],missing:[...new Set(missingSlots)]};
@@ -3056,7 +3080,7 @@ function runHelperDeep(cap){
     const form=FORMS.find(f=>f.name===chosenForm);
     if(!form||!board||!chosenForm){_hideSolverOverlay();judgeSlotInline();return;}
     syncAllSlots();
-    const missingSlots=greedyGaps(form.slots,cards);
+    const missingSlots=trueGaps(form.slots,cards);
     if(missingSlots.length){_hideSolverOverlay();judgeSlotInline();return;}
     const r=solveBest(form,cards,nextCap,getRatingCeil());
     _hideSolverOverlay();
@@ -3099,9 +3123,9 @@ function judgeSlotInline(preCtx){
       syncAllSlots();
       // What's missing WITHOUT this pick's cards?
       const cardsWithout=cards.filter(c=>c.slot!==s.id);
-      const missingBefore=[...new Set(greedyGaps(form.slots,cardsWithout))];
+      const missingBefore=[...new Set(trueGaps(form.slots,cardsWithout))];
       // What's still missing WITH this pick's cards included?
-      const missingNow=[...new Set(greedyGaps(form.slots,cards))];
+      const missingNow=[...new Set(trueGaps(form.slots,cards))];
       // What did this pick newly cover?
       const nowCovered=missingBefore.filter(p=>!missingNow.includes(p));
 
@@ -3114,7 +3138,7 @@ function judgeSlotInline(preCtx){
         // enable the coverage when added to the pool.
         const coveringOpts=directOpts.length>0?directOpts:opts.filter(o=>{
           const trial=[...cardsWithout,o];
-          const stillMissing=new Set(greedyGaps(form.slots,trial));
+          const stillMissing=new Set(trueGaps(form.slots,trial));
           return nowCovered.every(p=>!stillMissing.has(p));
         });
         const posLabel='<b>'+nowCovered.join(', ')+'</b>';
@@ -3148,7 +3172,7 @@ function judgeSlotInline(preCtx){
         const _directU=opts.filter(o=>nowCovered.some(p=>o.pos&&o.pos.includes(p)));
         const optsCovering=_directU.length>0?_directU:opts.filter(o=>{
           const trial=[...cardsWithout,o];
-          const stillMissing=new Set(greedyGaps(form.slots,trial));
+          const stillMissing=new Set(trueGaps(form.slots,trial));
           return nowCovered.every(p=>!stillMissing.has(p));
         });
         if(optsCovering.length){
@@ -3351,6 +3375,8 @@ function refreshLog(){const el=$('#log');if(!el)return;let txt=JSON.stringify(bu
 // for file:// origins (Chrome on Android, some desktop setups). Export is still the
 // guaranteed cross-device backup. A final emergency save fires on beforeunload/pagehide.
 const _SAVE_KEY='pacwyn_state_v3';
+// Sourced live from the <h1><span>v7.x.x</span> in the markup — bump that span (and <title>) on
+// every patch. See the comment above the <h1> for why this matters beyond just cosmetics.
 const _APP_VERSION=(document.querySelector('h1 span')||{textContent:''}).textContent.replace(/^v/,'').trim()||'4.7';
 function saveLocal(){
   try{const d=JSON.stringify({...buildState(),_v:_APP_VERSION});localStorage.setItem(_SAVE_KEY,d);sessionStorage.setItem(_SAVE_KEY,d);}catch(e){}
@@ -3388,11 +3414,35 @@ function downloadLog(){
   document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),1500);
 }
+// Exported .txt files are sometimes pure JSON (buildState() only), and sometimes JSON followed
+// by the human-readable solve summary that refreshLog() appends after it (see downloadLog()).
+// Parse the whole thing first; if that fails because of trailing content after the JSON object,
+// fall back to extracting just the first balanced {...} block and ignore everything after it.
+function extractFirstJSONObject(text){
+  const start=text.indexOf('{');
+  if(start<0)throw new Error('no JSON object found in file');
+  let depth=0,inStr=false,esc=false;
+  for(let i=start;i<text.length;i++){
+    const ch=text[i];
+    if(inStr){
+      if(esc)esc=false;
+      else if(ch==='\\')esc=true;
+      else if(ch==='"')inStr=false;
+    }else{
+      if(ch==='"')inStr=true;
+      else if(ch==='{')depth++;
+      else if(ch==='}'){depth--;if(depth===0)return text.slice(start,i+1);}
+    }
+  }
+  throw new Error('unbalanced braces in file');
+}
 document.getElementById('importFile').addEventListener('change',e=>{
   const f=e.target.files[0];if(!f)return;
   const rd=new FileReader();
   rd.onload=()=>{try{
-    const s=JSON.parse(rd.result);
+    let s;
+    try{s=JSON.parse(rd.result);}
+    catch(parseErr){s=JSON.parse(extractFirstJSONObject(rd.result));}
     if(!s.cards)throw new Error('no cards in file');
     cards=s.cards.map(c=>({id:uid++,label:c.label||'#',type:c.type||'normal',rating:c.rating||0,
       nation:c.nation||'',league:c.league||'England Premier League',club:c.club||null,
