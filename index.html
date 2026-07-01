@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v7.4.1</title>
+<title>Draft Solver v7.5</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,7 +129,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.4.1</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.5</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:4px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1409,7 +1409,7 @@ function applyEditFormation(name){
   f.slots.forEach((p,i)=>{seen[p]=(seen[p]||0)+1;
     board.push({id:'P'+i,kind:'pos',pos:p,label:tot[p]>1?p+seen[p]:p,busted:false});});
   for(let i=1;i<=12;i++)board.push({id:'B'+i,kind:'bench',pos:null,label:'Bench '+i,busted:false});
-  chosenForm=name;activeSlot=null;editingId=null;lastSolve=null;_formChanged=true;
+  chosenForm=name;activeSlot=null;editingId=null;_formChanged=true;_clearSolve();
   // Note: cards, uid, and hold groups are intentionally preserved.
   // The board display will show all cards under bench since old slot ids no longer exist,
   // but the solver pool and hold groupings remain intact and correct.
@@ -1442,7 +1442,7 @@ function buildBoard(form){
   const tot={};form.slots.forEach(p=>tot[p]=(tot[p]||0)+1);const seen={};
   form.slots.forEach((p,i)=>{seen[p]=(seen[p]||0)+1;board.push({id:'P'+i,kind:'pos',pos:p,label:tot[p]>1?p+seen[p]:p,busted:false});});
   for(let i=1;i<=12;i++)board.push({id:'B'+i,kind:'bench',pos:null,label:'Bench '+i,busted:false});
-  cards=[];uid=1;activeSlot=null;editingId=null;lastSolve=null;
+  cards=[];uid=1;activeSlot=null;editingId=null;_clearSolve();
 }
 let _capPick=null; // captain position chooser
 function slotById(id){if(id==='CAP')return {id:'CAP',kind:'cap',pos:null,label:'Captain',busted:false};return board?board.find(s=>s.id===id):null;}
@@ -1528,12 +1528,12 @@ function addPlayerToSlot(){
     if(slotCards(s.id).length>=5){err.textContent='Max 5 per slot.';return;}
     cards.push(Object.assign({id:uid++,slot:s.id,hold:null},c));
   }
-  s.busted=false;syncSlot(s.id);
+  s.busted=false;syncSlot(s.id);_clearSolve();
   resetForm();renderSlotEditor();refreshLog();
 }
-function delCard(id){const c=cards.find(x=>x.id===id);cards=cards.filter(x=>x.id!==id);if(c&&c.slot)syncSlot(c.slot);if(editingId===id){editingId=null;resetForm();}if(activeSlot)renderSlotEditor();else renderCards();refreshLog();}
-function bustSlot(){const s=slotById(activeSlot);if(!s)return;cards=cards.filter(c=>c.slot!==s.id);s.busted=true;closeSlot();saveLocal();}
-function resetSlot(){const s=slotById(activeSlot);if(!s)return;cards=cards.filter(c=>c.slot!==s.id);s.busted=false;editingId=null;resetForm();renderSlotEditor();refreshLog();}
+function delCard(id){const c=cards.find(x=>x.id===id);cards=cards.filter(x=>x.id!==id);if(c&&c.slot)syncSlot(c.slot);_clearSolve();if(editingId===id){editingId=null;resetForm();}if(activeSlot)renderSlotEditor();else renderCards();refreshLog();}
+function bustSlot(){const s=slotById(activeSlot);if(!s)return;cards=cards.filter(c=>c.slot!==s.id);s.busted=true;_clearSolve();closeSlot();saveLocal();}
+function resetSlot(){const s=slotById(activeSlot);if(!s)return;cards=cards.filter(c=>c.slot!==s.id);s.busted=false;editingId=null;_clearSolve();resetForm();renderSlotEditor();refreshLog();}
 /* ---- captain: a separate first pick, always committed into a position slot, never benched ---- */
 function pickCaptain(){
   if(!board){alert('Build a board first (confirm a formation).');return;}
@@ -1554,11 +1554,11 @@ function placeCaptain(id,pos){
   if(!slot){alert('No open '+pos+' slot in this formation.');return;}
   cards=cards.filter(x=>x.slot!=='CAP');
   cards.push({id:uid++,slot:slot.id,hold:null,captain:true,label:c.label,type:c.type,rating:c.rating,nation:c.nation,league:c.league,club:c.club,pos:c.pos.slice()});
-  syncSlot(slot.id);_capPick=null;activeSlot=null;editingId=null;renderCards();
+  syncSlot(slot.id);_capPick=null;activeSlot=null;editingId=null;_clearSolve();renderCards();
   document.querySelector('.tabbar button[data-v="v-cards"]').click();
 }
-function cancelCaptain(){cards=cards.filter(x=>x.slot!=='CAP');_capPick=null;activeSlot=null;editingId=null;renderCards();}
-function clearCards(){if(!board)return;if(confirm('Clear all picks, managers, the current solve, and reset the formation selection?')){cards=[];managers=[];board=null;chosenForm=null;lastSolve=null;activeSlot=null;editingId=null;renderCards();renderMgr();$('#solveOut').innerHTML='';$('#mgrOut').innerHTML='';$('#m-name').value='';$('#m-name-list').classList.remove('open');updateSolveForm();sortForm($('#fgrid').dataset.m||'rank');saveLocal();}}
+function cancelCaptain(){cards=cards.filter(x=>x.slot!=='CAP');_capPick=null;activeSlot=null;editingId=null;_clearSolve();renderCards();}
+function clearCards(){if(!board)return;if(confirm('Clear all picks, managers, the current solve, and reset the formation selection?')){cards=[];managers=[];board=null;chosenForm=null;activeSlot=null;editingId=null;_clearSolve();renderCards();renderMgr();$('#m-name').value='';$('#m-name-list').classList.remove('open');updateSolveForm();sortForm($('#fgrid').dataset.m||'rank');saveLocal();}}
 function typLabel(t){return t==='icon'?'ICON':t==='hero'?'HERO':'PREM'}
 function cardMeta(c){
   if(c.type==='icon')return c.nation+' \u00b7 Icon';
@@ -1589,7 +1589,7 @@ function swapTap(id){
   });
   // swap bust flags
   const ba=sa.busted,bb=sb.busted;sa.busted=bb;sb.busted=ba;
-  _swapMode=false;_swapPick=[];lastSolve=null;
+  _swapMode=false;_swapPick=[];_clearSolve();
   saveLocal();renderCards();
 }
 
@@ -1965,7 +1965,16 @@ function _renderEmergencyFillInner(form,cap){
     }
     const pickPerHold='<div class="panel"><h2>Pick per hold</h2>'+hp+'<div class="tiny" style="margin-top:6px">In hold order. Committed cards need no pick.</div>'+(subPicks.length?'<div class="tiny" style="margin:8px 0 4px;color:var(--mut)">The rest won\u2019t start \u2014 pick these for sub / manager-insurance value:</div>'+subPicks.map(s=>'<span class="kv"><span>'+esc(lblOf(s.h))+'</span><b>'+esc(s.label)+'</b></span>').join(''):'')+(benchCapped?'<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 Bench search was capped \u2014 increase the node cap for a more thorough sub search.</div>':'')+'</div>';
     out.innerHTML=head+'<div class="panel"><h2>Emergency fill</h2><div class="xi">'+rows+'</div></div>'+score+pickPerHold;
-    window._solved={main:{sc:emSc,xi:em.pick.filter(Boolean)},form,oopIds};window._bench=cards.filter(c=>!c.hold&&!usedIds.has(c.id)).map(c=>({c,why:''}));$('#mgrPanel').style.display='block';}else{$('#mgrPanel').style.display='none';}
+    window._solved={main:{sc:emSc,xi:em.pick.filter(Boolean)},form,oopIds};window._bench=cards.filter(c=>!c.hold&&!usedIds.has(c.id)).map(c=>({c,why:''}));$('#mgrPanel').style.display='block';
+    // Mirror what applyTie() does for a normal solve: stamp lastSolve and push it (plus the current
+    // manager list) into the log. Previously only the main solver did this, so an emergency/OOP fill
+    // never made it into the save/log output at all.
+    lastSolve={formation:form.name,capped:!!em.capped,score:emSc.total,rating:emSc.rating,
+      chem:emSc.chem,nations:emSc.nations,leagues:emSc.leagues,clubs:emSc.clubs,full:emSc.full,ties:1,tie:1,cleanMgrs:cleanMgrCount(emSc),
+      emergency:true,oopCount:em.oopCount,
+      xi:em.pick.map((c,i)=>c?{slot:form.slots[i],label:c.label,type:c.type,rating:c.rating,nation:c.nation,league:leagueOf(c),club:c.club,oop:!!em.oop[i]}:null)};
+    refreshLog();
+    }else{$('#mgrPanel').style.display='none';}
 }
 function _showSolverOverlay(){
   const ov=$('#solverOverlay'),bd=$('#solverBadge');
@@ -2070,6 +2079,11 @@ function runSolve(nodeCap){
   const out=$('#solveOut');
   if(!chosenForm){out.innerHTML='<div class="note">Pick a formation in the Formation tab first.</div>';return}
   if(cards.length<11){out.innerHTML='<div class="note">Add at least 11 cards (you have '+cards.length+').</div>';return}
+  // Wipe any previous solve (main or emergency) before starting a new one. Without this, a resolve
+  // that lands on the emergency/OOP path left the OLD main solve's window._solveCtx sitting around,
+  // and refreshLog() checks that ctx FIRST — so the log kept showing the stale main-solve summary
+  // forever, never switching over to the new OOP one (and vice versa on the way back to a clean XI).
+  _clearSolve();refreshLog();
   const cap=nodeCap||getNodeCap();
   const _begin=()=>{
     _showSolverOverlay();
@@ -2522,11 +2536,23 @@ function pickMgr(cap){
   }
   managers.forEach(m=>consider(m,mainXI,baseSc)); // baseline: each manager on the XI as drafted
   if(oopIds&&oopIds.size){
-    // Emergency XI (out-of-position slots) — keep it simple: only try single bench swaps that stay legal.
+    // Emergency XI (out-of-position slots) — try single bench swaps in two flavours:
+    //  1) a bench card that's LEGAL for the slot (as before) — this can fix an OOP slot into a
+    //     real chem-earning one, or upgrade an already-legal slot.
+    //  2) a bench card that's ALSO illegal for the slot, but ONLY when that slot is already OOP.
+    //     A slot that's already OOP earns 0 chem no matter who's standing in it, so swapping its
+    //     occupant for another equally-illegal bench card can never cost chem — but it CAN pick up
+    //     a better nation/league/club match for a given manager (e.g. two same-position cards of
+    //     different nationalities, like a second copy of the same player from another country).
+    //     Legally-filled slots are never touched by this flavour, so a squad that doesn't need an
+    //     emergency fill is completely unaffected — this whole branch only runs when oopIds is non-empty.
     // Chem is scored with emergencyScoreXI (not scoreXI) since scoreXI's glue-based shortcut would assume
     // max chem even though the un-swapped OOP slot(s) are still illegally filled and truly earn 0.
     managers.forEach(m=>{bench.forEach(b=>{for(let q=0;q<mainXI.length;q++){
-      if(b.id===mainXI[q].id||!(b.pos||[]).includes(form.slots[q]))continue;
+      if(b.id===mainXI[q].id)continue;
+      const bLegalHere=(b.pos||[]).includes(form.slots[q]);
+      const slotAlreadyOOP=oopIds.has(mainXI[q].id);
+      if(!bLegalHere&&!slotAlreadyOOP)continue; // never turn a legal slot illegal
       const xi=mainXI.slice();xi[q]=b;consider(m,xi,emergencyScoreXI(xi,form.slots));
     }});});
   } else {
@@ -3517,6 +3543,25 @@ function refreshLog(){const el=$('#log');if(!el)return;let txt=JSON.stringify(bu
     const an=ctx.analyses&&ctx.analyses[cur];
     txt+='\n\nManagers ('+MANAGER_DB.length+' in DB): '+(an?((an.clean+an.subbed2)+' reach +2 ('+an.clean+' clean'+(an.subbed2?', '+an.subbed2+' via a sub':'')+'), '+an.plus1+' reach +1'):(cleanMgrCount(t.sc)+' clean +2 (sub-depth not run on this tier/tie)'));
     const selMgrs=managers.map(m=>({m,gain:mgrGain(t.sc,m)}));
+    txt+='\n\nSelected ('+selMgrs.length+'):\n'+(selMgrs.length?selMgrs.map(({m,gain})=>'  '+(m.name||'?')+' \u2014 '+m.nation+' / '+m.league+'  [+'+gain+']').join('\n'):'  none selected');
+    if(selMgrs.length){
+      const top=selMgrs.reduce((a,b)=>b.gain>a.gain?b:a);
+      txt+='\n\nFinal choice: '+(top.m.name||'?')+' \u2014 '+top.m.nation+' / '+top.m.league+'  [+'+top.gain+']';
+    }
+  } else if(lastSolve&&lastSolve.emergency&&Array.isArray(lastSolve.xi)){
+    // Emergency / out-of-position fill has no ties/ctx (it's a single arrangement, not a DFS search
+    // with alternates), so it never took the branch above. Build the summary straight from the
+    // persisted lastSolve snapshot (stamped by _renderEmergencyFillInner) rather than window._solved —
+    // lastSolve is what actually gets saved/restored, so this can't drift out of sync with it.
+    const xi=lastSolve.xi;
+    const nationSet=new Set(xi.filter(Boolean).map(c=>c.nation));
+    const leagueSet=new Set(xi.filter(Boolean).map(c=>c.league));
+    const scLike={nationSet,leagueSet};
+    txt+='\n\n/* ==== Current solution (emergency / out-of-position fill) ==== */';
+    txt+='\ntotal '+lastSolve.score+'  =  rating '+lastSolve.rating+' + chem '+lastSolve.chem+' + '+lastSolve.nations+' nat + '+lastSolve.leagues+' lg + '+lastSolve.clubs+' club';
+    txt+='\n\nStarting XI:\n'+xi.map(c=>c?('  '+c.slot+': '+c.label+' '+c.rating+' '+c.type+' '+c.nation+' / '+(c.league||'')+(c.oop?'  [OUT OF POSITION \u00b7 0 chem]':'')):'  \u2014 none').join('\n');
+    txt+='\n\nManagers ('+MANAGER_DB.length+' in DB): '+cleanMgrCount(scLike)+' clean +2 (sub-depth search not run on emergency fills)';
+    const selMgrs=managers.map(m=>({m,gain:mgrGain(scLike,m)}));
     txt+='\n\nSelected ('+selMgrs.length+'):\n'+(selMgrs.length?selMgrs.map(({m,gain})=>'  '+(m.name||'?')+' \u2014 '+m.nation+' / '+m.league+'  [+'+gain+']').join('\n'):'  none selected');
     if(selMgrs.length){
       const top=selMgrs.reduce((a,b)=>b.gain>a.gain?b:a);
