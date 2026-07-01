@@ -2423,11 +2423,17 @@ function renderSummary(main,form,r,ms,cleanMgrs,idx){
     +'<div class="rings"><div class="ring n"><b>'+sc.nations+'</b><span>NATIONS</span></div>'
     +'<div class="ring l"><b>'+sc.leagues+'</b><span>LEAGUES</span></div>'
     +'<div class="ring c"><b>'+sc.clubs+'</b><span>CLUBS</span></div></div>'
-    +'<div class="tiny" style="margin-top:8px">Chem '+chemFlag+' \u00b7 '+r.nodes.toLocaleString()+' nodes'+_msTxt+_faTxt+(r.capped?' \u00b7 result shown above':'')+'</div>'+tieNote+'</div>'
+    +'<div class="tiny" style="margin-top:8px">Chem '+chemFlag+' \u00b7 '+r.nodes.toLocaleString()+' nodes'+_msTxt+_faTxt+(r.capped?' \u00b7 result shown above':'')+'</div>'+tieNote+_poolSizeWarning()+'</div>'
   +'<div class="panel"><h2>Starting XI</h2><div class="xi">'+xiHtml+'</div></div>'
   +'<div class="panel"><h2>Pick per hold</h2>'+hp+'<div class="tiny" style="margin-top:6px">In hold order. Committed cards need no pick.</div>'+(subPicks.length?'<div class="tiny" style="margin:8px 0 4px;color:var(--mut)">The rest won\u2019t start \u2014 pick these for sub / manager-insurance value:</div>'+subPicks.map(s=>'<span class="kv"><span>'+esc(lblOf(s.h))+'</span><b>'+esc(s.label)+'</b></span>').join(''):'')+'</div>'
   +'<div class="panel"><h2>Bench \u2014 manager insurance</h2><div class="tiny">Best leftover from each unused hold. \u2605 = carries something fresh that can sub in if a manager clashes.</div><div class="xi" style="margin-top:6px">'+benchHtml+'</div></div>'+benchNote;
   window._bench=bench;
+}
+// Flags an oversized total card pool: past a point, extra low-value cards mostly just add
+// combinations for the DFS solver to chew through without any real shot at the XI. 50 is a
+// heuristic trigger point, not a hard cap — nothing stops the solve, it's just a nudge.
+function _poolSizeWarning(){
+  return cards.length>50?'<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 '+cards.length+' cards on the board \u2014 consider removing deadweight (options with no realistic shot at the XI) so the end-solve stays fast.</div>':'';
 }
 function insWhy(c,sc){const f=[];
   if(!sc.nationSet.has(c.nation))f.push('+nat');
@@ -3194,14 +3200,17 @@ function rankAndVerdict(list,isCap){
   const ranked=list.map((c,i)=>{_lastFullRedundant=false;const v=helpValue(c);return{c,i,v,fullyRedundant:_lastFullRedundant};}).sort((a,b)=>b.v-a.v);
   const top=ranked[0];
   const lowBar=HW.normalBase+0.5*(HW.clubRarity+HW.nation+HW.rating)+0.4*HW.posScarce;
-  const lowNote=top&&top.v<lowBar?(isCap
-    ?'<br><br><b>All low-value:</b> no icon/hero or strong nation / club / league \u2014 a captain board is skippable, so consider skipping it.'
-    :'<br><br><b>All low-value:</b> nothing here stands out (no icon/hero, weak nation / club / league).'):'';
+  // Captain is TAKE-or-SKIP-THE-BOARD — HOLD isn't an option for it — so "everything here is weak"
+  // is directly actionable advice ("skip this board, wait for a better one"). Every other pick type
+  // can always fall back to HOLD regardless of value, so the same text there was just a label with
+  // nothing to do about it. Scoped to isCap only; lowBar itself is left generally computed in case
+  // a future feature wants a general weak-board signal again.
+  const lowNote=(isCap&&top&&top.v<lowBar)?'<br><br><b>All low-value:</b> no icon/hero or strong nation / club / league \u2014 a captain board is skippable, so consider skipping it.':'';
   let verdict,detail;
   if(ranked.length===1){verdict='TAKE';detail='Only one option \u2014 no choice to preserve, commit it.'+lowNote;}
   else if(noHoldOn()&&!isCap){verdict='TAKE';detail='No-hold drafting \u2014 take <b>'+esc(cardName(top.c))+'</b>, the strongest option here, and move on. (Toggle off in Weights to let it suggest holds.)'+lowNote;}
   else{const dom=top.v-ranked[1].v>SHAPE.takeThreshold;
-    if(dom){verdict='TAKE';detail='<b>'+esc(cardName(top.c))+'</b> is the clear pick \u2014 strongest on type / club / nation / league / fit. Holding any board with 2+ fieldable cards is theoretically a touch better (keeps end-solve freedom), but TAKE is the clean call.'+lowNote;}
+    if(dom){const _others=list.length-1;verdict='TAKE';detail='<b>'+esc(cardName(top.c))+'</b> is the clear pick \u2014 strongest on type / club / nation / league / fit. Holding any board with 2+ fieldable cards is theoretically a touch better (keeps end-solve freedom), but TAKE is the clean call.<br><br>If you do take it, remove the other '+(_others>1?_others+' options':'option')+' from this hold afterwards so they don\u2019t sit in the pool for the end-solve.'+lowNote;}
     else{verdict=isCap?'TAKE':'HOLD';detail=isCap?'No single dominant option, but the captain slot is always a commit \u2014 take <b>'+esc(cardName(top.c))+'</b>, the top-rated pick here.'+lowNote:'Two or more undominated options \u2014 bank the board and let the end-solve decide which survives the clashes.'+lowNote;}
   }
   return {ranked,verdict,detail};
@@ -3395,12 +3404,15 @@ function judgeSlotInline(preCtx){
 
       if(nowCovered.length){
         // ---- SUCCESSFUL FILL: this board covers something that was missing ----
-        // First try direct coverage: opts whose pos array includes the newly-covered position.
-        const directOpts=opts.filter(o=>nowCovered.some(p=>o.pos&&o.pos.includes(p)));
-        // If none directly cover it, the coverage is transitive (e.g. Marcelo fills LB, which
-        // frees Gvardiol to cover LM). Simulate each opt individually to find which ones
-        // enable the coverage when added to the pool.
-        const coveringOpts=directOpts.length>0?directOpts:opts.filter(o=>{
+        // Test EVERY option on its own merits — direct (its pos array literally includes the
+        // newly-covered position) OR transitive (e.g. Marcelo fills LB, which frees Gvardiol to
+        // cover LM). Previously this stopped at direct matches the moment ANY option in the hold
+        // had one, so a same-hold option that only covers transitively (like Yorke covering ST
+        // while Odegaard covers CAM via CM-flex) never got listed even though it independently
+        // keeps the XI fillable too. Now every option is simulated individually and ALL that work
+        // are reported, direct or not.
+        const coveringOpts=opts.filter(o=>{
+          if(o.pos&&nowCovered.some(p=>o.pos.includes(p)))return true; // direct match
           const trial=[...cardsWithout,o];
           const stillMissing=new Set(trueGaps(form.slots,trial));
           return nowCovered.every(p=>!stillMissing.has(p));
@@ -3432,9 +3444,11 @@ function judgeSlotInline(preCtx){
 
       if(nowCovered.length){
         // Green case: urgency warns not to skip if time is short.
-        // Use same direct-then-transitive logic as the green note above.
-        const _directU=opts.filter(o=>nowCovered.some(p=>o.pos&&o.pos.includes(p)));
-        const optsCovering=_directU.length>0?_directU:opts.filter(o=>{
+        // Same all-options-tested logic as the green note above — direct or transitive,
+        // every option gets its own check so indirect covers from this hold aren't hidden
+        // behind a same-hold sibling that happens to cover directly.
+        const optsCovering=opts.filter(o=>{
+          if(o.pos&&nowCovered.some(p=>o.pos.includes(p)))return true;
           const trial=[...cardsWithout,o];
           const stillMissing=new Set(trueGaps(form.slots,trial));
           return nowCovered.every(p=>!stillMissing.has(p));
@@ -3547,6 +3561,7 @@ function judgeSlotInline(preCtx){
         // dimension shouldn't be rewarded just because the solver squeezed it into a slot).
         const boost=r.fullyRedundant?XI_BOOST*0.15:XI_BOOST;
         const bench=r.fullyRedundant?XI_BENCH*0.15:XI_BENCH;
+        r._frac=frac;r._boostMag=boost;r._benchMag=bench; // stashed for the same-hold starter-vs-bench note below
         if(frac===1){r.v+=boost;r._xiNote=r.fullyRedundant?'starter (redundant)':'starter';}
         else if(frac>0){r.v+=bench*(frac-1)+boost*frac;r._xiNote='starter in '+inCount+'/'+totalXIs+' tied squads'+(r.fullyRedundant?' (redundant)':'');}
         else{r.v-=XI_BENCH;r._xiNote='bench';}
@@ -3562,7 +3577,8 @@ function judgeSlotInline(preCtx){
         const postDom=ranked[0].v-ranked[1].v>SHAPE.takeThreshold;
         if(postDom&&rawVerdict==='HOLD'){
           rawVerdict='TAKE';
-          rawDetail='<b>'+esc(cardName(ranked[0].c))+'</b> is the clear pick \u2014 strongest on type / club / nation / league / fit and projects as the XI starter. Holding any board with 2+ fieldable cards is theoretically a touch better (keeps end-solve freedom), but TAKE is the clean call.';
+          const _others=ranked.length-1;
+          rawDetail='<b>'+esc(cardName(ranked[0].c))+'</b> is the clear pick \u2014 strongest on type / club / nation / league / fit and projects as the XI starter. Holding any board with 2+ fieldable cards is theoretically a touch better (keeps end-solve freedom), but TAKE is the clean call.<br><br>If you do take it, remove the other '+(_others>1?_others+' options':'option')+' from this hold afterwards so they don\u2019t sit in the pool for the end-solve.';
         }else if(!postDom&&rawVerdict==='TAKE'){
           rawVerdict='HOLD';
           rawDetail='Two or more undominated options \u2014 the XI solve narrows the gap between these, so bank the board and let the end-solve decide which survives the clashes.';
@@ -3591,16 +3607,36 @@ function judgeSlotInline(preCtx){
     :'';
   let inlineHoldNote='';
   if(!isCap&&ctx&&ctx.ok&&board&&board.some(s=>slotState(s)==='pending')&&ranked.length>=2){
-    const top=ranked[0],second=ranked[1];
-    if(top._xiNote==='starter'&&second._xiNote==='bench'&&top.c.hold&&top.c.hold===second.c.hold){
-      const gap=top.v-second.v;
-      if(gap<8){
-        const _sb=(SHAPE.starterBoost!=null?SHAPE.starterBoost:8),_bp=(SHAPE.benchPenalty!=null?SHAPE.benchPenalty:5);const rawGap=(second.v+_bp)-(top.v-_sb);
-        inlineHoldNote='<div class="note" style="border-color:var(--cyan);margin-top:8px">\u2139 You\u2019re starting <b>'+esc(cardName(top.c))+'</b> ('+top.v.toFixed(1)+') over <b>'+esc(cardName(second.c))+'</b> ('+second.v.toFixed(1)+') from the same hold. Those scores include a +'+_sb+' boost for starting and a \u2212'+_bp+' penalty for being benched \u2014 strip that out and <b>'+esc(cardName(second.c))+'</b> actually scores '+rawGap.toFixed(1)+' higher on raw card value. '+esc(cardName(top.c))+' fits the board as it stands, but with picks still to come '+esc(cardName(second.c))+' may prove the better long-term keep. Your call which to take.</div>';
+    // Best starter = the highest-scoring option with ANY XI presence (frac>0) — full OR
+    // partial — not strictly a frac===1 "starter". Best bench = the highest-scoring option
+    // with NO XI presence (frac===0). Comparing these two directly (rather than assuming
+    // they're simply ranked[0] and ranked[1]) means a partial starter that outscores a full
+    // starter is correctly treated as the one actually being preferred over the bench.
+    const starters=ranked.filter(r=>r._frac>0),benched=ranked.filter(r=>r._frac===0);
+    if(starters.length&&benched.length){
+      const bestStarter=starters.reduce((a,b)=>b.v>a.v?b:a);
+      const bestBench=benched.reduce((a,b)=>b.v>a.v?b:a);
+      if(bestStarter.c.hold&&bestStarter.c.hold===bestBench.c.hold){
+        const gap=bestStarter.v-bestBench.v;
+        // Max possible swing the adjustments alone could account for: the FRACTION of the
+        // boost the best starter actually earned (full boost if frac===1, otherwise boost*frac
+        // — a partial starter only got a slice of it) plus the full bench penalty on the best
+        // bench option (frac===0 always draws the full penalty). If that combined swing meets
+        // or beats the actual gap, the raw card-value ordering underneath is close enough to flag.
+        const boostEarned=bestStarter._frac===1?bestStarter._boostMag:bestStarter._boostMag*bestStarter._frac;
+        const benchPen=bestBench._benchMag;
+        const swing=boostEarned+benchPen;
+        if(swing>gap){
+          const rawGap=(bestBench.v+benchPen)-(bestStarter.v-boostEarned);
+          const starterAdjTxt=bestStarter._frac===1
+            ?'a +'+boostEarned.toFixed(1)+' boost for starting'
+            :'only a partial +'+boostEarned.toFixed(1)+' boost ('+bestStarter._xiNote+')';
+          inlineHoldNote='<div class="note" style="border-color:var(--cyan);margin-top:8px">\u2139 You\u2019re currently favouring <b>'+esc(cardName(bestStarter.c))+'</b> ('+bestStarter.v.toFixed(1)+') over <b>'+esc(cardName(bestBench.c))+'</b> ('+bestBench.v.toFixed(1)+') from the same hold. Those scores include '+starterAdjTxt+' and a \u2212'+benchPen.toFixed(1)+' penalty for being benched \u2014 strip both out and <b>'+esc(cardName(bestBench.c))+'</b> actually scores '+rawGap.toFixed(1)+' higher on raw card value. '+esc(cardName(bestStarter.c))+' fits the board as it stands, but with picks still to come '+esc(cardName(bestBench.c))+' may prove the better long-term keep. Your call which to take.</div>';
+        }
       }
     }
   }
-  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
+  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
     +'<div class="tiny" style="margin-top:8px">Rated against your weights \u2014 feel free to overrule any call you don\u2019t agree with. It\u2019s your draft.</div>'+inlineHoldNote+'</div>';
 }
 
