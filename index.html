@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v7.6.0</title>
+<title>Draft Solver v7.6.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,7 +129,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.6.0</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.6.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:4px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -960,6 +960,7 @@ function fillFormFromPlayer(p){
   const want=new Set((p.pos||[]).map(normPos));
   $('#posChips').querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',want.has(c.dataset.p)));
   $('#addErr').style.color='var(--warn)';$('#addErr').textContent='\u26a0 Autofilled from DB \u2014 DOUBLE-CHECK THE POSITIONS (least reliable field), then Add.';
+  const _apBtn=$('#addPlayerBtn');if(_apBtn)_apBtn.scrollIntoView({behavior:'smooth',block:'center'});
 }
 wireNameCombo();
 function fillHelpFromPlayer(p){
@@ -2392,30 +2393,10 @@ function renderSummary(main,form,r,ms,cleanMgrs,idx){
     const _bp=computeBenchPicks({xi:slotCards,sc},form);
     bench=_bp.bench;subPicks=_bp.subPicks;
   }
-  // Bench-vs-future note (fringe cases only): the weakest starter vs the strongest benched card by raw eval.
-  // If they grade within 8 of each other and the draft isn't over (future picks remain), flag that the
-  // benched card may be the better long-term value even though the current board needs the starter.
-  let benchNote='';
-  // Bench-vs-future note. Strictly per-hold: within a hold that fielded a starter, compare the started
-  // card against the best alternative in THAT SAME hold (the card you'd otherwise have benched). If they
-  // grade within 8 and the draft isn't over (any pending — not busted — slot remains, bench picks count),
-  // flag the single most valuable tempting alternative.
-  const _future=board&&board.some(s=>slotState(s)==='pending');
-  if(_future){
-    const startedByHold={};slotCards.forEach(c=>{if(c.hold)startedByHold[c.hold]=c;});
-    let pick=null;
-    Object.keys(startedByHold).forEach(h=>{
-      const starter=startedByHold[h];
-      let bench=null,bV=-Infinity;
-      cards.forEach(c=>{if(c.hold===h&&c.id!==starter.id){const v=helpValue(c);if(v>bV){bV=v;bench=c;}}});
-      if(!bench)return;
-      const sV=helpValue(starter),gap=sV-bV;
-      if(gap<8&&(!pick||bV>pick.bV))pick={starter,bench,sV,bV,gap};   // best (highest-eval) tempting alternative
-    });
-    if(pick){
-      benchNote='<div class="note" style="border-color:var(--cyan);margin-top:10px">\u2139 You\u2019re starting <b>'+esc(pick.starter.label)+'</b> ('+pick.sV.toFixed(1)+') over <b>'+esc(pick.bench.label)+'</b> ('+pick.bV.toFixed(1)+') from the same hold \u2014 they grade within '+Math.abs(pick.sV-pick.bV).toFixed(1)+' of each other. '+esc(pick.starter.label)+' fits the board as it stands, but with picks still to come '+esc(pick.bench.label)+' may prove the better long-term keep. Your call which to take.</div>';
-    }
-  }
+  // Bench-vs-future note removed from here — it belongs to the per-slot helper (judgeSlotInline),
+  // which already surfaces this via inlineHoldNote with the boost/penalty breakdown. Having it here
+  // too duplicated the same warning in the wrong section (Solve, not the pick/board helper).
+  const benchNote='';
   const benchHtml=bench.length?bench.map(b=>'<div class="xirow"><div class="sl">SUB</div>'
      +'<div class="pl"><b>'+b.c.label+'</b><div class="m">'+cardMeta(b.c)+' \u00b7 '+b.c.pos.join('/')+'</div></div>'
      +'<div class="r flag">'+b.why+'</div></div>').join(''):'<div class="tiny">No spare cards \u2014 every pick is starting.</div>';
@@ -2749,7 +2730,7 @@ function posScarceN(p){
 }
 function ratingN(r){return Math.max(0,Math.min(1,(Math.max(75,Math.min(99,r))-75)/24));} // 75->0, 99->1, clamped
 /* tunable weights for the helper */
-const HW_DEF={icon:12,hero:10,normalBase:8,nation:2.0,heroLeague:1.5,clubRarity:2.5,rating:2.5,posScarce:1.0,posFlex:0.5,clashAvoid:1.0,posNeed:0,premHeroPenalty:6.5};
+const HW_DEF={icon:12,hero:10,normalBase:8,nation:2.0,heroLeague:1.5,clubRarity:2.5,rating:2.5,posScarce:1.0,posFlex:0.5,clashAvoid:1.0,posNeed:0,premHeroPenalty:10};
 const HW_LABEL={icon:'Icon base value',hero:'Hero base value',normalBase:'Normal base value',rating:'Rating weight',nation:'Nation rarity weight',heroLeague:'Hero-league rarity weight',clubRarity:'Prem-club rarity weight',posScarce:'Scarce-position bonus',posFlex:'Position-flexibility bonus',posNeed:'Fill-needed-position bonus (squad mode)',clashAvoid:'Avoid-clashes weight (squad mode)',premHeroPenalty:'Prem-hero penalty'};
 const HW_ORDER=['icon','hero','normalBase','rating','nation','heroLeague','clubRarity','posScarce','posFlex','posNeed','clashAvoid','premHeroPenalty'];
 let HW={...HW_DEF};
@@ -3094,14 +3075,22 @@ function squadAdjust(c){
     // (If it only clashes held cards, it's still penalised but might legitimately upgrade them.)
     if(commitClashCount===clashes)_lastFullRedundant=true;
   }
-  // posNeed: only meaningful once 11+ slots are filled — before that almost everything is "needed"
-  const _filledSlots=board?board.filter(sl=>sl.id!==_judgeExclude&&(slotState(sl)==='committed'||slotState(sl)==='hold')).length:0;
+  // posNeed: only meaningful once 11+ slots are decided — before that almost everything is "needed".
+  // "Decided" mirrors the pick-number/urgency counter elsewhere (sl.busted||slotState!=='pending'):
+  // a busted slot IS a decision (that position is permanently dead), so it must count here too. Using
+  // committed/hold alone (the old check) undercounts any board with a busted position — it could sit
+  // well past the real "starting XI decided" point and still never reach 11, permanently blocking this
+  // whole bonus regardless of the weight.
+  const _filledSlots=board?board.filter(sl=>sl.id!==_judgeExclude&&(sl.busted||slotState(sl)!=='pending')).length:0;
   if(_filledSlots>=11){
     const form=FORMS.find(f=>f.name===chosenForm);
-    if(form&&c.pos&&c.pos.length){
-      const need={};form.slots.forEach(s=>need[s]=(need[s]||0)+1);
-      let gap=0;c.pos.forEach(p=>{if(need[p])gap=Math.max(gap,need[p]-(info.posSupply[p]||0));});
-      if(gap>0)adj+=HW.posNeed*Math.min(1,gap)*(0.4+0.6*Math.min(1,info.total/22));
+    if(form&&c.pos&&c.pos.length&&HW.posNeed>0){
+      const poolWithout=cards.filter(x=>!(_judgeExclude&&x.slot===_judgeExclude)&&x.id!==c.id);
+      const missingBefore=trueGaps(form.slots,poolWithout);
+      if(missingBefore.length){
+        const missingAfter=trueGaps(form.slots,[...poolWithout,c]);
+        if(missingAfter.length<missingBefore.length)adj+=HW.posNeed*(0.4+0.6*Math.min(1,info.total/22));
+      }
     }
     if(_urgentPos&&c.pos&&c.pos.some(p=>_urgentPos.has(p)))adj+=HW.posNeed*2.5*_pendFactor; // a position you currently CANNOT field anywhere — scaled by how few picks remain
   }
