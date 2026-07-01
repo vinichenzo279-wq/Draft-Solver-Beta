@@ -2124,7 +2124,44 @@ function countFills(form,cards,LIM){
   })(0);
   return over?LIM:count;
 }
-function _foreverWarn(label){return 'This draft has '+label+'+ legal combinations to search \u2014 a full \u201csearch to the end\u201d could take a very long time and may freeze this device.\n\nConsider removing dead-weight cards from the board (ones that will never make your final squad) for a much faster search.\n\nContinue anyway?';}
+/* Exact legal-combo count via bitmask DP over filled slots, O(numGroups * 2^numSlots * numSlots).
+   Collapses cards into hold-groups (stacks) first, since only distinct stacks matter for the
+   one-per-hold constraint \u2014 this is what makes it fast even when the raw per-card count is
+   astronomical. Verified against brute-force card-level enumeration (exact match, incl. 200
+   randomized cross-checks). Returns a BigInt, or null if there are too many slots (>24) for the
+   2^numSlots table to be practical, in which case callers should fall back to countFills. */
+function exactFillCount(form,cards){
+  const slots=form.slots,m=slots.length;
+  if(m>24)return null;
+  const groups={};
+  cards.forEach(c=>{const g=c.hold||('C'+c.id);(groups[g]=groups[g]||[]).push(c);});
+  const groupIds=Object.keys(groups);
+  const weights=groupIds.map(g=>slots.map(sl=>groups[g].filter(c=>c.pos.includes(sl)).length));
+  const full=1<<m;
+  let dp=new Array(full).fill(0n);dp[0]=1n;
+  for(let gi=0;gi<groupIds.length;gi++){
+    const w=weights[gi],newdp=dp.slice();
+    for(let mask=0;mask<full;mask++){
+      const base=dp[mask];if(base===0n)continue;
+      for(let s=0;s<m;s++){
+        if(mask&(1<<s))continue;
+        const wt=w[s];
+        if(wt>0)newdp[mask|(1<<s)]+=base*BigInt(wt);
+      }
+    }
+    dp=newdp;
+  }
+  return dp[full-1];
+}
+function _fmtCount(n){
+  if(n===null||n===undefined)return '';
+  if(typeof n==='bigint')return n>0n?n.toLocaleString():'';
+  return isFinite(n)&&n>0?Math.round(n).toLocaleString():'';
+}
+function _foreverWarn(label,actual){
+  const actTxt=actual?' (actual: '+_fmtCount(actual)+')':'';
+  return 'This draft has '+label+'+'+actTxt+' legal combinations to search \u2014 a full \u201csearch to the end\u201d could take a very long time and may freeze this device.\n\nConsider removing dead-weight cards from the board (ones that will never make your final squad) for a much faster search.\n\nContinue anyway?';
+}
 function runSolve(nodeCap){
   syncAllSlots();
   const out=$('#solveOut');
@@ -2154,9 +2191,10 @@ function runSolve(nodeCap){
     out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Counting combinations\u2026</div>';
     setTimeout(()=>{
       const form0=FORMS.find(f=>f.name===chosenForm);
-      const cnt=form0?countFills(form0,cards,150000000):0;
+      const exact0=form0?exactFillCount(form0,cards):null;
+      const cnt=exact0!==null?exact0:(form0?countFills(form0,cards,150000000):0);
       _hideSolverOverlay();
-      if(cnt>=150000000&&!confirm(_foreverWarn('150 million'))){out.innerHTML='';return;}
+      if(cnt>=150000000&&!confirm(_foreverWarn('150 million',exact0))){out.innerHTML='';return;}
       _begin();
     },30);
     return;
@@ -2268,9 +2306,10 @@ function _reanalyze(which,cap){
   if(cap>150000000){                                        // deep/forever: same count-warning as the main solve
     _showSolverOverlay();
     setTimeout(()=>{
-      const cnt=ctx.form?countFills(ctx.form,cards,150000000):0;
+      const exact1=ctx.form?exactFillCount(ctx.form,cards):null;
+      const cnt=exact1!==null?exact1:(ctx.form?countFills(ctx.form,cards,150000000):0);
       _hideSolverOverlay();
-      if(cnt>=150000000&&!confirm(_foreverWarn('150 million')))return;
+      if(cnt>=150000000&&!confirm(_foreverWarn('150 million',exact1)))return;
       _showSolverOverlay();setTimeout(_run,30);
     },30);
     return;
@@ -2291,14 +2330,18 @@ function _reanalyzeTie(cap){
     if(mode!=='vfast'){an=analyzeManagerDepth(ctx.ties[cur],ctx.form,bd.bench.map(b=>b.c));ctx.analyses=ctx.analyses||ctx.ties.map(()=>null);ctx.analyses[cur]=an;}
     _hideSolverOverlay();applyTie(cur); // keep the user on their current tie
     const capped=!!bd.capped||!!(an&&an.capped);
-    if(capped){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_tieCapWarn(cap));}
+    if(capped){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_tieCapWarn(cap,bd.combos,an&&an.exact));}
   };
-  if(cap>150000000){_showSolverOverlay();setTimeout(()=>{const cnt=ctx.form?countFills(ctx.form,cards,150000000):0;_hideSolverOverlay();if(cnt>=150000000&&!confirm(_foreverWarn('150 million')))return;_showSolverOverlay();setTimeout(_run,30);},30);return;}
+  if(cap>150000000){_showSolverOverlay();setTimeout(()=>{const exact2=ctx.form?exactFillCount(ctx.form,cards):null;const cnt=exact2!==null?exact2:(ctx.form?countFills(ctx.form,cards,150000000):0);_hideSolverOverlay();if(cnt>=150000000&&!confirm(_foreverWarn('150 million',exact2)))return;_showSolverOverlay();setTimeout(_run,30);},30);return;}
   _showSolverOverlay();setTimeout(_run,30);
 }
-function _tieCapWarn(cap){
+function _tieCapWarn(cap,benchCombos,mgrExact){
   const nextCap=cap*3;
-  return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 This tie\u2019s bench/manager re-analysis capped at '+(cap/1000000)+'M nodes</b> \u2014 best found so far for this squad.'
+  const bits=[];
+  if(benchCombos)bits.push(_fmtCount(benchCombos)+' bench hold-combinations');
+  if(mgrExact)bits.push(_fmtCount(mgrExact)+' manager-pool arrangements');
+  const detail=bits.length?' ('+bits.join(', ')+' total)':'';
+  return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 This tie\u2019s bench/manager re-analysis capped at '+(cap/1000000)+'M nodes</b>'+detail+' \u2014 best found so far for this squad.'
     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'
     +'<button class="btn sm" onclick="_reanalyzeTie('+nextCap+')">Keep searching ('+(nextCap/1000000)+'M)</button>'
     +'<button class="btn sec sm" onclick="_reanalyzeTie(1e12)">Search to the end</button>'
@@ -2306,9 +2349,10 @@ function _tieCapWarn(cap){
     +'</div></div>';
 }
 function _reanalyzeBenchBtn(){return '<button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie(3000000)">\u21bb Re-analyse this bench</button>';} // always starts fresh at the 3M base, like the main solve does on a new run \u2014 escalating on one tie must not leak into another tie's button
-function _miniCapWarn(which,cap){
+function _miniCapWarn(which,cap,exact){
   const nextCap=cap*3,isB=which==='bench',label=isB?'Bench search':'Manager-awareness search',who=isB?'bench':'managers';
-  return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 '+label+' capped at '+(cap/1000000)+'M nodes</b> \u2014 on a very complex draft even this smaller search can run past the cap. <b>It\u2019s not a bug</b> \u2014 the draft is just too complex to exhaust fully. Search deeper, or accept the current result (it\u2019s the best found so far).'
+  const exTxt=exact?(isB?' ('+_fmtCount(exact)+' total hold-combinations to check)':' out of '+_fmtCount(exact)+' total legal arrangements'):'';
+  return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 '+label+' capped at '+(cap/1000000)+'M nodes</b>'+exTxt+' \u2014 on a very complex draft even this smaller search can run past the cap. <b>It\u2019s not a bug</b> \u2014 the draft is just too complex to exhaust fully. Search deeper, or accept the current result (it\u2019s the best found so far).'
     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'
     +'<button class="btn sm" onclick="_reanalyze(\''+which+'\','+nextCap+')">'+(isB?'Bench':'Managers')+': keep searching ('+(nextCap/1000000)+'M)</button>'
     +'<button class="btn sec sm" onclick="_reanalyze(\''+which+'\',1e12)">'+(isB?'Bench':'Managers')+': search to the end</button>'
@@ -2332,8 +2376,8 @@ function applyTie(idx){
   renderSummary(main,form,ctx.r,ctx.ms,cmc,idx);
   if(ctx.r&&ctx.r.capped){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_cappedWarnHTML(ctx.cap||getNodeCap()));}
   {const so=$('#solveOut');if(so){
-    if(ctx.mgrCapped)so.insertAdjacentHTML('afterbegin',_miniCapWarn('mgr',ctx.mgrCap||_mgrCap));
-    if(ctx.benchCapped)so.insertAdjacentHTML('afterbegin',_miniCapWarn('bench',ctx.benchCap||_benchCap));
+    if(ctx.mgrCapped)so.insertAdjacentHTML('afterbegin',_miniCapWarn('mgr',ctx.mgrCap||_mgrCap,ctx.analyses&&ctx.analyses[idx]?ctx.analyses[idx].exact:null));
+    if(ctx.benchCapped)so.insertAdjacentHTML('afterbegin',_miniCapWarn('bench',ctx.benchCap||_benchCap,ctx.benchData&&ctx.benchData[idx]?ctx.benchData[idx].combos:null));
   }}
   window._solved={main,form};
   $('#mgrOut').innerHTML=''; // clear any stale manager result when the XI changes
@@ -2347,7 +2391,7 @@ function _isIconPremMgr(m){return m.league==='Icons'||m.league==='England Premie
 // Compute optimal sub picks for a given XI, scored by expected manager gain across the full DB.
 // Returns {totalGain, bench, subPicks} where totalGain is the sum across all holds and all managers.
 /* ============================ SPEED TIERS ============================ */
-let _benchNodeAcc=0,_slowConfirmed=false,_benchAbort=false; // bench-only node budget guard (10M prompt below); manager checks are entirely separate and never touch this
+let _benchNodeAcc=0,_slowConfirmed=false,_benchAbort=false,_benchTotalCombos=null; // bench-only node budget guard (10M prompt below); manager checks are entirely separate and never touch this
 function _speedMode(){const el=$('#speedMode');return el&&el.value?el.value:'vfast';}
 function _lexGt(a,b){for(let i=0;i<a.length;i++){if(a[i]!==b[i])return a[i]>b[i];}return false;}
 function _maybeSlowPrompt(){
@@ -2358,7 +2402,8 @@ function _maybeSlowPrompt(){
   // individually-uncapped bench calls add up to a long combined bench search.
   if(_slowConfirmed||_benchAbort)return;
   if(_benchNodeAcc>10000000){
-    const ok=confirm('The bench search has already checked 10M+ nodes and still isn\'t finished. On a complex draft this can take an extremely long time, for little to no change in the actual recommendation.\n\nKeep going? Choosing Cancel stops the remaining deep bench checks and shows the best bench result found so far \u2014 manager checks are unaffected and will continue as normal (they\'ll show their own cap prompt if they run long).');
+    const comboTxt=_benchTotalCombos?' This draft has '+_fmtCount(_benchTotalCombos)+' total hold-combinations to check in \u201cslow\u201d mode, which is why.':'';
+    const ok=confirm('The bench search has already checked 10M+ nodes and still isn\'t finished.'+comboTxt+' On a complex draft this can take an extremely long time, for little to no change in the actual recommendation.\n\nKeep going? Choosing Cancel stops the remaining deep bench checks and shows the best bench result found so far \u2014 manager checks are unaffected and will continue as normal (they\'ll show their own cap prompt if they run long).');
     if(ok)_slowConfirmed=true;else _benchAbort=true;
   }
 }
@@ -2371,6 +2416,11 @@ function computeBenchPicks(tie,form,mode){
   const ord=id=>board?board.findIndex(s=>s.id===id):0;
   const singles=cards.filter(c=>!c.hold&&!usedIds.has(c.id));
   const holds=Object.keys(holdGroups).filter(h=>!usedGroups.has(h)).sort((a,b)=>ord(a)-ord(b)).map(h=>({h,list:holdGroups[h]}));
+  // True size of the "slow" mode search space: one card chosen per remaining hold, independently —
+  // no position matching needed here (unlike the main draft count), so it's a plain product, not a DP.
+  // This is what actually drives the 10M-node cumulative cost: each combo triggers its own solveBest() call.
+  const totalCombos=holds.reduce((p,h)=>p*BigInt(h.list.length),1n);
+  _benchTotalCombos=totalCombos;
 
   // VERY FAST: pure count heuristic, NO solving. Per hold pick the card adding the most fresh
   // nation/league/club; ties -> fewest manager clashes (raw DB count of its fresh nation/league,
@@ -2387,7 +2437,7 @@ function computeBenchPicks(tie,form,mode){
     const bench=[],subPicks=[];
     holds.forEach(hd=>{let bc=hd.list[0],bk=vfKey(bc);hd.list.forEach(c=>{const k=vfKey(c);if(_lexGt(k,bk)){bk=k;bc=c;}});bench.push({c:bc,why:insWhy(bc,sc)});subPicks.push({h:hd.h,label:bc.label});});
     singles.forEach(c=>bench.push({c,why:insWhy(c,sc)}));
-    return {totalGain:0,bench,subPicks,capped:false};
+    return {totalGain:0,bench,subPicks,capped:false,combos:totalCombos};
   }
 
   // FAST / MEDIUM / SLOW share a coverage metric: distinct non-clean manager archetypes (nation|league)
@@ -2463,7 +2513,7 @@ function computeBenchPicks(tie,form,mode){
   holds.forEach((hd,i)=>{const c=chosen[i];bench.push({c,why:insWhy(c,sc)});subPicks.push({h:hd.h,label:c.label});});
   singles.forEach(c=>bench.push({c,why:insWhy(c,sc)}));
   const totalGain=(archReps.length&&!_benchAbort)?coverage(chosen).c2:0;
-  return {totalGain,bench,subPicks,capped:_bcapped};
+  return {totalGain,bench,subPicks,capped:_bcapped,combos:totalCombos};
 }
 function analyzeManagerDepth(tie,form,benchCards){
   // True manager count for ONE tie, tested against the squad the solver actually fielded: the XI plus its
@@ -2479,6 +2529,7 @@ function analyzeManagerDepth(tie,form,benchCards){
   // _miniCapWarn/_tieCapWarn) if a single manager solve itself runs long.
   const owned=tie.xi.concat(benchCards||[]);
   const seen=new Set(),pool=[];owned.forEach(c=>{if(c&&!seen.has(c.id)){seen.add(c.id);pool.push(Object.assign({},c,{hold:null}));}});
+  const exact=exactFillCount(form,pool); // true legal-arrangement count for this pool, same DP as the main draft count
   const r2=solveBest(form,pool,_mgrCap,getRatingCeil());
   const xis=(r2&&r2.bestXIs?r2.bestXIs:[]);
   let subbed2=0,plus1=0;
@@ -2489,7 +2540,7 @@ function analyzeManagerDepth(tie,form,benchCards){
     for(const x of xis){const g=mgrGain(x.sc,m);if(g>best){best=g;if(best===2)break;}}
     if(best===2)subbed2++;else if(best>=1)plus1++;
   }
-  return {clean,subbed2,plus1,analyzed:true,capped:!!(r2&&r2.capped)};
+  return {clean,subbed2,plus1,analyzed:true,capped:!!(r2&&r2.capped),exact};
 }
 function cleanMgrCount(sc){let n=0;for(const m of MANAGER_DB){if(!sc.nationSet.has(m.nation)&&!sc.leagueSet.has(m.league))n++;}return n;}
 function renderSummary(main,form,r,ms,cleanMgrs,idx){
@@ -2669,7 +2720,7 @@ function _pickMgrInner(cap){
   //    (their hold-exclusivity is dropped — you own them now), and we re-assign them across the formation
   //    respecting each card's playable positions (so a CDM/CM can slide to CM to free CDM for a sub).
   //    For every manager we keep the arrangement that maximises squad-total + manager gain.
-  let plan=null,capped=false;
+  let plan=null,capped=false,exactMgr=null;
   // Count REAL moves vs the drafted XI: a card newly in the XI is a sub; a card still present but at a
   // different slot is a reposition. Both are "moves" the user has to make, so we minimise their sum
   // (a clean +1-sub solution beats one needing the same sub plus two shuffles).
@@ -2753,7 +2804,8 @@ function _pickMgrInner(cap){
   } else {
     const seen=new Set(),pool=[];
     mainXI.concat(bench).forEach(c=>{if(c&&!seen.has(c.id)){seen.add(c.id);pool.push(Object.assign({},c,{hold:null}));}});
-    if(cap>150000000){_hideSolverOverlay();const cnt=countFills(form,pool,150000000);if(cnt>=150000000&&!confirm(_foreverWarn('150 million')))return;_showSolverOverlay();} // same forever-warn gate as the other deep searches
+    if(cap>150000000){_hideSolverOverlay();exactMgr=exactFillCount(form,pool);const cnt=exactMgr!==null?exactMgr:countFills(form,pool,150000000);if(cnt>=150000000&&!confirm(_foreverWarn('150 million',exactMgr)))return;_showSolverOverlay();} // same forever-warn gate as the other deep searches
+    if(exactMgr===null)exactMgr=exactFillCount(form,pool);
     const r2=solveBest(form,pool,cap,getRatingCeil());
     if(r2&&!r2.error&&r2.bestXIs&&r2.bestXIs.length){
       capped=!!r2.capped;
@@ -2761,7 +2813,7 @@ function _pickMgrInner(cap){
     }
   }
   _hideSolverOverlay();
-  _renderMgr(plan.m,plan.total,plan.gain,plan.xi===mainXI?[]:_mgrSubs(plan.xi,mainXI,form),plan.sc,capped,cap);
+  _renderMgr(plan.m,plan.total,plan.gain,plan.xi===mainXI?[]:_mgrSubs(plan.xi,mainXI,form),plan.sc,capped,cap,exactMgr);
 }
 function _mgrSubs(xi,mainXI,form){
   // Card-IDENTITY diff, not slot-index diff. A re-solve can both bring in a new card AND shuffle existing
@@ -2794,16 +2846,17 @@ function _mgrSubs(xi,mainXI,form){
   subs.repositions=repositions;
   return subs;
 }
-function _mgrCapWarn(cap){
+function _mgrCapWarn(cap,exact){
   const nextCap=cap*3;
-  return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Manager search capped at '+(cap/1000000)+'M nodes</b> \u2014 best arrangement found so far.'
+  const exTxt=exact?' out of '+_fmtCount(exact)+' total legal arrangements':'';
+  return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Manager search capped at '+(cap/1000000)+'M nodes</b>'+exTxt+' \u2014 best arrangement found so far.'
     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'
     +'<button class="btn sm" onclick="pickMgr('+nextCap+')">Keep searching ('+(nextCap/1000000)+'M)</button>'
     +'<button class="btn sec sm" onclick="pickMgr(1e12)">Search to the end</button>'
     +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept</button>'
     +'</div></div>';
 }
-function _renderMgr(m,total,gain,subs,sc,capped,cap){
+function _renderMgr(m,total,gain,subs,sc,capped,cap,exact){
   let tail;
   if(gain===2&&!subs.length){
     tail='<div class="tiny" style="color:var(--good);margin-top:6px">Clean +2 \u2014 no clash, no sub needed. ('+cleanMgrCount(sc)+' of '+MANAGER_DB.length+' managers are clean on this XI.)</div>';
@@ -2825,7 +2878,7 @@ function _renderMgr(m,total,gain,subs,sc,capped,cap){
   } else {
     tail='<div class="tiny flag" style="margin-top:6px">Best this manager gives here is +'+gain+', and no re-arrangement of your cards beats it \u2014 a dud for this draft.</div>';
   }
-  const warn=capped?_mgrCapWarn(cap):'';
+  const warn=capped?_mgrCapWarn(cap,exact):'';
   $('#mgrOut').innerHTML=warn+'<div class="summary" style="margin-bottom:0"><div class="bigrow"><div class="tot">'+total+'<small>BEST WITH MANAGER (+'+gain+')</small></div>'
     +'<div class="rc"><div><div class="b" style="color:var(--good)">+'+gain+'</div><div class="l">MGR</div></div></div></div>'
     +'<div class="xirow"><div class="sl">MGR</div><div class="pl"><b>'+esc(m.name||m.nation)+'</b><div class="m">'+m.nation+' \u00b7 '+(m.league==='Icons'?'Icon':m.league.replace('England ',''))+'</div></div>'
@@ -3552,7 +3605,7 @@ function runHelperDeep(cap){
     syncAllSlots();
     const missingSlots=trueGaps(form.slots,cards);
     if(missingSlots.length){_hideSolverOverlay();judgeSlotInline();return;}
-    if(nextCap>150000000){const cnt=countFills(form,cards,150000000);_hideSolverOverlay();if(cnt>=150000000&&!confirm(_foreverWarn('150 million'))){judgeSlotInline();return;}_showSolverOverlay();}
+    if(nextCap>150000000){const exact4=exactFillCount(form,cards);const cnt=exact4!==null?exact4:countFills(form,cards,150000000);_hideSolverOverlay();if(cnt>=150000000&&!confirm(_foreverWarn('150 million',exact4))){judgeSlotInline();return;}_showSolverOverlay();}
     const r=solveBest(form,cards,nextCap,getRatingCeil());
     _hideSolverOverlay();
     const ctx=(r.error||!r.bestXIs||!r.bestXIs.length)
