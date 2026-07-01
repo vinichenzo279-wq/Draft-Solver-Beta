@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v7.5</title>
+<title>Draft Solver v7.6.0</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,7 +129,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.5</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.6.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:4px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -343,7 +343,14 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     <button class="btn gho sm" style="margin-top:8px" onclick="resetWeights()">Reset to defaults</button>
     <details class="hlp" style="margin-top:10px"><summary>Advanced &mdash; rarity curves &amp; diminishing</summary>
       <p class="tiny" style="margin:6px 0;color:var(--mut)">Fine controls for rarity curves, clash penalties and over-representation. Grouped by what they affect; each shows its default and range. Changes save automatically.</p>
-      <div id="shapeGrid"></div>
+      <details class="hlp" style="margin-top:6px"><summary>Icon</summary><div id="shapeGrid-icon" style="margin-top:6px"></div></details>
+      <details class="hlp" style="margin-top:6px"><summary>Hero</summary><div id="shapeGrid-hero" style="margin-top:6px"></div>
+        <details class="hlp" style="margin-top:6px;margin-left:10px"><summary>Prem-hero</summary><div id="shapeGrid-premhero" style="margin-top:6px"></div></details>
+      </details>
+      <details class="hlp" style="margin-top:6px"><summary>Normal</summary><div id="shapeGrid-normal" style="margin-top:6px"></div></details>
+      <details class="hlp" style="margin-top:6px"><summary>Clash &amp; redundancy</summary><div id="shapeGrid-clash" style="margin-top:6px"></div></details>
+      <details class="hlp" style="margin-top:6px"><summary>Common overrepresentation</summary><div id="shapeGrid-common" style="margin-top:6px"></div></details>
+      <details class="hlp" style="margin-top:6px"><summary>Misc</summary><div id="shapeGrid-misc" style="margin-top:6px"></div></details>
       <button class="btn gho sm" style="margin-top:8px" onclick="resetShape()">Reset shapes</button>
       <span class="tiny" style="margin-left:8px;color:var(--mut)">Resets these to defaults and saves that too</span>
     </details>
@@ -366,8 +373,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     <label>Positions <span style="color:var(--mut)">&mdash; tap all it can play</span></label>
     <div class="chips" id="hPosChips"></div>
     <div style="display:flex;gap:7px;margin-top:10px">
-      <button class="btn sec sm" id="helpAddBtn" onclick="addHelp()" style="flex:1">Add option</button>
-      <button class="btn gho sm" id="helpCancelBtn" onclick="cancelHelpEdit()" style="display:none;flex:0 0 auto">Cancel edit</button>
+      <button class="btn sec sm" id="helpAddBtn" onclick="addHelp()" style="flex:1;min-width:0">Add option</button>
+      <button class="btn gho sm" id="helpCancelBtn" onclick="cancelHelpEdit()" style="display:none;flex:1;min-width:0">Cancel edit</button>
     </div>
     <div id="helpList" style="margin-top:10px"></div>
     <button class="btn" style="margin-top:8px" onclick="judgeBoard()">Evaluate cards</button>
@@ -469,6 +476,26 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 </div>
 
 <script>
+/* ============================ VERSION GATE ============================ */
+// Every patch bump (the v-number in the <h1><span>) should reset ALL saved state to defaults —
+// board, DB, helper weights, advanced shape params, and solver options — not just the board.
+// This runs before any of those modules' own restore-from-localStorage IIFEs, so on a version
+// change it wipes the slate clean first and each module's restore then simply finds nothing
+// and falls back to its own defaults.
+(function(){
+  try{
+    const cur=(document.querySelector('h1 span')||{textContent:''}).textContent.replace(/^v/,'').trim()||'0';
+    const verKey='pacwyn_app_version';
+    const prev=localStorage.getItem(verKey);
+    if(prev!==cur){
+      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1'].forEach(k=>{
+        try{localStorage.removeItem(k);}catch(e){}
+        try{sessionStorage.removeItem(k);}catch(e){}
+      });
+      try{localStorage.setItem(verKey,cur);}catch(e){}
+    }
+  }catch(e){}
+})();
 /* ============================ DATA ============================ */
 // Nations ordered by ~current FIFA ranking (common/stacked first -> rarer later).
 // Index = rarity weight: later = rarer = more valuable to draft. Russia included (Pacwyn bans it, but harmless extra).
@@ -786,11 +813,11 @@ let _solveCache=null,_squadOverride=null,_urgentPos=null,_pendFactor=1; // Phase
 let _lastFullRedundant=false; // set by squadAdjust; read by XI-boost phase to suppress boost for commit-clashing cards
 let _evalingSiblings=false; // recursion guard: prevents sibling helpValue calls from triggering further sibling evals
 let NAT_RANK={},LG_RANK={},NAT_COUNT={},CLB_COUNT={},LG_COUNT={},DB_M=1; // raw card counts per nation/club/hero-league + total, from the live DB
-const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:5,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0.05,commonClubPenalty:0.25,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5};
+const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:5,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.25,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0.25,lowHeroPenaltyMax:0.75,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,lowNormalRatingThreshold:0,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5};
 // Inputs floored at 0 because a negative value here would flip the formula's intent (e.g. extra icons/heroes
 // getting MORE valuable instead of less). clashBase also gets a max: above 2 a mild clash can end up scoring
 // worse than a severe one (see clashBase's label below), so 2 is the point past which the slider works against itself.
-const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[80,105],premHeroRatingGap:[1,10],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30]};
+const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[80,105],premHeroRatingGap:[1,10],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],lowIconRatingThreshold:[0,99],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],highIconRatingThreshold:[80,99],highIconBoostMin:[0,1],highIconBoostMax:[0,2],lowHeroRatingThreshold:[0,99],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],highHeroRatingThreshold:[80,99],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],lowNormalRatingThreshold:[0,99],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],highNormalRatingThreshold:[80,99],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30]};
 let SHAPE={...SHAPE_DEF}; // tunable: clash-draw count (rarity = P(no clash over this many random draws)) + icon/hero diminishing
 const _SHAPE_SAVE_KEY='pacwyn_shape_v1';
 function saveShapeLocal(){try{localStorage.setItem(_SHAPE_SAVE_KEY,JSON.stringify(SHAPE));}catch(e){}}
@@ -2722,9 +2749,9 @@ function posScarceN(p){
 }
 function ratingN(r){return Math.max(0,Math.min(1,(Math.max(75,Math.min(99,r))-75)/24));} // 75->0, 99->1, clamped
 /* tunable weights for the helper */
-const HW_DEF={icon:12,hero:10,normalBase:6,nation:2.0,heroLeague:1.5,clubRarity:2.5,rating:2.0,posScarce:1.0,posFlex:0.5,clashAvoid:1.0,posNeed:0,premHeroPenalty:6.5,lowIconRatingThreshold:90};
-const HW_LABEL={icon:'Icon base value',hero:'Hero base value',normalBase:'Normal base value',rating:'Rating weight',nation:'Nation rarity weight',heroLeague:'Hero-league rarity weight',clubRarity:'Prem-club rarity weight',posScarce:'Scarce-position bonus',posFlex:'Position-flexibility bonus',posNeed:'Fill-needed-position bonus (squad mode)',clashAvoid:'Avoid-clashes weight (squad mode)',premHeroPenalty:'Prem-hero penalty',lowIconRatingThreshold:'Low-icon penalty threshold \u2014 rating at/below which icons start losing value'};
-const HW_ORDER=['icon','hero','normalBase','rating','nation','heroLeague','clubRarity','posScarce','posFlex','posNeed','clashAvoid','premHeroPenalty','lowIconRatingThreshold'];
+const HW_DEF={icon:12,hero:10,normalBase:8,nation:2.0,heroLeague:1.5,clubRarity:2.5,rating:2.5,posScarce:1.0,posFlex:0.5,clashAvoid:1.0,posNeed:0,premHeroPenalty:6.5};
+const HW_LABEL={icon:'Icon base value',hero:'Hero base value',normalBase:'Normal base value',rating:'Rating weight',nation:'Nation rarity weight',heroLeague:'Hero-league rarity weight',clubRarity:'Prem-club rarity weight',posScarce:'Scarce-position bonus',posFlex:'Position-flexibility bonus',posNeed:'Fill-needed-position bonus (squad mode)',clashAvoid:'Avoid-clashes weight (squad mode)',premHeroPenalty:'Prem-hero penalty'};
+const HW_ORDER=['icon','hero','normalBase','rating','nation','heroLeague','clubRarity','posScarce','posFlex','posNeed','clashAvoid','premHeroPenalty'];
 let HW={...HW_DEF};
 const _HW_SAVE_KEY='pacwyn_hw_v1';
 function saveHW(){try{localStorage.setItem(_HW_SAVE_KEY,JSON.stringify(HW));}catch(e){}}
@@ -2736,8 +2763,8 @@ function saveHW(){try{localStorage.setItem(_HW_SAVE_KEY,JSON.stringify(HW));}cat
   }catch(e){}
 })();
 function renderWeights(){const el=$('#hwGrid');if(!el)return;
-  el.innerHTML=HW_ORDER.filter(k=>k in HW_DEF).concat(Object.keys(HW_DEF).filter(k=>HW_ORDER.indexOf(k)<0)).map(k=>{const isThresh=(k==='lowIconRatingThreshold');const step=isThresh?'1':'0.01';return'<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0"><span style="font-size:11px;color:var(--mut);max-width:74%">'+HW_LABEL[k]+'<span style="opacity:.55"> \u00b7 Default '+HW_DEF[k]+'</span></span>'
-    +'<input type="number" step="'+step+'" id="hw-'+k+'" value="'+HW[k]+'" style="width:78px;font-size:12px" oninput="var _r=parseFloat(this.value);if(!isNaN(_r)){HW[this.id.slice(3)]=_r;_solveCache=null;}" onchange="var _r=parseFloat(this.value);if(isNaN(_r))return;_r=Math.max(0,_r);var _k=this.id.slice(3);if(_k===\'lowIconRatingThreshold\'){_r=Math.min(100,Math.round(_r));}HW[_k]=_r;this.value=_r;_solveCache=null;saveHW();"></div>';}).join('');}
+  el.innerHTML=HW_ORDER.filter(k=>k in HW_DEF).concat(Object.keys(HW_DEF).filter(k=>HW_ORDER.indexOf(k)<0)).map(k=>{return'<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0"><span style="font-size:11px;color:var(--mut);max-width:74%">'+HW_LABEL[k]+'<span style="opacity:.55"> \u00b7 Default '+HW_DEF[k]+'</span></span>'
+    +'<input type="number" step="0.01" id="hw-'+k+'" value="'+HW[k]+'" style="width:78px;font-size:12px" oninput="var _r=parseFloat(this.value);if(!isNaN(_r)){HW[this.id.slice(3)]=_r;_solveCache=null;}" onchange="var _r=parseFloat(this.value);if(isNaN(_r))return;_r=Math.max(0,_r);var _k=this.id.slice(3);HW[_k]=_r;this.value=_r;_solveCache=null;saveHW();"></div>';}).join('');}
 function resetWeights(){HW={...HW_DEF};renderWeights();_solveCache=null;saveHW();}
 renderWeights();
 
@@ -2763,27 +2790,44 @@ function resetFW(){FW={...FW_DEF};renderFW();saveFW();}
 renderFW();
 const SHAPE_LABEL={
   clashDraws:'Clash draws \u2014 picks modelled when scoring rarity. Higher = rarer nations/clubs score more.',
-  iconKeep:'2nd icon value kept \u2014 higher is more lenient for extra icons.',
-  iconErosion:'Icon erosion \u2014 how fast each icon past the 2nd loses value.',
-  iconRarityRefundCap:'Rare-nation icon refund \u2014 how much of the 2nd-icon penalty a rare nation can cancel.',
+  iconKeep:'2nd icon value kept (squad mode) \u2014 higher is more lenient for extra icons.',
+  iconErosion:'Icon erosion (squad mode) \u2014 how fast each icon past the 2nd loses value.',
+  iconRarityRefundCap:'Rare-nation icon refund (squad mode) \u2014 how much of the 2nd-icon penalty a rare nation can cancel.',
+  lowIconRatingThreshold:'Low-icon penalty threshold \u2014 rating at/below which icons start losing value. 0 = off.',
   lowIconPenaltyMin:'Low-rated icon penalty (min) \u2014 value an icon loses at the threshold rating. Keep \u2264 the max.',
   lowIconPenaltyMax:'Low-rated icon penalty (max) \u2014 value an icon loses at 85 and below. Keep \u2265 the min.',
-  heroFull:'Free heroes \u2014 how many heroes count as free before the penalty starts.',
-  heroPenalty:'Hero penalty slope \u2014 how fast value drops per hero past the free count.',
-  normalFloor:'Normal glue floor \u2014 the lowest multiplier a saturating normal keeps.',
-  normalSlope:'Normal glue steepness \u2014 clubs past 7 where the penalty is half-way to the floor. Lower = bites sooner.',
+  highIconRatingThreshold:'High-icon boost threshold \u2014 rating at/above which icons start gaining extra value.',
+  highIconBoostMin:'High-rated icon boost (min) \u2014 value an icon gains at the threshold rating. Keep \u2264 the max.',
+  highIconBoostMax:'High-rated icon boost (max) \u2014 value an icon gains at 99. Keep \u2265 the min.',
+  lowHeroRatingThreshold:'Low-hero penalty threshold \u2014 rating at/below which heroes start losing value. 0 = off (default).',
+  lowHeroPenaltyMin:'Low-rated hero penalty (min) \u2014 value a hero loses at the threshold rating. Keep \u2264 the max.',
+  lowHeroPenaltyMax:'Low-rated hero penalty (max) \u2014 value a hero loses at 85 and below. Keep \u2265 the min.',
+  highHeroRatingThreshold:'High-hero boost threshold \u2014 rating at/above which heroes start gaining extra value.',
+  highHeroBoostMin:'High-rated hero boost (min) \u2014 value a hero gains at the threshold rating. Keep \u2264 the max.',
+  highHeroBoostMax:'High-rated hero boost (max) \u2014 value a hero gains at 99. Keep \u2265 the min.',
+  lowNormalRatingThreshold:'Low-normal penalty threshold \u2014 rating at/below which normals start losing value. 0 = off (default).',
+  lowNormalPenaltyMin:'Low-rated normal penalty (min) \u2014 value a normal loses at the threshold rating. Keep \u2264 the max.',
+  lowNormalPenaltyMax:'Low-rated normal penalty (max) \u2014 value a normal loses at 75 and below. Keep \u2265 the min.',
+  highNormalRatingThreshold:'High-normal boost threshold \u2014 rating at/above which normals start gaining extra value.',
+  highNormalBoostMin:'High-rated normal boost (min) \u2014 value a normal gains at the threshold rating. Keep \u2264 the max.',
+  highNormalBoostMax:'High-rated normal boost (max) \u2014 value a normal gains at 99. Keep \u2265 the min.',
+  heroFull:'Free heroes (squad mode) \u2014 how many heroes count as free before the penalty starts.',
+  heroPenalty:'Hero penalty slope (squad mode) \u2014 how fast value drops per hero past the free count.',
+  heroRarityRefundCap:'Rare-league hero refund (squad mode) \u2014 how much of the hero saturation penalty a sufficiently rare league can cancel.',
+  normalFloor:'Normal glue floor (squad mode) \u2014 the lowest multiplier a saturating normal keeps.',
+  normalSlope:'Normal glue steepness (squad mode) \u2014 clubs past 7 where the penalty is half-way to the floor. Lower = bites sooner.',
   premHeroRatingThreshold:'Prem-hero threshold \u2014 below this rating the full prem-hero penalty always applies.',
   premHeroRatingGap:'Prem-hero ramp \u2014 points above the threshold for the ceiling fraction to fully apply.',
   premHeroPenaltyFracLow:'Prem-hero penalty at threshold \u2014 fraction kept at the threshold rating (1 = full, 0 = forgiven).',
   premHeroPenaltyFracHigh:'Prem-hero penalty at ceiling \u2014 fraction kept at elite ratings. Set below the threshold fraction to ease elites.',
-  premHeroPenaltyFracUrgentPos:'Prem-hero urgent-slot relief \u2014 fraction kept when it fills a needed slot (from pick 12). 1 = no relief.',
-  clashBase:'Clash base \u2014 fixed hit whenever a card clashes a nation/club/league.',
-  clashStack:'Clash stacking \u2014 extra hit per additional card already on that nation/club/league.',
-  holdSizeBase:'Hold-size severity \u2014 extra clash severity for a 1-card hold (near-certain to field).',
-  holdDomBoost:'Hold-dominance severity \u2014 extra severity when a better card in the same hold outranks it.',
-  redundancySurcharge:'Full-redundancy surcharge \u2014 extra hit when a card clashes on every dimension it has.',
-  dominantClashGap:'Dominant / underclass rating gap \u2014 how much a card\u2019s rating vs its top clash rival eases (or, when behind, worsens) its clash penalties. Lower = more affected by the rating gap.',
-  outOfFormationPenalty:'Out-of-formation penalty \u2014 points lost when a card can\u2019t play any slot in the formation.',
+  premHeroPenaltyFracUrgentPos:'Prem-hero urgent-slot relief (squad mode) \u2014 fraction kept when it fills a needed slot (from pick 12). 1 = no relief.',
+  clashBase:'Clash base (squad mode) \u2014 fixed hit whenever a card clashes a nation/club/league.',
+  clashStack:'Clash stacking (squad mode) \u2014 extra hit per additional card already on that nation/club/league.',
+  holdSizeBase:'Hold-size severity (squad mode) \u2014 extra clash severity for a 1-card hold (near-certain to field).',
+  holdDomBoost:'Hold-dominance severity (squad mode) \u2014 extra severity when a better card in the same hold outranks it.',
+  redundancySurcharge:'Full-redundancy surcharge (squad mode) \u2014 extra hit when a card clashes on every dimension it has.',
+  dominantClashGap:'Dominant / underclass rating gap (squad mode) \u2014 how much a card\u2019s rating vs its top clash rival eases (or, when behind, worsens) its clash penalties. Lower = more affected by the rating gap.',
+  outOfFormationPenalty:'Out-of-formation penalty (squad mode) \u2014 points lost when a card can\u2019t play any slot in the formation.',
   commonNatCount:'Common-nation count \u2014 how many top nations count as overrepresented. 0 = off.',
   commonNatPenalty:'Common-nation penalty \u2014 base value lost when the nation is common.',
   commonNatIconExtra:'Common-nation icon extra \u2014 added on top of the nation penalty when the card is an icon.',
@@ -2792,22 +2836,41 @@ const SHAPE_LABEL={
   commonHeroLeagueCount:'Common hero-league count \u2014 how many top hero leagues count as overrepresented. 0 = off.',
   commonHeroLeaguePenalty:'Common hero-league penalty \u2014 hero base value lost when the league is common.',
   takeThreshold:'Take vs hold gap \u2014 how far ahead the top option must be before the helper says TAKE not HOLD.',
-  starterBoost:'Starter boost \u2014 helper points added to a card your projected XI starts. Pairs with the bench penalty below.',
-  benchPenalty:'Bench penalty \u2014 helper points removed from a card your projected XI benches. With the starter boost, sets how hard the helper favours a likely starter.',
+  starterBoost:'Starter boost (squad mode) \u2014 helper points added to a card your projected XI starts. Pairs with the bench penalty below.',
+  benchPenalty:'Bench penalty (squad mode) \u2014 helper points removed from a card your projected XI benches. With the starter boost, sets how hard the helper favours a likely starter.',
 };
-const SHAPE_ORDER=['clashDraws',
-  'iconKeep','iconErosion','iconRarityRefundCap','lowIconPenaltyMin','lowIconPenaltyMax',
-  'heroFull','heroPenalty',
-  'normalFloor','normalSlope',
-  'premHeroRatingThreshold','premHeroRatingGap','premHeroPenaltyFracLow','premHeroPenaltyFracHigh','premHeroPenaltyFracUrgentPos',
-  'clashBase','clashStack','holdSizeBase','holdDomBoost','redundancySurcharge','dominantClashGap','outOfFormationPenalty',
-  'commonNatCount','commonNatPenalty','commonNatIconExtra','commonClubCount','commonClubPenalty','commonHeroLeagueCount','commonHeroLeaguePenalty',
-  'takeThreshold','starterBoost','benchPenalty'];
-function renderShape(){const el=$('#shapeGrid');if(!el)return;
-  el.innerHTML=SHAPE_ORDER.filter(k=>k in SHAPE_DEF).concat(Object.keys(SHAPE_DEF).filter(k=>SHAPE_ORDER.indexOf(k)<0)).map(k=>{const dec=['iconKeep','iconErosion','heroPenalty','normalFloor','normalSlope','clashBase','clashStack','holdSizeBase','holdDomBoost','redundancySurcharge','iconRarityRefundCap','takeThreshold','premHeroPenaltyFracLow','premHeroPenaltyFracHigh','premHeroPenaltyFracUrgentPos','commonNatPenalty','commonNatIconExtra','commonClubPenalty','commonHeroLeaguePenalty','lowIconPenaltyMin','lowIconPenaltyMax'];const step=dec.includes(k)?'0.01':'1';return'<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0"><span style="font-size:11px;color:var(--mut);max-width:74%">'+SHAPE_LABEL[k]+'<span style="opacity:.55"> \u00b7 Default '+SHAPE_DEF[k]+(SHAPE_BOUNDS[k]?' \u00b7 Range '+SHAPE_BOUNDS[k][0]+'\u2192'+SHAPE_BOUNDS[k][1]:'')+'</span></span>'+'<input type="number" step="'+step+'" id="shp-'+k+'" value="'+SHAPE[k]+'" style="width:78px;font-size:12px"'
-    +' oninput="var _raw=parseFloat(this.value);if(!isNaN(_raw)){SHAPE[\''+k+'\']=_raw;_solveCache=null;}"'
-    +' onchange="var _raw=parseFloat(this.value);if(isNaN(_raw))return;var _b=SHAPE_BOUNDS[\''+k+'\'];if(_b){if(_b[0]!==null&&_raw<_b[0]){_raw=_b[0];}if(_b[1]!==null&&_raw>_b[1]){_raw=_b[1];}}SHAPE[\''+k+'\']=_raw;this.value=_raw;_solveCache=null;saveShapeLocal();"'
-    +'></div>';}).join('');}
+const SHAPE_CATEGORIES=[
+  {key:'icon',keys:['iconKeep','iconErosion','iconRarityRefundCap',
+    'lowIconRatingThreshold','lowIconPenaltyMin','lowIconPenaltyMax',
+    'highIconRatingThreshold','highIconBoostMin','highIconBoostMax']},
+  {key:'hero',keys:['heroFull','heroPenalty','heroRarityRefundCap',
+    'lowHeroRatingThreshold','lowHeroPenaltyMin','lowHeroPenaltyMax',
+    'highHeroRatingThreshold','highHeroBoostMin','highHeroBoostMax']},
+  {key:'premhero',keys:['premHeroRatingThreshold','premHeroRatingGap','premHeroPenaltyFracLow','premHeroPenaltyFracHigh','premHeroPenaltyFracUrgentPos']},
+  {key:'normal',keys:['normalFloor','normalSlope',
+    'lowNormalRatingThreshold','lowNormalPenaltyMin','lowNormalPenaltyMax',
+    'highNormalRatingThreshold','highNormalBoostMin','highNormalBoostMax']},
+  {key:'clash',keys:['clashDraws','clashBase','clashStack','holdSizeBase','holdDomBoost','redundancySurcharge','dominantClashGap']},
+  {key:'common',keys:['commonNatCount','commonNatPenalty','commonNatIconExtra','commonClubCount','commonClubPenalty','commonHeroLeagueCount','commonHeroLeaguePenalty']},
+  {key:'misc',keys:['takeThreshold','starterBoost','benchPenalty','outOfFormationPenalty']},
+];
+// Flat order, derived from the categories above, kept for anything that still wants "every key in a sane order".
+const SHAPE_ORDER=SHAPE_CATEGORIES.reduce((a,cat)=>a.concat(cat.keys),[]);
+function _renderShapeRow(k){const dec=['iconKeep','iconErosion','heroPenalty','heroRarityRefundCap','normalFloor','normalSlope','clashBase','clashStack','holdSizeBase','holdDomBoost','redundancySurcharge','iconRarityRefundCap','takeThreshold','premHeroPenaltyFracLow','premHeroPenaltyFracHigh','premHeroPenaltyFracUrgentPos','commonNatPenalty','commonNatIconExtra','commonClubPenalty','commonHeroLeaguePenalty','lowIconPenaltyMin','lowIconPenaltyMax','highIconBoostMin','highIconBoostMax','lowHeroPenaltyMin','lowHeroPenaltyMax','highHeroBoostMin','highHeroBoostMax','lowNormalPenaltyMin','lowNormalPenaltyMax','highNormalBoostMin','highNormalBoostMax'];const step=dec.includes(k)?'0.01':'1';return'<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0"><span style="font-size:11px;color:var(--mut);max-width:74%">'+SHAPE_LABEL[k]+'<span style="opacity:.55"> \u00b7 Default '+SHAPE_DEF[k]+(SHAPE_BOUNDS[k]?' \u00b7 Range '+SHAPE_BOUNDS[k][0]+'\u2192'+SHAPE_BOUNDS[k][1]:'')+'</span></span>'+'<input type="number" step="'+step+'" id="shp-'+k+'" value="'+SHAPE[k]+'" style="width:78px;font-size:12px"'
+  +' oninput="var _raw=parseFloat(this.value);if(!isNaN(_raw)){SHAPE[\''+k+'\']=_raw;_solveCache=null;}"'
+  +' onchange="var _raw=parseFloat(this.value);if(isNaN(_raw))return;var _b=SHAPE_BOUNDS[\''+k+'\'];if(_b){if(_b[0]!==null&&_raw<_b[0]){_raw=_b[0];}if(_b[1]!==null&&_raw>_b[1]){_raw=_b[1];}}SHAPE[\''+k+'\']=_raw;this.value=_raw;_solveCache=null;saveShapeLocal();"'
+  +'></div>';}
+function renderShape(){
+  // Any SHAPE_DEF key not explicitly categorized falls into misc, so nothing silently disappears if a
+  // future param is added to SHAPE_DEF without being sorted into a category yet.
+  const categorized=new Set(SHAPE_ORDER);
+  const leftover=Object.keys(SHAPE_DEF).filter(k=>!categorized.has(k));
+  SHAPE_CATEGORIES.forEach(cat=>{
+    const el=$('#shapeGrid-'+cat.key);if(!el)return;
+    const keys=cat.key==='misc'?cat.keys.concat(leftover):cat.keys;
+    el.innerHTML=keys.filter(k=>k in SHAPE_DEF).map(_renderShapeRow).join('');
+  });
+}
 function resetShape(){SHAPE={...SHAPE_DEF};renderShape();_solveCache=null;saveShapeLocal();}
 renderShape();
 function squadAwareOn(){return _forceSquad;}
@@ -2823,7 +2886,7 @@ function squadInfo(){ // summarise the squad: type counts (holds weigh half), pe
   const benchCards=_squadOverride
     ? cards.filter(x=>!(_judgeExclude&&x.slot===_judgeExclude)&&!_squadOverride.some(s=>s.id===x.id))
     : [];
-  const info={icons:0,heroes:0,normals:0,nat:{},lg:{},clb:{},posSupply:{},total:src.filter(x=>!(_judgeExclude&&x.slot===_judgeExclude)).length};
+  const info={icons:0,heroes:0,normals:0,nat:{},lg:{},clb:{},posSupply:{},bestIconRarity:0,bestHeroLeagueRarity:0,total:src.filter(x=>!(_judgeExclude&&x.slot===_judgeExclude)).length};
   // Precompute hold group sizes from the full card pool (cards array), so we know how deep each hold is.
   const holdGroupSize={};
   cards.forEach(x=>{if(x.hold){holdGroupSize[x.hold]=(holdGroupSize[x.hold]||0)+1;}});
@@ -2845,7 +2908,9 @@ function squadInfo(){ // summarise the squad: type counts (holds weigh half), pe
     // Treat them as held (anyCommit stays false) so clash severity is 0.4 not 0.85-1.0.
     const held=_squadOverride?true:!!x.hold,w=held?0.5:1;
     const holdId=held?x.hold:null;
-    if(x.type==='icon'){info.icons+=w;info.bestIconRarity=Math.max(info.bestIconRarity||0,rarityNat(x.nation));}else if(x.type==='hero')info.heroes+=w;else info.normals+=w;
+    if(x.type==='icon'){info.icons+=w;info.bestIconRarity=Math.max(info.bestIconRarity||0,rarityNat(x.nation));}
+    else if(x.type==='hero'){info.heroes+=w;if(x.league!=='England Premier League')info.bestHeroLeagueRarity=Math.max(info.bestHeroLeagueRarity||0,rarityLg(x.league));}
+    else info.normals+=w;
     upd(info.nat,x.nation,x.rating,held,holdId);upd(info.lg,leagueOf(x),x.rating,held,holdId);
     if(x.type==='normal')upd(info.clb,x.club,x.rating,held,holdId);
     (x.pos||[]).forEach(p=>info.posSupply[p]=(info.posSupply[p]||0)+1);});
@@ -2856,7 +2921,8 @@ function squadInfo(){ // summarise the squad: type counts (holds weigh half), pe
     const held=!!x.hold,w=held?0.5:1;
     const holdId=held?x.hold:null;
     if(x.type==='icon'){info.icons+=w;info.bestIconRarity=Math.max(info.bestIconRarity||0,rarityNat(x.nation));}
-    else if(x.type==='hero')info.heroes+=w;else info.normals+=w;
+    else if(x.type==='hero'){info.heroes+=w;if(x.league!=='England Premier League')info.bestHeroLeagueRarity=Math.max(info.bestHeroLeagueRarity||0,rarityLg(x.league));}
+    else info.normals+=w;
     upd(info.nat,x.nation,x.rating,held,holdId);upd(info.lg,leagueOf(x),x.rating,held,holdId);
     if(x.type==='normal')upd(info.clb,x.club,x.rating,held,holdId);
     (x.pos||[]).forEach(p=>info.posSupply[p]=(info.posSupply[p]||0)+1);});
@@ -2901,7 +2967,13 @@ function squadAdjust(c){
       const distinctHeroLeagues=seenLgs.size;
       const over=Math.max(0,distinctHeroLeagues-SHAPE.heroFull);
       const m=Math.max(0.2,1-SHAPE.heroPenalty*over);
-      adj-=HW.hero*(1-m);
+      let pen=HW.hero*(1-m);
+      // Rare-league refund — mirrors the icon nation refund: if this hero's league is
+      // rarer than the rarest non-Prem hero league already banked, cancel part of the
+      // saturation hit (bigger gap = more refund), capped by heroRarityRefundCap.
+      const newLgR=rarityLg(c.league),bestLgR=info.bestHeroLeagueRarity||0;
+      if(newLgR>bestLgR)pen*=(1-Math.min(SHAPE.heroRarityRefundCap,0.9*(newLgR-bestLgR)));
+      adj-=pen;
     }
   } // heroes add DISTINCT leagues, so useful up to ~3; degrade after (gentler than icons)
   else{
@@ -3035,6 +3107,19 @@ function squadAdjust(c){
   }
   return adj;
 }
+// Shared exponential-interpolation curve for the low-rated penalty / high-rated boost pairs below.
+// isLow=true: fraction ramps from 0 at thr up to (min->max) at hardBound (a rating FLOOR, thr>hardBound).
+// isLow=false: fraction ramps from 0 at thr up to (min->max) at hardBound (a rating CEILING, thr<hardBound).
+// thr<=0 disables the curve entirely (returns 0), which is how the "off" defaults for hero/normal lows work.
+function _ratingCurveFrac(rating,thr,hardBound,minFrac,maxFrac,isLow){
+  if(!(thr>0))return 0;
+  if(isLow?rating>thr:rating<thr)return 0;
+  const minF=Math.max(0,minFrac||0);
+  const maxF=Math.max(minF,maxFrac||0);
+  const span=Math.max(1,isLow?(thr-hardBound):(hardBound-thr));
+  const t=Math.min(1,Math.max(0,isLow?(thr-rating)/span:(rating-thr)/span));
+  return minF<=0?(maxF*t):(maxF<=minF?minF:minF*Math.pow(maxF/minF,t));
+}
 function helpValue(c){
   let v=0;
   if(c.type==='icon')v+=HW.icon;
@@ -3088,20 +3173,26 @@ function helpValue(c){
   if(SHAPE.commonHeroLeaguePenalty>0&&c.type==='hero'&&isCommonHeroLeague(leagueOf(c))){
     v-=HW.hero*SHAPE.commonHeroLeaguePenalty;
   }
-  // Low-rated icon penalty: icons below the threshold (set in main Weights) lose a fraction of their
-  // base value. The penalty scales exponentially from lowIconPenaltyMin at the threshold down to
-  // lowIconPenaltyMax at rating 85 (both set in Advanced). Applies even to the first icon — the
-  // free icon slot is best spent on a strong card.
-  if(HW.lowIconRatingThreshold>0&&c.type==='icon'&&c.rating<=HW.lowIconRatingThreshold){
-    const thr=HW.lowIconRatingThreshold,hardFloor=85;
-    const minPen=Math.max(0,SHAPE.lowIconPenaltyMin||0);
-    const maxPen=Math.max(minPen,SHAPE.lowIconPenaltyMax||0);
-    // t=0 at threshold, t=1 at hardFloor (or below)
-    const t=Math.min(1,Math.max(0,(thr-c.rating)/Math.max(1,thr-hardFloor)));
-    // Exponential interpolation: pen = minPen * (maxPen/minPen)^t
-    // Guard: if minPen is 0, use linear scale to maxPen
-    const pen=minPen<=0?(maxPen*t):(maxPen<=minPen?minPen:minPen*Math.pow(maxPen/minPen,t));
-    if(pen>0)v-=HW.icon*pen;
+  // Low-rated penalty: cards of a type at/below its threshold (set in Advanced) lose a fraction of their
+  // base value, scaling exponentially from the type's penalty-min at the threshold down to its penalty-max
+  // at the type's hard floor rating (icon/hero: 85, normal: 75). Threshold 0 = off (hero/normal default off).
+  // Applies even to the first icon/hero — a free slot is best spent on a strong card.
+  if(c.type==='icon'){
+    v-=HW.icon*_ratingCurveFrac(c.rating,SHAPE.lowIconRatingThreshold,85,SHAPE.lowIconPenaltyMin,SHAPE.lowIconPenaltyMax,true);
+  }else if(c.type==='hero'){
+    v-=HW.hero*_ratingCurveFrac(c.rating,SHAPE.lowHeroRatingThreshold,85,SHAPE.lowHeroPenaltyMin,SHAPE.lowHeroPenaltyMax,true);
+  }else if(c.type==='normal'){
+    v-=HW.normalBase*_ratingCurveFrac(c.rating,SHAPE.lowNormalRatingThreshold,75,SHAPE.lowNormalPenaltyMin,SHAPE.lowNormalPenaltyMax,true);
+  }
+  // High-rated boost: mirror of the low-rated penalty above. Cards of a type at/above its threshold (set
+  // in Advanced) gain a fraction of extra base value, scaling exponentially from the type's boost-min at
+  // the threshold up to its boost-max at the hard ceiling rating (99, all types).
+  if(c.type==='icon'){
+    v+=HW.icon*_ratingCurveFrac(c.rating,SHAPE.highIconRatingThreshold,99,SHAPE.highIconBoostMin,SHAPE.highIconBoostMax,false);
+  }else if(c.type==='hero'){
+    v+=HW.hero*_ratingCurveFrac(c.rating,SHAPE.highHeroRatingThreshold,99,SHAPE.highHeroBoostMin,SHAPE.highHeroBoostMax,false);
+  }else if(c.type==='normal'){
+    v+=HW.normalBase*_ratingCurveFrac(c.rating,SHAPE.highNormalRatingThreshold,99,SHAPE.highNormalBoostMin,SHAPE.highNormalBoostMax,false);
   }
   return v;
 }
