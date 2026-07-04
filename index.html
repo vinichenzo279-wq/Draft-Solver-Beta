@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v12.3.2</title>
+<title>Draft Solver v12.4.0</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -830,8 +830,24 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                count and isn't recommended at any setting. 8-16 shuffle passes is the best-tested
                range at moderate-to-hard node caps; higher counts are untested past 32 and may
                re-enter the "too thin per pass" regime sooner on smaller budgets.
+       v12.4.0 — solveBest's per-node UB: fixed a genuine (if narrow) double-count in the "leagues"
+               component. A remaining slot whose ONLY hero candidates are Prem-league heroes was
+               credited a flat +2 baseline (nation+own-league) same as any other hero slot -- but
+               that league point is the same shared Premier League bucket premUnseen already grants
+               once, globally, so it was being counted twice whenever such a slot existed. Fixed by
+               a new per-slot slotHeroAllPrem flag: Prem-exclusive-hero slots now get baseline +1
+               (nation only), and the "first hero" bonus is hardcoded to its true, category-
+               independent value of +1 (the one-time hero-club flag) instead of the old 3-b
+               derivation, which would have silently re-inflated back to +2 once baseline dropped
+               to 1. Every previously-existing case is untouched (b was always 2 there, so 3-b was
+               already always 1 -- this just states that constant instead of deriving it) --
+               strictly tighter, never looser, and only on drafts where a slot's hero pool is 100%
+               Prem-league heroes with no normal fallback for that slot. Bound stays admissible
+               (still never under-counts): premUnseen's global +1 is untouched and still fires
+               exactly once regardless of source, so no branch that could still legally reach
+               Premier League gets under-credited.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v12.3.2</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v12.4.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -2658,6 +2674,17 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   // traversal order doesn't change which TYPES are present) as suffix aggregates, so the
   // per-node bound check below stays O(1), same as before.
   const slotTypes=cand.map(list=>{const s=new Set();for(const c of list)s.add(c.type);return s;});
+  // v12.4.0: per-slot "every hero option here is a Prem-league hero" flag. A hero whose own
+  // league IS 'England Premier League' doesn't add a fresh league the way a non-Prem hero does --
+  // that league point is the same shared Prem bucket normals/premUnseen already cover globally,
+  // earned once no matter how many Prem sources could supply it. So a slot whose only hero
+  // candidates are Prem-league heroes can guarantee nation (+1) from that option, not nation+
+  // league (+2) -- the old code credited +2 unconditionally, double-counting against premUnseen
+  // in this one narrow case. See v12.4.0 CHANGELOG.
+  const slotHeroAllPrem=cand.map(list=>{
+    const heroes=list.filter(c=>c.type==='hero');
+    return heroes.length>0&&heroes.every(c=>c.league==='England Premier League');
+  });
   const N=slots.length;
   const ubBaseline=new Array(N),ubSuffixBase=new Array(N+1).fill(0);
   const ubTopIconV=new Array(N+1),ubTopIconI=new Array(N+1),ubTopIconV2=new Array(N+1),ubTopIconI2=new Array(N+1);
@@ -2665,17 +2692,29 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   ubTopIconV[N]=-Infinity;ubTopIconI[N]=-1;ubTopIconV2[N]=-Infinity;ubTopIconI2[N]=-1;
   ubTopHeroV[N]=-Infinity;ubTopHeroI[N]=-1;ubTopHeroV2[N]=-Infinity;ubTopHeroI2[N]=-1;
   for(let k=N-1;k>=0;k--){
-    const st=slotTypes[order[k]];
+    const idx=order[k];
+    const st=slotTypes[idx];
+    // v12.4.0: hero baseline is 2 (nation+own league) unless every hero option here is Prem-only,
+    // in which case it's 1 (nation only -- the league point is the shared Prem bucket, not a
+    // fresh per-slot one).
+    const heroBase=slotHeroAllPrem[idx]?1:2;
     let b=-Infinity;
     if(st.has('normal'))b=2;
-    if(st.has('hero')&&b<2)b=2;
+    if(st.has('hero')&&b<heroBase)b=heroBase;
     if(st.has('icon')&&b<1)b=1;
     ubBaseline[k]=b;ubSuffixBase[k]=ubSuffixBase[k+1]+b;
     let iv=ubTopIconV[k+1],ii=ubTopIconI[k+1],iv2=ubTopIconV2[k+1],ii2=ubTopIconI2[k+1];
     if(st.has('icon')){const g=3-b;if(g>iv){iv2=iv;ii2=ii;iv=g;ii=k;}else if(g>iv2){iv2=g;ii2=k;}}
     ubTopIconV[k]=iv;ubTopIconI[k]=ii;ubTopIconV2[k]=iv2;ubTopIconI2[k]=ii2;
+    // v12.4.0: the "first hero" bonus is always exactly +1 -- the one-time hero-club flag
+    // (scoreXI's hasHero -> clubs+1) -- never 3-b. Previously b was always 2 for any hero-
+    // possible slot, so 3-b always happened to come out to 1 anyway; now that Prem-exclusive
+    // slots correctly get b=1, leaving this as 3-b would silently reinflate to 2, re-adding the
+    // league point baseline just removed. Hardcoding the true, category-independent gain avoids
+    // that regression and keeps every previously-existing case byte-identical (g was always 1
+    // there too, just derived instead of stated).
     let hv=ubTopHeroV[k+1],hi=ubTopHeroI[k+1],hv2=ubTopHeroV2[k+1],hi2=ubTopHeroI2[k+1];
-    if(st.has('hero')){const g=3-b;if(g>hv){hv2=hv;hi2=hi;hv=g;hi=k;}else if(g>hv2){hv2=g;hi2=k;}}
+    if(st.has('hero')){const g=1;if(g>hv){hv2=hv;hi2=hi;hv=g;hi=k;}else if(g>hv2){hv2=g;hi2=k;}}
     ubTopHeroV[k]=hv;ubTopHeroI[k]=hi;ubTopHeroV2[k]=hv2;ubTopHeroI2[k]=hi2;
   }
   let best=(typeof seedBest==="number"&&seedBest>=0)?seedBest:-1;
