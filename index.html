@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v9.5.0</title>
+<title>Draft Solver v10.0.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,17 +129,37 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
 
-       Which number to bump (format is MAJOR.BUGFIX.TEXT):
+       Which number to bump (format is MAJOR.BUGFIX.TEXT, optionally .CORRECTION):
          - 1st number (MAJOR): a significant functionality change — new feature, changed behavior,
            anything that substantially alters what the app actually does. Bump this, and reset
-           the other two to 0.
+           the other two (or three) to 0.
          - 2nd number (BUGFIX): a significant bug fix (incorrect logic/output corrected, no new
            capability added) OR a minor feature/data addition — e.g. a new entry added to a
            default DB, a small new option, or any other small addition that doesn't rise to a
-           MAJOR bump. Bump this, and reset the 3rd number to 0.
+           MAJOR bump. Bump this, and reset the 3rd number (and drop any 4th) to 0.
          - 3rd number (TEXT): copy/label/comment/formatting edits only — no logic changed at all.
+         - 4th number (CORRECTION, added v9.5.2.1): OMITTED in the normal case (a version with no
+           4th number is implicitly ".0"). Only append/bump this when you are fixing a MISTAKE in
+           the version you (or a prior assistant) JUST bumped to moments ago — e.g. the request
+           said "do X everywhere" and the previous edit only did X in 2 of 3 spots, or a typo in
+           that same edit. The point is NOT to save a MAJOR/BUGFIX/TEXT bump for small follow-ups
+           in general — it's specifically so that two people who both downloaded "v9.5.2" at
+           different points in the same conversation are holding genuinely different files, and
+           can tell that from the version string alone instead of assuming they match. Once the
+           NEXT real change comes in (not a correction to this one), bump the 2nd or 3rd number as
+           usual and drop the 4th number entirely.
        e.g. v8.2.6 -> v8.2.7 is a text-only tweak; a real bug fix or minor feature/data addition
-       would be v8.3.0; a major new feature would be v9.0.0.
+       would be v8.3.0; a major new feature would be v9.0.0; v9.5.2 -> v9.5.2.1 is a same-session
+       correction to something v9.5.2 got only partly right.
+
+       CLARIFICATION (added v9.5.1): "new feature" alone does not automatically earn the 1st
+       number. The 1st number is reserved for changes significant enough to substantially alter
+       what the app does — a small new feature (a new toggle, a new field, a small new panel)
+       is still a 2nd-number bump. Conversely, a minor tweak to existing behavior (a label
+       reworded to be clearer, a default value nudged, a clamp loosened) doesn't need to be a
+       2nd-number bump just because it changes behavior slightly — if the change is small and
+       low-risk, the 3rd number is fine for it too. Use judgment on size/risk, not on whether
+       "behavior changed" in the abstract.
 
        CHANGELOG CONVENTION (started v8.12): every version bump gets a one-line entry added to the
        CHANGELOG block just below, in the form "vX.Y.Z — what changed, in a few words". This is
@@ -379,8 +399,55 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                tightens the combined bound vs the old min(A,B,C,D) in 367 of those trials (0.46%,
                avg tightening ~0.68 rating points when it happens) and never loosens it in any
                trial. Same fuzz harness/oracle used to validate UB-D in v9.4.0.
+       v9.5.1 — Batch of small tweaks: (1) high-rating boost threshold/ceiling clamps (icon/hero/
+               normal) freed from the artificial [80,99] range to [0,105] so they can actually go
+               above 99 as intended, and their labels updated to say so; (2) take-vs-hold gap
+               default raised from 5 to 10; (3) all-fresh chemistry bonus label simplified; (4)
+               chemistry counts now exclude Prem-League heroes' league count and the captain pick
+               entirely from the shown badge (both trivially "1st"), and exclude Prem-League
+               heroes from the all-fresh bonus outright; (5) hold-size severity label reworded —
+               no more "1-card hold" (holds of 1 don't exist), now describes the general curve by
+               how many cards share the clashing slot; (6) versioning convention above clarified re:
+               feature size vs number bumped.
+       v10.0 — "Skip ties" checkbox (default OFF), under the Rating-Ceiling slider next to the new
+               85/95/105 scale (moved up from beneath the Optimal-RC box). When ON, the branch-and-
+               bound solver switches from "explore anything that could match the best" to "explore
+               only what could BEAT it" — the prune test goes from ub<best to ub<=best, and tied
+               lineups are no longer collected. This is provably score-preserving: an admissible
+               bound never exceeds a branch's true max, so a branch holding a strictly-better XI
+               always has ub>best and is never pruned; only equal-scoring lineups are dropped. It
+               composes with Optimal RC — at the tight auto ceiling the demo goes 10,286 -> 38
+               nodes for the same score 153 (357,777 -> 38 vs the old manual RC105). Note this is
+               the sound version of "just lower RC by 1": lowering the ceiling under the optimal
+               squad's own rating can prune the optimum outright (RC93 on the demo misses 153),
+               whereas skip-ties cuts ties directly and stays correct at the true UB. Persists in
+               advanced settings. Solver/scoring untouched with the box OFF — demo fingerprint
+               still 357,777 / 153 / 3 ties.
+       v9.5.2 — Small follow-ups to 9.5.1: (1) the high-rating boost threshold AND ceiling labels
+               (icon/hero/normal, 6 labels total) no longer spell out "not capped at 99 — can be
+               set above it" — self-evident from the default and [0,105] range now;
+               (2) low-rating penalty threshold/floor clamps (icon/hero/normal) widened from
+               [0,99] to [0,105] to match the high side, for consistency; (3) the nation and league
+               dropdowns (all pickers: f/h/m/db/dbe/dbme/dbm) are now ordered by live DB rarity
+               instead of the old fixed hardcoded order — most-common-in-DB first, rarest last,
+               via the previously-unused NAT_RANK/LG_RANK + _rankCommon(); anything with zero
+               cards in the DB (never seen) is appended alphabetically at the end; re-runs on
+               every DB change (import/add/reset/clear) via rebuildRarity(). Falls back to the
+               original hardcoded order if the sort ever fails for any reason.
+       v9.5.2.1 — Correction to v9.5.2: (1) had only trimmed the "not capped at 99" redundant
+               note off the 3 high-boost CEILING labels, missed the 3 matching THRESHOLD labels
+               (icon/hero/normal) which had the same redundant note — now trimmed too, all 6
+               consistent; (2) introduces the 4th version-number convention itself (see note by
+               the <h1> above) for exactly this situation — a same-session fix-up to a version
+               just bumped, so a "v9.5.2" downloaded before this correction and one downloaded
+               after are distinguishable instead of silently looking identical.
+       v10.0.1 — Moved the oversized-pool warning ("⚠ N cards on the board — consider removing
+               deadweight...") out of the results panel, where it was misplaced, and into the
+               main XI's capped-search box, alongside the "Keep searching (x3)" / "Search to the
+               end" escalation buttons — that's the box the warning is actually actionable from.
+               The per-slot helper's own copy of the warning is unchanged.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v9.5.0</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v10.0.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -514,12 +581,16 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <details class="hlp" style="margin-bottom:10px"><summary>Advanced &mdash; solver settings</summary>
     <div style="margin-top:8px">
       <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Rating Ceiling &mdash; <span id="ratingCeilLabel" style="color:var(--ink);font-weight:800">96</span></label>
-      <input type="range" id="ratingCeilSlider" min="0" max="20" value="11" style="width:100%;margin:0 0 4px;accent-color:var(--cyan)" oninput="updateRatingCeilLabel()" onchange="saveAdvSettings()">
+      <input type="range" id="ratingCeilSlider" min="0" max="20" value="11" style="width:100%;margin:0 0 2px;accent-color:var(--cyan)" oninput="updateRatingCeilLabel()" onchange="saveAdvSettings()">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:8px"><span>85</span><span>95</span><span>105</span></div>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="rcAutoOptimal" checked onchange="_toggleAutoRC();saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Optimal RC</b> &mdash; let the solver pick the ceiling automatically</span>
       </label>
-      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:8px"><span>85</span><span>95</span><span>105</span></div>
+      <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
+        <input type="checkbox" id="skipTies" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
+        <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t hunt equal-scoring lineups (much faster)</span>
+      </label>
       <p class="tiny" style="margin:0">The highest team rating the solver assumes is reachable &mdash; a <b>speed lever</b>, and the biggest one there is. With <b>Optimal RC</b> on (the default) the solver computes the exact best ceiling for your draft and sets it before every solve &mdash; no guessing, no warnings. Turn it off to drive the slider yourself: a lower ceiling searches far fewer nodes but can miss a better squad, a higher one guarantees completeness but is slower. Left on, you always get the fastest ceiling that&rsquo;s still provably optimal.</p>
       <div id="ratingCeilWarn" style="display:none;font-size:11px;padding:7px 10px;border-radius:0 7px 7px 0;margin-top:8px;background:var(--panel2);border-left:2px solid var(--warn);color:var(--warn)"></div>
       <div style="margin-top:14px">
@@ -763,6 +834,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 // Index = rarity weight: later = rarer = more valuable to draft. Russia included (Pacwyn bans it, but harmless extra).
 const NATIONS=["Argentina","Spain","France","England","Portugal","Brazil","Netherlands","Belgium","Italy","Germany","Croatia","Morocco","Colombia","Mexico","Uruguay","Switzerland","United States","Senegal","Japan","Denmark","Iran","Korea Republic","Australia","Ecuador","Austria","Ukraine","Sweden","Wales","Hungary","Canada","Serbia","Egypt","Poland","Panama","Norway","Russia","Nigeria","Czech Republic","Scotland","Greece","Ivory Coast","Slovakia","Turkey","Romania","Costa Rica","Peru","Tunisia","Cameroon","Mali","Algeria","Slovenia","Paraguay","Venezuela","Qatar","Saudi Arabia","Chile","Ghana","Cape Verde Islands","Burkina Faso","Jamaica","South Africa","Bosnia Herzegovina","North Macedonia","Republic of Ireland","Finland","Iceland","Honduras","Curacao","Oman","Iraq","United Arab Emirates","Jordan","Uzbekistan","Bolivia","Gabon","Benin","DR Congo","Guinea","Zambia","Angola","Montenegro","Georgia","Albania","Kosovo","Israel","Armenia","Kazakhstan","Luxemburg","Northern Ireland","Mozambique","Uganda","Madagascar","Kenya","Syria","Palestinian Authority","India","Tanzania","Namibia","Trinidad and Tobago","Guinea Bissau","Mauritania","Libya","Togo","Sierra Leone","Niger","Comoros","Tajikistan","Kyrgyzstan","Lebanon","Vietnam","Thailand","China PR","New Zealand","El Salvador","Estonia","Cyprus","Belarus","Azerbaijan","Bulgaria","Lithuania","Latvia","Malawi","Zimbabwe","Ethiopia","Sudan","Rwanda","Burundi","Liberia","Equatorial Guinea","CAR","Chad","Suriname","Haiti","Nicaragua","Guatemala","Dominican Republic","Antigua and Barbuda","Cuba","Philippines","Indonesia","Malaysia","Hong Kong","Chinese Taipei","Afghanistan","Yemen","Maldives","Faroe Islands","Gibraltar","Andorra","Malta","Moldova","Gambia","Botswana","Lesotho","Eswatini","Mauritius","South Sudan","Somalia","Bermuda","Sri Lanka","Puerto Rico","Barbados","Grenada","St Lucia","St Vincent","St Kitts Nevis","Bahamas","Belize","Aruba","Montserrat","Guyana","French Guiana","Tahiti","Fiji","New Caledonia","Solomon Islands","Papua New Guinea","Vanuatu","Samoa","Tonga","San Marino","Liechtenstein","Netherlands Antilles","Other"];
 // Leagues ordered common -> rare. prem flag marks the only league a Normal may use.
+const NATIONS_FALLBACK_ORDER=NATIONS.slice(); // original hardcoded order, used if DB-rarity sort ever fails
 const LEAGUES=[
  {n:"England Premier League",prem:true},{n:"Spain LaLiga"},{n:"Germany Bundesliga"},{n:"Italy Serie A"},
  {n:"France Ligue 1"},{n:"USA MLS"},{n:"Turkey Super Lig"},{n:"Saudi Pro League"},{n:"Portugal Primeira"},
@@ -780,6 +852,7 @@ const LEAGUES=[
  {n:"Switzerland Damen W"},{n:"Other"}
 ];
 const LEAGUE_NAMES=LEAGUES.map(l=>l.n);
+const LEAGUE_NAMES_FALLBACK_ORDER=LEAGUE_NAMES.slice(); // original hardcoded order, used if DB-rarity sort ever fails
 const CLUBS=["AFC Bournemouth","Arsenal","Aston Villa","Brentford","Brighton","Burnley","Chelsea","Crystal Palace","Everton","Fulham","Leeds United","Liverpool","Manchester City","Man Utd","Newcastle Utd","Nott'm Forest","Spurs","Sunderland","West Ham","Wolves"];
 const POSALL=["GK","LB","CB","RB","CDM","CM","LM","RM","CAM","LW","RW","ST"];
 // formation slot value: you only get a card's PRIMARY position, and on the starting XI you can't use alt positions.
@@ -1075,11 +1148,11 @@ let _solveCache=null,_squadOverride=null,_urgentPos=null,_pendFactor=1; // Phase
 let _lastFullRedundant=false; // set by squadAdjust; read by XI-boost phase to suppress boost for commit-clashing cards
 let _evalingSiblings=false; // recursion guard: prevents sibling helpValue calls from triggering further sibling evals
 let NAT_RANK={},LG_RANK={},NAT_COUNT={},CLB_COUNT={},LG_COUNT={},DB_M=1; // raw card counts per nation/club/hero-league + total, from the live DB
-const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:5,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.5,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,lowIconHardBound:85,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,highIconHardBound:99,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0.25,lowHeroPenaltyMax:0.75,lowHeroHardBound:85,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,highHeroHardBound:99,lowNormalRatingThreshold:87,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,lowNormalHardBound:75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,highNormalHardBound:99,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5,holdSevBase:0.4,holdSevCap:0.85,allFirstBonus:5};
+const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:10,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.5,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,lowIconHardBound:85,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,highIconHardBound:99,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0.25,lowHeroPenaltyMax:0.75,lowHeroHardBound:85,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,highHeroHardBound:99,lowNormalRatingThreshold:87,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,lowNormalHardBound:75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,highNormalHardBound:99,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5,holdSevBase:0.4,holdSevCap:0.85,allFirstBonus:5};
 // Inputs floored at 0 because a negative value here would flip the formula's intent (e.g. extra icons/heroes
 // getting MORE valuable instead of less). clashBase also gets a max: above 2 a mild clash can end up scoring
 // worse than a severe one (see clashBase's label below), so 2 is the point past which the slider works against itself.
-const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[80,105],premHeroRatingGap:[1,10],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],lowIconRatingThreshold:[0,99],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],lowIconHardBound:[0,99],highIconRatingThreshold:[80,99],highIconBoostMin:[0,1],highIconBoostMax:[0,2],highIconHardBound:[80,99],lowHeroRatingThreshold:[0,99],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],lowHeroHardBound:[0,99],highHeroRatingThreshold:[80,99],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],highHeroHardBound:[80,99],lowNormalRatingThreshold:[0,99],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],lowNormalHardBound:[0,99],highNormalRatingThreshold:[80,99],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],highNormalHardBound:[80,99],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30],holdSevBase:[0,2],holdSevCap:[0,2],allFirstBonus:[0,20]};
+const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[80,105],premHeroRatingGap:[1,10],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],lowIconRatingThreshold:[0,105],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],lowIconHardBound:[0,105],highIconRatingThreshold:[0,105],highIconBoostMin:[0,1],highIconBoostMax:[0,2],highIconHardBound:[0,105],lowHeroRatingThreshold:[0,105],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],lowHeroHardBound:[0,105],highHeroRatingThreshold:[0,105],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],highHeroHardBound:[0,105],lowNormalRatingThreshold:[0,105],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],lowNormalHardBound:[0,105],highNormalRatingThreshold:[0,105],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],highNormalHardBound:[0,105],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30],holdSevBase:[0,2],holdSevCap:[0,2],allFirstBonus:[0,20]};
 let SHAPE={...SHAPE_DEF}; // tunable: clash-draw count (rarity = P(no clash over this many random draws)) + icon/hero diminishing
 const _SHAPE_SAVE_KEY='pacwyn_shape_v1';
 function saveShapeLocal(){try{localStorage.setItem(_SHAPE_SAVE_KEY,JSON.stringify(SHAPE));}catch(e){}}
@@ -2092,7 +2165,8 @@ function scoreXI(xi){
 }
 
 /* ============================ SOLVER (DFS + bound) ============================ */
-function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
+function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies){
+  const ST=!!skipTies; // "Skip ties": prune branches that can only TIE the best (strict-improvement B&B) and stop collecting tied XIs. Provably keeps the optimal SCORE (never prunes a strictly-better branch, whose admissible bound must exceed best); only tied lineups are dropped.
   const RC=ratingCeil!==undefined?ratingCeil:99;
   const slots=form.slots;
   const cand=slots.map(s=>cards.filter(c=>c.pos.includes(s))
@@ -2160,7 +2234,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
       const xi=pick.slice(),sc=scoreXI(xi);
       if(sc.rating>maxRating)maxRating=sc.rating;   // cheap: sc.rating already computed for the score
       if(sc.total>best){best=sc.total;const key=xi.map(c=>c.id).sort().join(',');bestXIs=[{xi,sc,foundAt:nodes,key}]}
-      else if(sc.total===best){
+      else if(!ST && sc.total===best){
         const key=xi.map(c=>c.id).sort().join(',');
         if(!bestXIs.some(b=>(b.key||(b.key=b.xi.map(c=>c.id).sort().join(',')))===key))bestXIs.push({xi,sc,foundAt:nodes,key});
       }
@@ -2205,7 +2279,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
       const ub=RC+33
         +seenNat.size+seenLg.size+seenClub.size+partialIcon+partialHero
         +total0+bonusGain+premUnseen;
-      if(ub<best)return;
+      if(ST?ub<=best:ub<best)return; // ST: a branch that can only reach `best` is a tie we do not need
     }
     // v5.6 dynamic in-flight presort — reorders cand[slotIdx] using the *live* path state
     // (seenNat/seenLg/seenClub/partialIcon/partialHero) instead of the static rating-only
@@ -2534,6 +2608,7 @@ function _hideSolverOverlay(){
 // RC warnings (which only exist to guide MANUAL tuning) are hidden. Off = full manual control of the
 // slider, with the warnings back. Default-on is expressed as "missing or checked" so older saved
 // states (no checkbox key) also default to auto.
+function _skipTies(){const cb=$('#skipTies');return !!(cb&&cb.checked);} // default OFF
 function _autoRCon(){const cb=$('#rcAutoOptimal');return !cb||cb.checked;}
 function _applyAutoRC(){
   if(!_autoRCon())return null;
@@ -2584,7 +2659,7 @@ function saveAdvSettings(){
   try{
     const rc=$('#ratingCeilSlider'),nc=$('#nodeCapInput'),bm=$('#benchMode'),md=$('#mgrDepth');
     const ar=$('#rcAutoOptimal');
-    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true};
+    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false)};
     localStorage.setItem(_ADV_SAVE_KEY,JSON.stringify(d));
   }catch(e){}
 }
@@ -2605,7 +2680,9 @@ function saveAdvSettings(){
       const bm=$('#benchMode');if(bm)bm.value=m[0];const md=$('#mgrDepth');if(md)md.value=m[1];
     }
     if(saved.rcAuto!==undefined){const ar=$('#rcAutoOptimal');if(ar)ar.checked=!!saved.rcAuto;}
-    _updMgrDepthLbl();
+    
+    if(d.skipTies!==undefined){var _st=$('#skipTies'); if(_st)_st.checked=!!d.skipTies;}
+_updMgrDepthLbl();
   }catch(e){}
 })();
 function resetAdvSettings(){
@@ -2640,7 +2717,7 @@ function _probeFloor(form,sortedCards,ratingCeil){
   let seedBest=-1,seedXIs=null,last=-1;
   for(const st of steps){
     if(st.rc<86||st.rc>ratingCeil-3||st.rc<=last)continue;last=st.rc;
-    const pr=solveBest(form,sortedCards,st.cap,st.rc,seedBest>=0?seedBest:undefined,seedXIs);
+    const pr=solveBest(form,sortedCards,st.cap,st.rc,seedBest>=0?seedBest:undefined,seedXIs,_skipTies());
     if(pr&&!pr.error&&pr.bestXIs&&pr.bestXIs.length&&pr.best>seedBest){seedBest=pr.best;seedXIs=pr.bestXIs.slice();}
   }
   return (seedBest>=0&&seedXIs)?{seedBest,seedXIs}:null;
@@ -2806,7 +2883,8 @@ function _runSolveInner(cap,ratingCeil,reuseSeed){
     _seed={seedBest:window._solveCtx.r.best,seedXIs:window._solveCtx.r.bestXIs};
   }
   else{_seed=(cap>2000000)?_probeFloor(form,sortedCards,ratingCeil):null;}
-  const r=solveBest(form,sortedCards,cap,ratingCeil,_seed?_seed.seedBest:undefined,_seed?_seed.seedXIs:undefined),ms=Math.round(performance.now()-t0);
+  const r=solveBest(form,sortedCards,cap,ratingCeil,_seed?_seed.seedBest:undefined,_seed?_seed.seedXIs:undefined,_skipTies()),ms=Math.round(performance.now()-t0);
+  if(_skipTies()&&r&&r.bestXIs&&r.bestXIs.length>1)r.bestXIs=[r.bestXIs[0]]; // ties intentionally skipped -> show the one optimal lineup
   r.ubRating=maxPossibleRating(sortedCards,form); // search-independent upper bound on any legal squad's rating — drives the RC warning (see _rcCeilWarnHTML)
   _hideSolverOverlay();
   _handleSolveResult(r,cap,form,ms,out);
@@ -3557,7 +3635,7 @@ function _cappedWarnHTML(cap){
     +'<button class="btn sm" onclick="runSolve('+nextCap+')">Keep searching ('+(nextCap/1000000)+'M)</button>'
     +'<button class="btn sec sm" onclick="runSolve(1e12,true)">Search to the end</button>'
     +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept this result</button>'
-    +'</div></div>';
+    +'</div>'+_poolSizeWarning()+'</div>';
 }
 function applyTie(idx){
   const ctx=window._solveCtx;if(!ctx)return;
@@ -4053,7 +4131,7 @@ function _pickPanelSuffixes(picks,holdGroups){
     +'<div class="rings"><div class="ring n"><b>'+sc.nations+'</b><span>NATIONS</span></div>'
     +'<div class="ring l"><b>'+sc.leagues+'</b><span>LEAGUES</span></div>'
     +'<div class="ring c"><b>'+sc.clubs+'</b><span>CLUBS</span></div></div>'
-    +'<div class="tiny" style="margin-top:8px">Chem '+chemFlag+' \u00b7 '+r.nodes.toLocaleString()+' nodes'+_msTxt+_faTxt+(r.capped?' \u00b7 result shown above':'')+'</div>'+tieNote+_poolSizeWarning()+'</div>'
+    +'<div class="tiny" style="margin-top:8px">Chem '+chemFlag+' \u00b7 '+r.nodes.toLocaleString()+' nodes'+_msTxt+_faTxt+(r.capped?' \u00b7 result shown above':'')+'</div>'+tieNote+'</div>'
   +'<div class="panel"><h2>Starting XI</h2><div class="xi">'+xiHtml+'</div></div>'
   +'<div class="panel"><h2>Pick per hold</h2>'+hp+'<div class="tiny" style="margin-top:6px">In hold order. Committed cards need no pick.</div>'+(subPicks.length?'<div class="tiny" style="margin:8px 0 4px;color:var(--mut)">The rest won\u2019t start \u2014 pick these for sub / manager-insurance value:</div>'+subPicksHtml:'')+'</div>'
   +'<div class="panel"><h2>Bench \u2014 manager insurance</h2><div class="tiny">Best leftover from each unused hold. \u2605 = carries something fresh that can sub in if a manager clashes.</div><div class="xi" style="margin-top:6px">'+benchHtml+'</div>'+_reanalyzeBenchBtn()+'</div>'+benchNote;
@@ -4499,7 +4577,36 @@ function rebuildRarity(){const src=playerDB.length?playerDB:DEFAULT_DB;
     if(c.type==='normal'&&c.club)CLB_COUNT[c.club]=(CLB_COUNT[c.club]||0)+1;
     if(c.type==='hero')LG_COUNT[c.league]=(LG_COUNT[c.league]||0)+1;
     (c.pos||[]).forEach(p=>{POS_COUNT[p]=(POS_COUNT[p]||0)+1;});});
+  NAT_RANK=_rankCommon(NAT_COUNT);LG_RANK=_rankCommon(LG_COUNT);
+  reorderDropdownLists();
   recomputeFormScores(); // rescore formations from FW weights (DB no longer used for this)
+}
+// Order a dropdown's option list by the live DB rarity rank (most-common-in-DB first, rarest last),
+// with anything absent from the DB entirely (rank undefined) tacked on the end in alphabetical order.
+// Any failure here (bad/missing rank map, mismatch, etc.) falls back to the original hardcoded order.
+function _sortByRarity(names,rankMap,fallbackOrder){
+  try{
+    const known=names.filter(n=>Object.prototype.hasOwnProperty.call(rankMap,n));
+    const unknown=names.filter(n=>!Object.prototype.hasOwnProperty.call(rankMap,n));
+    known.sort((a,b)=>rankMap[a]-rankMap[b]);
+    unknown.sort((a,b)=>a.localeCompare(b));
+    const out=known.concat(unknown);
+    if(out.length!==names.length)throw new Error('rarity sort length mismatch');
+    return out;
+  }catch(e){return fallbackOrder.slice();}
+}
+// Re-sorts NATIONS / LEAGUE_NAMES (and the derived MLEAGUES) IN PLACE so every dropdown built from
+// them (via makeCombo, which keeps a live reference) picks up the new order automatically.
+function reorderDropdownLists(){
+  try{
+    const natOrder=_sortByRarity(NATIONS_FALLBACK_ORDER,NAT_RANK,NATIONS_FALLBACK_ORDER);
+    NATIONS.length=0;NATIONS.push(...natOrder);
+  }catch(e){NATIONS.length=0;NATIONS.push(...NATIONS_FALLBACK_ORDER);}
+  try{
+    const lgOrder=_sortByRarity(LEAGUE_NAMES_FALLBACK_ORDER,LG_RANK,LEAGUE_NAMES_FALLBACK_ORDER);
+    LEAGUE_NAMES.length=0;LEAGUE_NAMES.push(...lgOrder);
+  }catch(e){LEAGUE_NAMES.length=0;LEAGUE_NAMES.push(...LEAGUE_NAMES_FALLBACK_ORDER);}
+  try{MLEAGUES.length=0;MLEAGUES.push('Icons',...LEAGUE_NAMES);}catch(e){}
 }
 // Rescore every formation using FW position weights.
 // (GOLD_DB is kept in case we want rarity-based scoring in the future, but it is NOT
@@ -4583,26 +4690,26 @@ const SHAPE_LABEL={
   lowIconPenaltyMin:'Low-rated icon penalty (min) \u2014 value an icon loses at the threshold rating. Keep \u2264 the max.',
   lowIconPenaltyMax:'Low-rated icon penalty (max) \u2014 value an icon loses at the floor rating below. Keep \u2265 the min.',
   lowIconHardBound:'Low-icon penalty floor \u2014 rating at/below which the low-icon penalty is fully maxed out.',
-  highIconRatingThreshold:'High-icon boost threshold \u2014 rating at/above which icons start gaining extra value.',
+  highIconRatingThreshold:'High-icon boost threshold \u2014 rating at/above which icons start gaining extra value. Keep below the ceiling below.',
   highIconBoostMin:'High-rated icon boost (min) \u2014 value an icon gains at the threshold rating. Keep \u2264 the max.',
   highIconBoostMax:'High-rated icon boost (max) \u2014 value an icon gains at the ceiling rating below. Keep \u2265 the min.',
-  highIconHardBound:'High-icon boost ceiling \u2014 rating at/above which the high-icon boost is fully maxed out.',
+  highIconHardBound:'High-icon boost ceiling \u2014 rating at/above which the high-icon boost is fully maxed out. Keep above the threshold above.',
   lowHeroRatingThreshold:'Low-hero penalty threshold \u2014 rating at/below which heroes start losing value. 0 = off (default).',
   lowHeroPenaltyMin:'Low-rated hero penalty (min) \u2014 value a hero loses at the threshold rating. Keep \u2264 the max.',
   lowHeroPenaltyMax:'Low-rated hero penalty (max) \u2014 value a hero loses at the floor rating below. Keep \u2265 the min.',
   lowHeroHardBound:'Low-hero penalty floor \u2014 rating at/below which the low-hero penalty is fully maxed out.',
-  highHeroRatingThreshold:'High-hero boost threshold \u2014 rating at/above which heroes start gaining extra value.',
+  highHeroRatingThreshold:'High-hero boost threshold \u2014 rating at/above which heroes start gaining extra value. Keep below the ceiling below.',
   highHeroBoostMin:'High-rated hero boost (min) \u2014 value a hero gains at the threshold rating. Keep \u2264 the max.',
   highHeroBoostMax:'High-rated hero boost (max) \u2014 value a hero gains at the ceiling rating below. Keep \u2265 the min.',
-  highHeroHardBound:'High-hero boost ceiling \u2014 rating at/above which the high-hero boost is fully maxed out.',
+  highHeroHardBound:'High-hero boost ceiling \u2014 rating at/above which the high-hero boost is fully maxed out. Keep above the threshold above.',
   lowNormalRatingThreshold:'Low-normal penalty threshold \u2014 rating at/below which normals start losing value. 0 = off, default 87.',
   lowNormalPenaltyMin:'Low-rated normal penalty (min) \u2014 value a normal loses at the threshold rating. Keep \u2264 the max.',
   lowNormalPenaltyMax:'Low-rated normal penalty (max) \u2014 value a normal loses at the floor rating below. Keep \u2265 the min.',
   lowNormalHardBound:'Low-normal penalty floor \u2014 rating at/below which the low-normal penalty is fully maxed out.',
-  highNormalRatingThreshold:'High-normal boost threshold \u2014 rating at/above which normals start gaining extra value.',
+  highNormalRatingThreshold:'High-normal boost threshold \u2014 rating at/above which normals start gaining extra value. Keep below the ceiling below.',
   highNormalBoostMin:'High-rated normal boost (min) \u2014 value a normal gains at the threshold rating. Keep \u2264 the max.',
   highNormalBoostMax:'High-rated normal boost (max) \u2014 value a normal gains at the ceiling rating below. Keep \u2265 the min.',
-  highNormalHardBound:'High-normal boost ceiling \u2014 rating at/above which the high-normal boost is fully maxed out.',
+  highNormalHardBound:'High-normal boost ceiling \u2014 rating at/above which the high-normal boost is fully maxed out. Keep above the threshold above.',
   heroFull:'Free heroes (squad mode) \u2014 how many heroes count as free before the penalty starts.',
   heroPenalty:'Hero penalty slope (squad mode) \u2014 how fast value drops per hero past the free count.',
   heroRarityRefundCap:'Rare-league hero refund (squad mode) \u2014 how much of the hero saturation penalty a sufficiently rare league can cancel.',
@@ -4615,7 +4722,7 @@ const SHAPE_LABEL={
   premHeroPenaltyFracUrgentPos:'Prem-hero urgent-slot relief (squad mode) \u2014 forgiveness when it fills a needed slot (from pick 12). 0 = no relief.',
   clashBase:'Clash base (squad mode) \u2014 fixed hit whenever a card clashes a nation/club/league.',
   clashStack:'Clash stacking (squad mode) \u2014 extra hit per additional card already on that nation/club/league.',
-  holdSizeBase:'Hold-size severity (squad mode) \u2014 how much harder a 1-card hold (near-certain to field) is treated than a 5-card hold. Higher widens that gap; lower narrows it toward treating all hold sizes the same.',
+  holdSizeBase:'Hold-size severity (squad mode) \u2014 sets the curve for how much harsher a clash is treated the fewer cards share that same slot. Higher widens the gap between small and large holds; lower flattens it toward treating all hold sizes the same.',
   holdDomBoost:'Hold-dominance severity (squad mode) \u2014 extra severity when a better card in the same hold outranks it.',
   holdSevBase:'All-held clash severity floor (squad mode) \u2014 the starting severity for a clash against cards that are only held, before the hold-size and hold-dominance extras above are added.',
   holdSevCap:'All-held clash severity ceiling (squad mode) \u2014 the most an all-held clash severity can reach, however high the extras above push it.',
@@ -4632,7 +4739,7 @@ const SHAPE_LABEL={
   takeThreshold:'Take vs hold gap \u2014 how far ahead the top option must be before the helper says TAKE not HOLD.',
   starterBoost:'Starter boost (squad mode) \u2014 helper points added to a card your projected XI starts. Pairs with the bench penalty below.',
   benchPenalty:'Bench penalty (squad mode) \u2014 helper points removed from a card your projected XI benches. With the starter boost, sets how hard the helper favours a likely starter.',
-  allFirstBonus:'All-fresh chemistry bonus (squad mode) \u2014 flat points added when a card is "1st" on every count shown in its chemistry badge (nation, plus league for heroes and club for normals). 0 = off.',
+  allFirstBonus:'Flat bonus for a card who is new in everything (nation/league/club) (squad mode). 0 = off.',
 };
 const SHAPE_CATEGORIES=[
   {key:'icon',keys:['iconKeep','iconErosion','iconRarityRefundCap',
@@ -4985,7 +5092,7 @@ function helpValue(c){
   // card is "1st" — i.e. it's the only board slot on that nation (and league/club where those
   // dimensions apply to its type). A clean, simple counterweight to the clash-avoidance machinery
   // above: that reasons about severity/saturation curves, this just rewards total freshness.
-  if(squadAwareOn()&&SHAPE.allFirstBonus>0){
+  if(squadAwareOn()&&SHAPE.allFirstBonus>0&&!(c.type==='hero'&&c.league==='England Premier League')){
     const _afc=_shownCounts(c,_judgeExclude);
     if(_afc.nat===1&&(_afc.lg==null||_afc.lg===1)&&(_afc.clb==null||_afc.clb===1))v+=SHAPE.allFirstBonus;
   }
@@ -5083,7 +5190,11 @@ function slotPureCounts(c,excludeSlotId){
 function _ordinal(n){const v=n%100;if(v>=11&&v<=13)return n+'th';switch(n%10){case 1:return n+'st';case 2:return n+'nd';case 3:return n+'rd';default:return n+'th';}}
 function _shownCounts(c,excludeSlotId){
   const pc=slotPureCounts(c,excludeSlotId);
-  return{nat:pc.nat,lg:c.type==='hero'?pc.lg:null,clb:pc.clb};
+  // Prem-League heroes don't show a league count: their "league" is just England Premier League,
+  // which isn't a genuine hero-league rarity dimension, so it's excluded here (and from the
+  // all-fresh chemistry bonus in helpValue) rather than surfaced as a misleading "1st" badge.
+  const isPremHero=c.type==='hero'&&c.league==='England Premier League';
+  return{nat:pc.nat,lg:(c.type==='hero'&&!isPremHero)?pc.lg:null,clb:pc.clb};
 }
 function chemCountBadge(c,excludeSlotId){
   const pc=_shownCounts(c,excludeSlotId);
@@ -5092,7 +5203,9 @@ function chemCountBadge(c,excludeSlotId){
   if(pc.clb!=null)bits.push(_ordinal(pc.clb)+' '+c.club);
   return bits.join(' \u00b7 ');
 }
-function rankRows(ranked,excludeSlotId){return ranked.map((r,k)=>{
+// isCap: the captain slot is the very first pick, so every count is trivially "1st" on every
+// dimension \u2014 showing the badge there is meaningless, so it's omitted entirely for that slot.
+function rankRows(ranked,excludeSlotId,isCap){return ranked.map((r,k)=>{
   const xiTag=r._xiNote
     ?(r._xiNote==='starter'
       ?'<span style="color:var(--good);font-size:10px;font-weight:700;margin-left:5px">\u25b2 STARTER</span>'
@@ -5102,7 +5215,7 @@ function rankRows(ranked,excludeSlotId){return ranked.map((r,k)=>{
     :'';
   return '<div class="xirow"><div class="sl">'+(k+1)+'</div>'
     +'<div class="pl"><b>'+esc(cardName(r.c))+'</b>'+xiTag+'<div class="m">'+r.c.nation+' \u00b7 '+(r.c.type==='hero'?r.c.league.replace('England ',''):r.c.type==='icon'?'Icon':r.c.club)+' \u00b7 '+r.c.rating+(r.c.pos&&r.c.pos.length?' \u00b7 '+r.c.pos.join('/'):'')+'</div>'
-    +'<div class="m" style="color:var(--mut);opacity:.8">'+chemCountBadge(r.c,excludeSlotId)+'</div></div>'
+    +(isCap?'':'<div class="m" style="color:var(--mut);opacity:.8">'+chemCountBadge(r.c,excludeSlotId)+'</div>')+'</div>'
     +'<div class="r">'+r.v.toFixed(1)+'</div></div>';
 }).join('');}
 function scoreExplain(){
@@ -5546,7 +5659,7 @@ function judgeSlotInline(preCtx){
       }
     }
   }
-  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
+  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id,isCap)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
     +'<div class="tiny" style="margin-top:8px">Rated against your weights \u2014 feel free to overrule any call you don\u2019t agree with. It\u2019s your draft. Evaluations are generated on a per-hold basis, so re-evaluate if you make a change elsewhere.</div>'+inlineHoldNote+'</div>';
 }
 
