@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.9.3 (prototype)</title>
+<title>Draft Solver v16.12.0 (prototype)</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2646,7 +2646,36 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        futwiz / futbin-last extraction of the FC 27 gold set straight into the v16 schema (primary-
        first positions retire GOLD_DB), spot-check + canonicalization + sanity-report pipeline,
        PW-exclusives as the only manual surface, ship as import file first. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.9.3</span></h1>
+
+  <!-- v16.10.0 — Fix: "Add a card to the database" form's league-suggestion tap never refreshed
+       the club dropdown to match the newly-picked league (always fell back to Premier League
+       clubs), unlike the slot editor and evaluator forms where this worked correctly. Root cause:
+       wireType('#dbTypeSeg','#db') was wired before makeCombo('db-league',...), so both listeners
+       attached to #db-league-list fired in the wrong order — wireType's club-refresh read the
+       league input's stale (pre-tap) value before makeCombo's listener had written the newly-
+       tapped league into it. Fixed by swapping the call order to match the working forms:
+       makeCombo('db-league',...) now runs before wireType('#dbTypeSeg','#db'). -->
+
+  <!-- v16.11.0 — Fix: "Calibrate from DB" sampled simulated draft packs uniformly per DB ROW,
+       ignoring each card's `copies` count -- unlike rebuildRarity's rarity model, which already
+       copies-weights nation/club/league counts. A card with copies:20 and a card with copies:1
+       had identical odds of being offered in a simulated pack, silently skewing fitted calibration
+       weights whenever copy counts varied across the DB. _calMakeScripts now builds a cumulative
+       copies-weight table per position and draws from it (binary search), so a copies:N card is N
+       times as likely to appear as a copies:1 card, matching the rarity model. Also: _calDbHash
+       didn't include `copies`, so bumping only a card's copy count left the existing calibration's
+       hash matching and the "stale, please recalibrate" warning never fired even though the thing
+       just edited (copies) directly feeds the sampler. copies is now part of the hash. No change to
+       _calFeasible (still a plain eligible-row count, unrelated to copies weighting) or to the
+       solver, which never reads copies at all. -->
+
+  <!-- v16.12.0 — Two fixes. (1) clearDB()/resetDB() never called _renderCalResult(), so wiping or
+       resetting the DB left a stale calibration's warning banner un-refreshed until some unrelated
+       action (toggling no-hold, recalibrating) happened to re-render it. Both now call
+       _renderCalResult() immediately after saving. (2) _calFeasible's "not enough eligible cards"
+       error had a double-escaped \\u2265, so it printed the literal text "\u2265" instead of the
+       character; now a single escape like every other \u2265 usage in the file. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.12.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -3758,10 +3787,10 @@ function wireHelpNameCombo(){
 }
 wireHelpNameCombo();
 function setDBStatus(msg,col){$('#dbStatus').textContent=msg;$('#dbStatus').style.color=col||'var(--mut)';}
-function clearDB(){if(!confirm('Clear the ENTIRE player database? Solving and name autofill will rely on manual entry until you reset to default.'))return;playerDB=[];rebuildRarity();setDBStatus('Database cleared \u2014 manual entry only. (Reset to default to bring it back.)');_dbSave();}
+function clearDB(){if(!confirm('Clear the ENTIRE player database? Solving and name autofill will rely on manual entry until you reset to default.'))return;playerDB=[];rebuildRarity();setDBStatus('Database cleared \u2014 manual entry only. (Reset to default to bring it back.)');_dbSave();_renderCalResult();}
 function loadDefaultDB(){playerDB=DEFAULT_DB.map(p=>({name:p.name,rating:p.rating,type:p.type,nation:p.nation,league:p.league,club:p.club,pos:(p.pos||[]).map(normPos),primary:p.primary?normPos(p.primary):((p.pos&&p.pos[0])?normPos(p.pos[0]):null)}));rebuildRarity();
   setDBStatus('Default database loaded \u2014 '+playerDB.length+' cards (icons + heroes + all 20 Prem clubs). Type a name to search. Import to add your own, Export to save this set. \u26a0 positions are the least-checked field.','var(--good)');}
-function resetDB(){if(!confirm('Reset the player database to default? This replaces your current database.'))return;loadDefaultDB();_dbSave();}
+function resetDB(){if(!confirm('Reset the player database to default? This replaces your current database.'))return;loadDefaultDB();_dbSave();_renderCalResult();}
 function exportDB(){_namedDownload(new Blob([JSON.stringify(playerDB)],{type:'application/json'}),'pacwyn-db','json');}
 if(DEFAULT_DB.length)loadDefaultDB();
 // Persist DB edits (player + manager) across reloads, separate from the draft state.
@@ -3856,8 +3885,8 @@ function wireType(segSel,prefix){
 }
 wireType('#typeSeg','#f');wireType('#hTypeSeg','#h');
 /* ---- DB tab: add a card to the database ---- */
-wireType('#dbTypeSeg','#db');buildChips($('#dbPosChips'));fillClubs($('#db-club'));
 makeCombo('db-nation',NATIONS,NATION_ALIAS);makeCombo('db-league',LEAGUE_NAMES);
+wireType('#dbTypeSeg','#db');buildChips($('#dbPosChips'));fillClubs($('#db-club'));
 // Primary-position dropdown for the add-card form, same convention as the dbe-* edit form:
 // options are limited to whichever position chips are currently ticked, refreshed on every
 // chip tap; keeps the current selection if still ticked, else falls back to the first ticked
@@ -8322,7 +8351,12 @@ let NOHOLD_CAL=null; // {hash, weights, trainMean, holdMean, nScripts, K, date}
 function _calDbHash(db){
   let h=2166136261>>>0;
   for(const c of db){
-    const s=(c.name||'')+'|'+c.rating+'|'+c.type+'|'+c.nation+'|'+(c.league||'')+'|'+(c.club||'')+'|'+(c.pos||[]).join(',');
+    // v16.10.1: copies is now part of the hash -- it's a real input to _calMakeScripts' sampling
+    // weights, so a copies-only edit must invalidate an existing calibration same as any other
+    // field change would. Previously copies was omitted here, so bumping only a card's copy count
+    // left NOHOLD_CAL.hash matching _calDbHash(playerDB) and the stale-calibration warning never fired.
+    const cp=(typeof c.copies==='number'&&c.copies>0)?c.copies:1;
+    const s=(c.name||'')+'|'+c.rating+'|'+c.type+'|'+c.nation+'|'+(c.league||'')+'|'+(c.club||'')+'|'+(c.pos||[]).join(',')+'|'+cp;
     for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
   }
   return h>>>0;
@@ -8360,12 +8394,27 @@ function _calMakeScorer(w){
 function _calMakeScripts(db,forms,nScripts,K,rng){
   const pick=arr=>arr[Math.floor(rng()*arr.length)];
   const byPos={};const scripts=[];
+  // v16.10.1: pool entries are drawn copies-weighted (a card with copies:N is N times as likely to
+  // be offered), matching rebuildRarity's treatment of copies elsewhere. Previously this sampled
+  // uniformly per DB ROW regardless of copies, so a copies:20 card and a copies:1 card were equally
+  // likely to appear in a simulated pack -- silently at odds with the rarity model and capable of
+  // skewing the fitted calibration weights whenever copy counts varied across cards.
+  const _cw=c=>(typeof c.copies==='number'&&c.copies>0)?c.copies:1;
   for(let s=0;s<nScripts;s++){
     const f=pick(forms);const steps=[];let ok=true;
     for(const pos of f.slots){
-      if(!byPos[pos])byPos[pos]=db.filter(c=>c.pos.includes(pos));
-      const pool=byPos[pos];if(pool.length<1){ok=false;break;}
-      const opts=[];for(let i=0;i<K;i++)opts.push(pool[Math.floor(rng()*pool.length)]);
+      if(!byPos[pos]){
+        const cards=db.filter(c=>c.pos.includes(pos));
+        const cum=[];let running=0;for(const c of cards){running+=_cw(c);cum.push(running);}
+        byPos[pos]={cards,cum,total:running};
+      }
+      const {cards,cum,total}=byPos[pos];if(cards.length<1){ok=false;break;}
+      const opts=[];
+      for(let i=0;i<K;i++){
+        const r=rng()*total;let lo=0,hi=cum.length-1;
+        while(lo<hi){const mid=(lo+hi)>>1;if(cum[mid]<r)lo=mid+1;else hi=mid;}
+        opts.push(cards[lo]);
+      }
       steps.push({pos,options:opts});
     }
     if(ok)scripts.push({formName:f.name,steps});
@@ -8379,7 +8428,7 @@ function _calMean(scripts,scorer){let s=0;for(const sc of scripts)s+=scoreXI(_ca
 // the DB, or the simulated packs would be degenerate. Returns null if OK, else an error string.
 function _calFeasible(db,forms,K){
   const need=new Set();forms.forEach(f=>f.slots.forEach(p=>need.add(p)));
-  for(const pos of need){const n=db.filter(c=>c.pos.includes(pos)).length;if(n<K)return'Position '+pos+' has only '+n+' eligible card(s) in the DB (need \\u2265'+K+'). Add more cards, then recalibrate.';}
+  for(const pos of need){const n=db.filter(c=>c.pos.includes(pos)).length;if(n<K)return'Position '+pos+' has only '+n+' eligible card(s) in the DB (need \u2265'+K+'). Add more cards, then recalibrate.';}
   return null;
 }
 
