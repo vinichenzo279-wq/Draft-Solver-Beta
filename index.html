@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v15.1.3</title>
+<title>Draft Solver v15.1.3.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -134,6 +134,23 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        interrupted (timeout, error, dropped session) partway through, an already-bumped version
        number would mislabel a half-finished file as a completed vX.Y.Z build, which is worse than
        an unbumped one (that at least honestly still reads as the prior version).
+
+       BEFORE A CORE-FUNCTIONALITY CHANGE (added v15.1.3): if what you're touching affects formation/
+       slot picking, the main XI solve, bench selection, or manager choice, read section L's "THE
+       UNDERLYING DRAFT FORMAT" paragraph in the FOR FUTURE MAINTAINERS block below FIRST — it lays
+       out the actual pipeline (pick formation -> pick captain -> pick each slot, PRIMARY position
+       only -> pick the bench, any position -> draft finishes -> pick 1 of 5 managers) and which
+       parts of this app model which stage. Several past mistakes (e.g. the fillability-based
+       formation ranking in section L itself) came from conflating stages that use different rules.
+
+       DOC-ONLY EDITS STILL EACH GET THEIR OWN BUMP (added v15.1.3.1, itself a correction of the
+       v15.1.3 pass that stacked several separate doc-only edits — the OOP cross-reference, the
+       section F pointer, and this file's own "before a core-functionality change" note above —
+       under one unbumped version number). "It's just a comment/doc change" is NOT an exception to
+       the ORDERING rule above: every edit that lands, however small or textual, gets its own bump
+       once it's done. Two files both reading e.g. "v15.1.3" but differing in which of several doc
+       edits made it in defeats the entire point of the version stamp (see the opening paragraph
+       above) just as surely as an unbumped logic change would.
 
        Which number to bump (format is MAJOR.BUGFIX.TEXT, optionally .CORRECTION):
          - 1st number (MAJOR): a significant functionality change — new feature, changed behavior,
@@ -1495,12 +1512,22 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        — extending it there would mean converting several synchronous call sites to async for
        marginal value, given how deep a per-tie search already has to be to matter. (2) the OOP
        emergency-fill path never runs a full manager-depth analysis pass (bench sub-picks only) —
-       not because the OOP slot's filler is unknown, but because this app's card model only ever
-       represents Prem-club normal/hero/icon cards (baked in since v1.0 — Prem always dominates a
-       same-rating non-Prem normal card, so non-Prem was never modeled), and an emergency slot exists
-       precisely because no modeled card is legal there; the user's real fix may be a card the app
-       has no representation of at all, so a manager-rescue count against our own placeholder squad
-       wouldn't be honest.
+       not because the OOP slot's filler is unknown, but because of the Prem-dominance design already
+       fully analyzed in the FOR FUTURE MAINTAINERS section E/F above; the OOP comment now cross-
+       references those instead of re-deriving the "Prem always wins" reasoning from scratch, and F
+       gets a pointer back so both sides of the link are findable. Also added a pointer at the top
+       "PATCH NOTE FOR FUTURE EDITORS" block, next to the version-bump convention: before a core-
+       functionality change (formation/slot picking, main solve, bench, manager), read section L's
+       "THE UNDERLYING DRAFT FORMAT" paragraph first. The goal in all three is the same: stop a
+       future pass (AI or human) from re-verifying ground already covered.
+  -->
+  <!-- v15.1.3.1 — CORRECTION to v15.1.3: that pass made three separate doc-only edits (the OOP
+       cross-reference, the section F pointer, and the core-functionality pointer) but only bumped
+       the version once at the start, leaving them all stacked under one version number instead of
+       each getting its own — exactly the mistake the ORDERING note warns about, just applied to
+       "it's only a comment" instead of a logic change. Added a new clarification right next to it
+       (DOC-ONLY EDITS STILL EACH GET THEIR OWN BUMP) spelling that out for next time. No further
+       logic or doc content changed beyond that clarification.
   -->
   <!-- ================================================================================================
        FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL (read before major solver/pick-time changes)
@@ -1732,6 +1759,13 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                of call-sites, engine intact"; a formula change (F.2) is closer to "the UB proof and
                every hand-duplicated scorer need to be rebuilt," even though the DFS engine and the
                advisory/calibration layers on top of it still don't need to change.
+
+          POINTER (added v15.1.3): the emergency-fill (completeOOP) bench-picks comment — where
+          subPicks is computed just before the "No coverable slots at all" fallback — cites this
+          section (and E) as the reason it never runs a full manager-depth pass on an OOP squad.
+          If F.1 (adding non-Prem normals) is ever actually built, re-check that comment too: an OOP
+          slot's "the real fix might be an unmodeled card" reasoning goes away once non-Prem is
+          modeled, and manager-depth analysis there may become worth adding.
 
        G. CHANGELOG DISCIPLINE (added v13.4.3.1, process convention — not a code/logic entry).
           The v13.4.2-ios "PORT PASS" entry (see the -ios file's changelog) claimed four versions'
@@ -2015,7 +2049,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           yet — flagged for whoever adds primary-position data entry to the DB maintenance workflow
           next.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v15.1.3</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v15.1.3.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -4497,17 +4531,14 @@ function _renderEmergencyFillInner(form,cap){
       const bd=computeBenchPicks(tie,em.subForm,_benchMode());
       subPicks=bd.subPicks;benchCapped=!!bd.capped;
       // v15.1.3 (documentation only): intentionally NO analyzeManagerDepth() pass here — only bench
-      // sub-picks. This isn't an oversight (see the earlier _pickTieWinner discussion), and it isn't
-      // really about the OOP slot's card being "unknown" either. The deeper reason: this app's whole
-      // card model only ever represents three archetypes — Prem-club normal, hero, icon (CLUBS above
-      // is Prem-only, leagueOf() hardcodes every normal card to 'England Premier League') — a design
-      // decision baked in since v1.0, because a Prem normal card always dominates a same-rating
-      // non-Prem one for this game's chemistry, so there was never a reason to model non-Prem at all.
-      // An emergency-fill slot exists precisely BECAUSE no modeled card is legal there — the real
-      // fix a user has in hand may be a card this app doesn't represent at all, so a true +2/+1
-      // manager-rescue count computed against our own placeholder squad wouldn't describe what the
-      // user can actually achieve. Running the analysis anyway would just be searching deep for an
-      // answer to a question we don't have the inputs to answer honestly.
+      // sub-picks. Not an oversight, and not really about the OOP slot's card being "unknown" either.
+      // The card model only ever represents Prem-club normal/hero/icon — the Prem-dominance design
+      // decision baked in since v1.0 (why non-Prem was never modeled) is ALREADY fully analyzed in
+      // the "FOR FUTURE MAINTAINERS" reference block above, sections E (pivot-choice research) and F
+      // (scrutiny map for adding non-Prem normals) — re-read those before re-deriving this again.
+      // The point specific to THIS path: an emergency-fill slot exists precisely because no modeled
+      // card is legal there, so the user's real fix may be a card this app has no representation of
+      // at all — a manager-rescue count against our own placeholder squad wouldn't be honest.
     } else {
       // No coverable slots at all (every position uncoverable) — nothing for the real solver to
       // scope a sub-search to, fall back to the flat rating+diversity heuristic.
