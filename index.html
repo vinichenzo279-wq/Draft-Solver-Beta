@@ -2055,7 +2055,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                nation must match the DB's existing convention exactly — "Korea Republic", not
                "South Korea"; club/league strings must match existing rows verbatim). Copy an
                existing row's field spelling rather than inventing a new variant.
-            2. EXACT-DUPLICATE SKIP. Before adding, check for an existing row with the same name +
+            2. (SUPERCEDED AS OF V16.0 - DUPLICATE ENTRIES ARE NOW ACCEPTABLE TO ADD - ignore this section) EXACT-DUPLICATE SKIP. Before adding, check for an existing row with the same name +
                rating + type + nation + club + league, where pos is compared as a SET (order
                doesn't matter — CM/CDM and CDM/CM are the same entry, so this is a duplicate and
                should be skipped). Any difference in name, rating, nation, club, league, or the
@@ -2084,6 +2084,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                be expected under, that is not a mistake to fix — assume it's a special/promo
                "normal"-type card for that player and add it as given. Don't silently change the
                stated type to what "seems right" for the player.
+               
+               7. Do NOT try to read the full default DB, it is too large. Naming consistancy is the only important factor. E.g Spurs vs Tottenham, one will be used consistantly in the DB. formatting is also consistant, so seeing one entry is enough to determine the correct naming/format. Do not scan the entire section, it will be too long to read.
 
        J. UB-I: A TRIED-AND-REJECTED RATING-BOUND TIGHTENING (added v13.4.6, doc-only — records a
           dead end so it isn't re-attempted without this write-up in hand). Motivated by section
@@ -3001,7 +3003,15 @@ const CLUBS_BY_LEAGUE={
  "Germany Bundesliga":["Bayern Munich","Borussia Dortmund","RB Leipzig","Bayer Leverkusen","Eintracht Frankfurt","VfB Stuttgart","Borussia Mönchengladbach","SC Freiburg","Werder Bremen","FC Augsburg","Mainz 05","Union Berlin","FC Köln","TSG Hoffenheim","Hamburger SV","FC Schalke 04","SC Paderborn","SV Elversberg"],
  "Italy Serie A":["Inter Milan","Napoli","Roma","Como","Juventus","AC Milan","Atalanta","Bologna","Lazio","Fiorentina","Torino","Parma","Udinese","Genoa","Cagliari","Lecce","Sassuolo","Venezia","Frosinone","Monza"],
  "France Ligue 1":["Paris Saint-Germain","Marseille","Monaco","Nice","Lille","Lyon","Lens","Strasbourg","Rennes","Toulouse","Brest","Auxerre","Angers","Le Havre","Lorient","Paris FC","Troyes","Le Mans"],
- "Netherlands Eredivisie":["Ajax","PSV Eindhoven","Feyenoord","AZ Alkmaar","FC Twente","FC Utrecht","Go Ahead Eagles","Sparta Rotterdam","FC Groningen","NEC Nijmegen","Fortuna Sittard","Heerenveen","Excelsior","PEC Zwolle","Telstar","Cambuur","Willem II","ADO Den Haag"]
+ "Netherlands Eredivisie":["Ajax","PSV Eindhoven","Feyenoord","AZ Alkmaar","FC Twente","FC Utrecht","Go Ahead Eagles","Sparta Rotterdam","FC Groningen","NEC Nijmegen","Fortuna Sittard","Heerenveen","Excelsior","PEC Zwolle","Telstar","Cambuur","Willem II","ADO Den Haag"],
+ // v16.9.1: surgical single-club fix — Messi (rating 101) is already in the DB under club "Inter Miami"
+ // in league "USA MLS", but USA MLS wasn't in CLUBS_BY_LEAGUE, so clubsForLeague() was generating
+ // generic "Temporary Club N" placeholders for the whole league and Messi's real club never appeared
+ // in the dropdown. Adding ONLY this one verified real club; every other MLS club remains an explicit
+ // placeholder (Temporary Club 2-16) per the "don't guess unverified rosters" rule above — same
+ // _TEMP_CLUB_COUNT of 16 slots as the generic fallback, just with slot 1 replaced by the real club
+ // that's actually referenced in the DB.
+ "USA MLS":["Inter Miami","Temporary Club 2","Temporary Club 3","Temporary Club 4","Temporary Club 5","Temporary Club 6","Temporary Club 7","Temporary Club 8","Temporary Club 9","Temporary Club 10","Temporary Club 11","Temporary Club 12","Temporary Club 13","Temporary Club 14","Temporary Club 15","Temporary Club 16"]
 };
 // Fallback club-list size for any league without a verified roster above.
 const _TEMP_CLUB_COUNT=16;
