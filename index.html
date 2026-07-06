@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v15.0.1.2</title>
+<title>Draft Solver v15.1.3</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -128,6 +128,12 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        means the next edit silently shares a version with this one, which (a) makes it impossible
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
+
+       ORDERING (added v15.1.2): do the version/title/changelog bump LAST, only once every other
+       edit for the patch is made and verified — not as an early or middle step. If work is
+       interrupted (timeout, error, dropped session) partway through, an already-bumped version
+       number would mislabel a half-finished file as a completed vX.Y.Z build, which is worse than
+       an unbumped one (that at least honestly still reads as the prior version).
 
        Which number to bump (format is MAJOR.BUGFIX.TEXT, optionally .CORRECTION):
          - 1st number (MAJOR): a significant functionality change — new feature, changed behavior,
@@ -1465,6 +1471,37 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           since Slow's rounds + polish pass frequently re-solve identical extra-sets — pure
           performance, no behavior change.
   -->
+  <!-- v15.1 — FORMATION CALIBRATION NO LONGER HARD-BLOCKED ON A MANUAL WEIGHT CALIBRATION. runFormCalibration()
+       used to refuse outright (warning + bail) if NOHOLD_CAL.weights wasn't set, on the theory that the
+       user should run + see "Calibrate from DB" themselves first. That created a real UI dead-end: formation
+       ranking and live no-hold pick-time ranking are actually independent (formation calibration only ever
+       READS NOHOLD_CAL.weights — it never reads or flips the "No-hold drafting" checkbox that governs live
+       picking), so anyone who wanted objective formation ranking WITHOUT turning on no-hold drafting had no
+       path to get there. Now: if the weights aren't fitted yet, runFormCalibration() auto-fits them first
+       with the same fast default "Calibrate from DB" itself defaults to (150 simulated drafts, auto/DB-hash
+       seed) — quick, and good enough to rank formations by — then proceeds with formation calibration exactly
+       as before. This does NOT touch the No-hold drafting checkbox or _calActive() at all, so live pick-time
+       ranking stays exactly as the user left it; only NOHOLD_CAL.weights gets populated (and persisted, same
+       as a manual run) as a side effect. Anyone who wants a hand-tuned or larger-sample fit can still run
+       "Calibrate from DB" themselves beforehand — that still takes precedence, since this only fires when
+       NOHOLD_CAL.weights is missing entirely, never when it already exists.
+  -->
+  <!-- v15.1.2 — Simplified the "Optimise expected value" bench-checkbox helper text (Helper tab) to a
+       single short line. Text only, no logic changed.
+  -->
+  <!-- v15.1.3 — Documentation only, no logic changed. Two things considered and deliberately left
+       as-is, now commented in place so they aren't re-litigated later: (1) bench/manager mini-solves
+       (computeBenchPicks/analyzeManagerDepth) never use the parallel-worker path even past 150M nodes
+       — extending it there would mean converting several synchronous call sites to async for
+       marginal value, given how deep a per-tie search already has to be to matter. (2) the OOP
+       emergency-fill path never runs a full manager-depth analysis pass (bench sub-picks only) —
+       not because the OOP slot's filler is unknown, but because this app's card model only ever
+       represents Prem-club normal/hero/icon cards (baked in since v1.0 — Prem always dominates a
+       same-rating non-Prem normal card, so non-Prem was never modeled), and an emergency slot exists
+       precisely because no modeled card is legal there; the user's real fix may be a card the app
+       has no representation of at all, so a manager-rescue count against our own placeholder squad
+       wouldn't be honest.
+  -->
   <!-- ================================================================================================
        FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL (read before major solver/pick-time changes)
        ================================================================================================
@@ -1978,7 +2015,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           yet — flagged for whoever adds primary-position data entry to the DB maintenance workflow
           next.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v15.0.1.2</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v15.1.3</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -2169,7 +2206,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <p class="tiny" style="margin:4px 0 0">Controls only how hard the <b>bench picks</b> are searched &mdash; it never changes your starting XI. Higher tiers add confidence, rarely a different answer. <b>Very Slow</b> can be extremely slow on complex drafts for little benefit.</p>
         <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:8px 0 0;cursor:pointer;color:var(--ink)">
           <input type="checkbox" id="benchObjEV" onchange="saveAdvSettings();_solveCache=null;" style="width:auto;margin:0;accent-color:var(--cyan)">
-          <span><b>Optimise expected value</b> &mdash; choose the bench that maximises your <i>expected</i> manager chem across the 5 offers you&rsquo;re dealt, rather than gambling for the most possible +2s. Can prefer a lineup that rescues more managers to +1 over one that squeezes out one extra +2. Applies to every depth tier.</span>
+          <span><b>Optimise expected value</b> &mdash; calculates the best average manager gain, rather than going for the best chance to get +2. Default off.</span>
         </label>
         <div style="margin-top:10px">
           <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Bench Node Cap (millions)</label>
@@ -2294,10 +2331,12 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     <details class="hlp"><summary>Formation weights</summary>
       <div id="formCalWrap" style="margin:6px 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
         <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective formation ranking</div>
-        <p class="tiny" style="margin:0 0 7px">Ranks formations by which positions hold the best players. Requires the no-hold weight calibration (Helper tab) first. While calibrated, this replaces the manual weights below; <b>Clear</b> restores them.</p>
+        <p class="tiny" style="margin:0 0 7px">Ranks formations by which positions hold the best players. Uses your calibrated card weights (Helper tab); auto-fits a quick default if you haven&rsquo;t calibrated those yet. While calibrated, this replaces the manual weights below; <b>Clear</b> restores them.</p>
         <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Depth per position: <input type="number" id="formCalTopX" value="15" min="1" max="500" step="1" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
-        <button class="btn sec sm" id="formCalBtn" onclick="runFormCalibration()">Calibrate formations</button>
-        <button class="btn gho sm" style="margin-left:6px" onclick="clearFormCalibration()">Clear</button>
+        <div class="row">
+          <button class="btn sec sm" id="formCalBtn" onclick="runFormCalibration()">Calibrate formations</button>
+          <button class="btn gho sm" onclick="clearFormCalibration()">Clear</button>
+        </div>
         <div id="formCalStatus" class="tiny" style="margin-top:7px"></div>
         <div id="formCalResult" style="margin-top:7px"></div>
       </div>
@@ -4457,6 +4496,18 @@ function _renderEmergencyFillInner(form,cap){
       _benchNodeAcc=0;_slowConfirmed=false;_benchAbort=false;_benchTieIdx=1;_benchTieTotal=1;_mgrNodeAcc=0;_mgrPromptConfirmed=true;_mgrAbort=false;_mgrTieIdx=1;_mgrTieTotal=1; // same reset _analyzeTies does before calling computeBenchPicks (manager prompt pre-confirmed: single squad)
       const bd=computeBenchPicks(tie,em.subForm,_benchMode());
       subPicks=bd.subPicks;benchCapped=!!bd.capped;
+      // v15.1.3 (documentation only): intentionally NO analyzeManagerDepth() pass here — only bench
+      // sub-picks. This isn't an oversight (see the earlier _pickTieWinner discussion), and it isn't
+      // really about the OOP slot's card being "unknown" either. The deeper reason: this app's whole
+      // card model only ever represents three archetypes — Prem-club normal, hero, icon (CLUBS above
+      // is Prem-only, leagueOf() hardcodes every normal card to 'England Premier League') — a design
+      // decision baked in since v1.0, because a Prem normal card always dominates a same-rating
+      // non-Prem one for this game's chemistry, so there was never a reason to model non-Prem at all.
+      // An emergency-fill slot exists precisely BECAUSE no modeled card is legal there — the real
+      // fix a user has in hand may be a card this app doesn't represent at all, so a true +2/+1
+      // manager-rescue count computed against our own placeholder squad wouldn't describe what the
+      // user can actually achieve. Running the analysis anyway would just be searching deep for an
+      // answer to a question we don't have the inputs to answer honestly.
     } else {
       // No coverable slots at all (every position uncoverable) — nothing for the real solver to
       // scope a sub-search to, fall back to the flat rating+diversity heuristic.
@@ -5978,6 +6029,19 @@ function _maybeSlowPrompt(){
   }
 }
 function computeBenchPicks(tie,form,mode){
+  // v15.1.3 (documentation only, considered + declined): unlike the main solve, this (and
+  // analyzeManagerDepth() below) NEVER uses _runSolveParallel/Workers, no matter how large
+  // _benchCap/_mgrCap get escalated to (even past 150M via "keep searching"), and regardless of
+  // bench mode including Very Slow. _runSolveParallel is deliberately the ONLY entry point to the
+  // parallel path (see its v14.0 comment) and every solveBest() call in this file's bench/manager
+  // section runs single-threaded and synchronous by design. Checked what it'd take to extend
+  // parallelism here: computeBenchPicks/analyzeManagerDepth are called synchronously in tight loops
+  // across every tied XI (_analyzeTies, _pickTieWinner, the emergency-fill renderer, pickMgr), each
+  // with its own progress counters/abort buttons/cap-escalation flows that assume synchronous
+  // completion — parallelizing would mean converting all of those call sites to async, a real
+  // refactor with real bug surface, not a contained change. Decided against it: a per-tie bench or
+  // manager search that's already deep enough to want 150M+ nodes is reaching the point of
+  // excessiveness for what a tiebreaker or an OOP squad's insurance picks actually need.
   mode=mode||_benchMode();
   const _entryAborted=_benchAbort;   // tie analysed after a user stop -> mark it, don't call it capped
   const _fnNodeStart=_benchNodeAcc;  // actual nodes searched during THIS call (each combo triggers its own solveBest(), so combo-count alone understates the real work)
@@ -7658,12 +7722,28 @@ function _renderFormCalResult(){
 }
 function runFormCalibration(){
   const st=$('#formCalStatus'), btn=$('#formCalBtn');
-  // Hard precondition: the objective card weights must already be fitted. We intentionally do NOT
-  // auto-fit here — the user should run (and see) the weight calibration themselves so the two
-  // steps stay transparent and reproducible.
+  // v15.1: card weights used to be a hard precondition (error + bail if uncalibrated), on the theory
+  // that the user should run + see that step themselves. In practice this just blocks anyone who
+  // wants formation ranking but doesn't want live no-hold pick-time ranking turned on — the two are
+  // independent (formation calibration only ever reads NOHOLD_CAL.weights; it never reads or flips
+  // the "No-hold drafting" checkbox that governs live picking). So now: if the weights aren't fitted
+  // yet, auto-fit them with the same fast default "Calibrate from DB" uses (150 simulated drafts,
+  // auto seed) — quick, and good enough to rank formations by. Anyone who wants a hand-tuned or
+  // larger-sample fit can still run "Calibrate from DB" themselves first; this just removes the
+  // requirement to do so before formations can be ranked at all.
   if(!(NOHOLD_CAL&&NOHOLD_CAL.weights)){
-    if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 Calibrate the card weights first: Helper tab \u2192 enable No-hold drafting \u2192 "Calibrate from DB". This ranking is built on those fitted weights.</span>';
-    return;
+    if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Card weights aren\u2019t calibrated yet \u2014 fitting them first (quick, ~150 drafts)\u2026</span>';
+    if(btn)btn.disabled=true;
+    const wres=_calibrateNoHold(playerDB,FORMS,{nScripts:150,seed:null});
+    if(wres.error){
+      if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+wres.error+'</span>';
+      if(btn)btn.disabled=false;
+      return;
+    }
+    NOHOLD_CAL=wres;
+    try{localStorage.setItem(_NOHOLD_CAL_KEY,JSON.stringify(wres));}catch(e){}
+    _renderCalResult(); // reflects the auto-fit in the Weights tab too, same as a manual "Calibrate from DB"
+    _recLog&&_recLog('no-hold weights auto-calibrated for formation ranking \u2014 DB '+(wres.hash>>>0).toString(16).slice(0,8));
   }
   const xEl=$('#formCalTopX'); let topX=xEl?parseInt(xEl.value,10):15; if(!topX||topX<1||isNaN(topX))topX=15; topX=Math.min(500,topX); if(xEl)xEl.value=topX;
   const pool=_buildGoldPool();
