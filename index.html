@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.13.1 (prototype)</title>
+<title>Draft Solver v16.13.2 (prototype)</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2441,6 +2441,51 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                     per-release updates never require editing this HTML; fold a snapshot into
                     DEFAULT_DB only at major versions. Keep the extraction script and its source
                     URL in the repo notes so the next edition is a re-run, not a re-derivation.
+
+       R. UB-R: A MEASURED-AND-PROMISING PER-NODE DYNAMIC RATING CAP — STAGED, NOT MERGED (added
+          v16.13.2, doc-only). Sections J and O record per-node tightenings that lost; this one is
+          the first that WINS, and it is exactly the direction the v12.4.0 diversity-tightening
+          post-mortem predicted ("it'd need to tighten a term that isn't dwarfed by RC+33 — e.g. a
+          cheaper per-branch rating cap"). Recorded here with data so the next maintainer can take
+          it over the finish line rather than rediscover it.
+          THE IDEA: RC is root-static; per node, a tighter admissible rating cap exists:
+            dynRC = floor(futRatingRaw( [ratings of the k committed picks] concat
+                                        [per-slot max candidate rating for each remaining slot] ))
+          then prune with ub' = ub - RC + min(RC, dynRC). Per-slot maxima are precomputed once
+          (slotMaxR from cand[]); the vector build is O(11) per evaluated node.
+          SOUNDNESS ARGUMENT: any completion's rating vector is component-wise <= the hypothetical
+          vector (committed entries are exact; each remaining entry <= its slot's max — card reuse
+          and group exclusivity are RELAXED, which only raises the bound), and futRatingRaw is
+          monotone per component (raising one entry adds 1 to the sum and at worst subtracts
+          (N-1)/N via the mean shift in others' excess terms — net derivative >= 1/N > 0), so
+          dynRC >= any real completion's rating. min() with RC keeps it no looser than today.
+          EMPIRICALLY (demo fixture, this file's own solveBest patched via toString, optimum
+          IDENTICAL in every run):
+            - depth profile: extra-prune rate on nodes the static bound lets survive grows with
+              depth (13% at k=6, 89% at k=8, 91% at k=10; mean RC-dynRC gap 0.4 -> 1.35) — the
+              dynamic information COMPOUNDS toward the leaves, which is why this succeeds where
+              the diversity-side attempt (capped at 1-3 points, dwarfed by RC+33) failed.
+            - with a k>=4 depth gate (skip the near-root evaluations where committed info is thin):
+              RC=95: 19,959 -> 3,377 nodes (83%); RC=96: 117,490 -> 3,516 (97%);
+              RC=97: 352,661 -> 3,516 (99%); RC=99: 989,934 -> 3,516 (99.6%), 2,255ms -> 7ms.
+            - the node count becomes essentially RC-INSENSITIVE (~3.5k for RC 95..99): the
+              per-branch cap replaces the global RC as the binding rating term. If this merges,
+              the whole Auto-RC-vs-headroom tension (section on RC verdicts, Auto-RC) largely
+              dissolves — a loose RC would cost almost nothing.
+          FUZZ SO FAR: 80 random coverage-guaranteed pools (multi-league mix, icons/heroes) x two
+          RC settings each (tight maxPossibleRating and loose 103), patched solver vs full brute
+          force: 0/160 mismatches.
+          WHY NOT MERGED HERE: per F.2/Q.2 discipline a UB change is a release blocker until the
+          FULL off-tree section-B harness (test1_tiered.js twelve-regime suite, fingerprint
+          fixtures) passes — that harness is not runnable from this session. MERGE CHECKLIST for
+          whoever picks this up: (1) implement exactly the recipe above inside the real dfs prune
+          (and the harness twin — keep in sync per section H); (2) run the full twelve-regime
+          fuzz + fingerprint fixtures at multiple RCs; (3) re-measure the k-gate (>=4 was best
+          here; re-tune per fixture set); (4) verify the parallel-worker path (workers serialize
+          solveBest.toString(), so the patch propagates automatically — but re-verify equal-split
+          budgets still behave with the much smaller trees); (5) after merge, revisit whether
+          Auto-RC's ensemble work should shrink (maxPossibleRating still matters at the ROOT and
+          for RC verdict UI, but its in-search role is largely superseded).
 -->
   <!-- ARCHIVED — FORMER SECTION C, moved out of the KEY REFERENCE block at v16.13.0 (see the stub
        left in section C's place above). Superseded by section H; kept here only for the rare case
@@ -2712,7 +2757,18 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        convention (section header just above): it's a guide for picking a reasonable number fast,
        not a spec to agonize over — don't burn effort deliberating 2nd-vs-3rd-number, just go with
        first instinct per the existing size/judgment CLARIFICATION. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.13.1</span></h1>
+
+  <!-- v16.13.2 — Documentation only, no logic changed. (1) Ceiling/buildable SYNTHETIC
+       VERIFICATION (closing the "untested by construction" gap the user rightly challenged):
+       50 random varied multi-league DBs (league-dominant and nation-dominant), EXACT enumeration
+       of all C(17,11) squads per pivot candidate, invariant buildable <= trueArchetypeMax <=
+       ceiling held 51/51 with ceiling gaps of 0-4 points (median +1/+2) — the relaxation is both
+       sound and tight on synthetic multi-league data, nation pivots included. (2) Added section R:
+       UB-R, a per-node DYNAMIC RATING CAP — measured on this file's own solver via source patching:
+       identical optima everywhere, 83-99.6% node reduction on the demo fixture, near RC-insensitive
+       search, 0/160 brute-force fuzz mismatches. Staged with full merge checklist, NOT merged (per
+       F.2/Q.2, UB changes are release blockers until the full section-B harness passes). -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.13.2-proto</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
