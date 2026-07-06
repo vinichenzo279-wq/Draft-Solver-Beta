@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.12.0 (prototype)</title>
+<title>Draft Solver v16.13.1 (prototype)</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -160,6 +160,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        above) just as surely as an unbumped logic change would.
 
        Which number to bump (format is MAJOR.BUGFIX.TEXT, optionally .CORRECTION):
+       NOTE (added v16.13.1): this is a guide for picking a reasonable number fast, not a spec to
+       agonize over. Don't burn time deliberating whether something is "really" a 2nd- or 3rd-number
+       change — that's effort spent on a distinction nobody downstream will notice or care about.
+       Go with your first instinct, per the size/judgment call CLARIFICATION below, and move on.
          - 1st number (MAJOR): a significant functionality change — new feature, changed behavior,
            anything that substantially alters what the app actually does. Bump this, and reset
            the other two (or three) to 0.
@@ -202,7 +206,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 
        READING ORDER FOR FUTURE MAINTAINERS (added v15.1.8): this file's version history has grown
        long enough that reading it all, every time, is no longer the efficient way in. Skip straight
-       to the "FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL" block (lettered sections A-N) first
+       to the "FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL" block (lettered sections A-Q) first
        — it holds the durable, still-relevant knowledge, kept up to date on purpose so it doesn't
        require reading the changelog to reconstruct. Only come back to the CHANGELOG blocks below
        (or the historical pre-v8.12 log) when you need the specific detail of one particular past
@@ -1752,26 +1756,14 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
               in this file) — logged to findings_tiered.jsonl with the exact failing draft for
               reproduction via repro_finding_tiered.js.
 
-       C. THIS VERSION'S TESTED-BASELINE STATUS (v12.4.3, unchanged by v12.4.4's doc-only bump) —
-          HISTORICAL RECORD ONLY (clarified v15.1.5): this is what section B's OLD, no-longer-
-          attached harness verified at the time. For today's actual tested-baseline status, see
-          section H's own RESULTS entry instead — don't treat the numbers below as current. If
-          a future fuzzing pass finds a miss, check it against this version FIRST: does it
-          reproduce here, with these exact harness
-          files? If not, the likely explanation is a regression introduced by whatever changed
-          between this version and the one being tested, not a pre-existing bug this pass simply
-          didn't sample. Full numbers, both generator configurations, zero misses in every case:
-            - Original synthetic vocab (8 nations/8 fictional clubs/4 leagues, flat 75-99 ratings,
-              60/25/15 normal/hero/icon split): tiny 300, small 60, medium 25, large-realistic 12
-              (all exact via true brute force) = 397 drafts.
-            - Realistic vocab (40 real nations, the real 20-club Prem, 9 real foreign leagues,
-              weighted-bucket ratings shaped like a real card economy, ~78/15/7 normal/hero/icon
-              split): tiny 2000, small 400, medium 100 = 2,500 drafts.
-            - TOTAL: 2,897 drafts, 0 optimality misses, 0 RC-isolation disagreements.
-          This does NOT cover: the diversity wrapper (solveWithDiversity), skipTies, or any UI/save-
-          log code — only the core solveBest/scoreXI/maxPossibleRating logic that solver.js and
-          engine.js port. It also doesn't cover real playerDB.json data directly (the generator is
-          synthetic, just shaped to resemble it — see B above and gap D.4 below).
+       C. THIS VERSION'S TESTED-BASELINE STATUS — MOVED (v16.13.0). This was a historical record
+          (v12.4.3 harness numbers) already disclaimered as non-current and superseded by section H;
+          keeping the full write-up in this "still relevant" block cost every future reader (incl.
+          AI editors, who re-read this block per the READING ORDER note above) the time to notice
+          that and skip past it. Full original text archived just after this KEY REFERENCE block
+          closes, tagged "ARCHIVED — FORMER SECTION C". Only go retrieve it if you have a specific
+          reason to check a miss against the original v12.4.3 harness run; for current status, go
+          straight to section H.
 
        D. KNOWN GAPS THIS PASS FOUND (for whoever picks these up next):
             1. FIXED THIS PASS: the harness's engine.js was missing UB-H2 (added here at v10.3) —
@@ -2450,6 +2442,30 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                     DEFAULT_DB only at major versions. Keep the extraction script and its source
                     URL in the repo notes so the next edition is a re-run, not a re-derivation.
 -->
+  <!-- ARCHIVED — FORMER SECTION C, moved out of the KEY REFERENCE block at v16.13.0 (see the stub
+       left in section C's place above). Superseded by section H; kept here only for the rare case
+       someone needs to check a reported miss against this exact original harness run.
+
+       THIS VERSION'S TESTED-BASELINE STATUS (v12.4.3, unchanged by v12.4.4's doc-only bump) —
+       HISTORICAL RECORD ONLY (clarified v15.1.5): this is what section B's OLD, no-longer-
+       attached harness verified at the time. For today's actual tested-baseline status, see
+       section H's own RESULTS entry instead — don't treat the numbers below as current. If
+       a future fuzzing pass finds a miss, check it against this version FIRST: does it
+       reproduce here, with these exact harness
+       files? If not, the likely explanation is a regression introduced by whatever changed
+       between this version and the one being tested, not a pre-existing bug this pass simply
+       didn't sample. Full numbers, both generator configurations, zero misses in every case:
+         - Original synthetic vocab (8 nations/8 fictional clubs/4 leagues, flat 75-99 ratings,
+           60/25/15 normal/hero/icon split): tiny 300, small 60, medium 25, large-realistic 12
+           (all exact via true brute force) = 397 drafts.
+         - Realistic vocab (40 real nations, the real 20-club Prem, 9 real foreign leagues,
+           weighted-bucket ratings shaped like a real card economy, ~78/15/7 normal/hero/icon
+           split): tiny 2000, small 400, medium 100 = 2,500 drafts.
+         - TOTAL: 2,897 drafts, 0 optimality misses, 0 RC-isolation disagreements.
+       This does NOT cover: the diversity wrapper (solveWithDiversity), skipTies, or any UI/save-
+       log code — only the core solveBest/scoreXI/maxPossibleRating logic that solver.js and
+       engine.js port. It also doesn't cover real playerDB.json data directly (the generator is
+       synthetic, just shaped to resemble it — see B above and gap D.4 below). -->
   <!-- v16.1.3 — CRITICAL SOUNDNESS FIX to scoreXI's v16.0.0 multi-league full-chem shortcut.
        BUG: the shortcut checked only whether *some* league's pool (normals x1 + heroes x2 + icons
        wildcard) reached >=8, and if so applied chem=3*xi.length to the ENTIRE XI -- including
@@ -2675,7 +2691,28 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        _renderCalResult() immediately after saving. (2) _calFeasible's "not enough eligible cards"
        error had a double-escaped \\u2265, so it printed the literal text "\u2265" instead of the
        character; now a single escape like every other \u2265 usage in the file. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.12.0</span></h1>
+
+  <!-- v16.13.0 — Doc reorg + minor UI polish, no scoring/solver logic touched.
+       (1) Section C of the KEY REFERENCE block (v12.4.3 harness numbers) was already disclaimered
+       as non-current and superseded by section H, but the full write-up still sat in the block
+       whose stated purpose is "durable, still-relevant knowledge" — every future read of that
+       block (including an AI editor's, per the READING ORDER note) cost the effort of noticing it
+       wasn't actually relevant and skipping past it. Moved the full text to a new "ARCHIVED —
+       FORMER SECTION C" block right after KEY REFERENCE closes; left a short stub in section C's
+       place pointing there and at section H. Also fixed the READING ORDER note's stale "sections
+       A-N" (never updated as O/P/Q were added — the same kind of drift this move is meant to
+       reduce) to "A-Q".
+       (2) calSeed/calNScripts/db-copies gained autocomplete="off". These are bare <input
+       type="number"> fields with no autocomplete hint, and Chrome's autofill heuristics can
+       misclassify an empty numeric field as a payment field (seen as a spurious card-suggestion
+       chip on calSeed). Harmless — it can't actually submit anything here — but autocomplete="off"
+       is the standard way to stop the browser guessing. -->
+
+  <!-- v16.13.1 — Documentation only, no logic changed. Added a NOTE at the top of the versioning
+       convention (section header just above): it's a guide for picking a reasonable number fast,
+       not a spec to agonize over — don't burn effort deliberating 2nd-vs-3rd-number, just go with
+       first instinct per the existing size/judgment CLARIFICATION. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.13.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -2937,8 +2974,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     <div id="noHoldCalWrap" style="display:none;margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
       <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective weights &mdash; calibrated from your DB</div>
       <p class="tiny" style="margin:0 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; then ranks options with those weights instead of the manual ones above. Deterministic (same DB + seed &rarr; same result). Takes a few seconds.</p>
-      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 6px"># drafts to simulate: <input type="number" id="calNScripts" value="150" min="1" step="1" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
-      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Seed (0&ndash;4294967295, blank = auto from DB): <input type="number" id="calSeed" placeholder="auto" min="0" max="4294967295" step="1" style="width:120px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 6px"># drafts to simulate: <input type="number" id="calNScripts" value="150" min="1" step="1" autocomplete="off" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Seed (0&ndash;4294967295, blank = auto from DB): <input type="number" id="calSeed" placeholder="auto" min="0" max="4294967295" step="1" autocomplete="off" style="width:120px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <button class="btn sec sm" id="calBtn" onclick="runNoHoldCalibration()">Calibrate from DB</button>
       <div id="calStatus" class="tiny" style="margin-top:7px"></div>
       <div id="calResult" style="margin-top:7px"></div>
@@ -3076,7 +3113,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     <div class="chips" id="dbPosChips"></div>
     <div class="row" style="margin-top:8px;align-items:flex-end">
       <div><label>Primary position <span style="color:var(--mut)">&mdash; options limited to ticked positions above</span></label><select id="db-primary"></select></div>
-      <div style="flex:.5"><label>Copies <span style="color:var(--mut)">&mdash; identical prints</span></label><input type="number" id="db-copies" inputmode="numeric" value="1" min="1"></div>
+      <div style="flex:.5"><label>Copies <span style="color:var(--mut)">&mdash; identical prints</span></label><input type="number" id="db-copies" inputmode="numeric" value="1" min="1" autocomplete="off"></div>
     </div>
     <div style="height:10px"></div>
     <button class="btn" onclick="addToDB()">Add to database</button>
