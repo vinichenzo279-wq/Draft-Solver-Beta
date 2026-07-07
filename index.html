@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.16.0 (prototype)</title>
+<title>Draft Solver v16.16.1 (prototype)</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -3085,7 +3085,106 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        precondition-targeted tests in addition to general fuzzing. DAC's violation may be rare or absent
        in real drafts, but it was still provably unsound in concept, which the harness has to catch
        regardless of real-world hit rate. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.16.0-proto</span></h1>
+  <!-- v16.16.1 -- DECISION + REVERT (per F.2/Q.2): the v16.16.0 "H2-node" prototype above is DISABLED
+       (function definitions left in place, call site removed), and plain r2Vec (this file's __dacV/__d
+       -- the "plain UB-R2 live scan" that has been the live pruning bound since the v16.15.0 DAC revert)
+       is once again the ONLY per-node pruning bound in both solveBest copies. This is a DATA-DRIVEN
+       reversal, not a stylistic one -- full numbers below, kept in full because the whole point of this
+       entry is so nobody re-derives and re-tries the same two rejected ideas from scratch later.
+
+       WHAT WAS TRIED (off-tree, solver_bound_tests_v3.js -- not part of this file, run standalone):
+       Two candidate tightenings on top of the v16.16.0 H2-node bound:
+         (a) "H3", a threshold-DP bound: pick A_low = (fixedSum + sum of each free slot's own
+             unconstrained per-slot minimum)/N -- provably <= the true mean of any feasible
+             completion -- then, with A_low fixed, term(v)=v+max(v-A_low,0) is separable per slot,
+             so an exact max-weight assignment DP over "which distinct group goes to which remaining
+             slot" gives an exact max of sum(term(v)), which converts back to a rating-bound.
+             Independently valid (different relaxation, not a variant of H2's own math).
+         (b) combinedBound = min(h2NodeBound, H3) -- safe by construction, since the min of two
+             independently-valid upper bounds is itself a valid upper bound, regardless of which
+             one is tighter on a given node (same logic already used for min(__d,__h2) above).
+
+       DATA -- PART 1, isolated soundness + tightness (20,000 randomized instances, general fuzz
+       generator, shared/unique candidate groups, 4-7 slots, partial commits):
+         checked: 20,000 | H3 soundness violations: 0 | combined(h2,H3) soundness violations: 0
+         H3 strictly tighter than H2:  2/20,000  (avg gap when tighter: 1.0 pt)
+         H2 strictly tighter than H3: 15,513/20,000
+         ties:                           783/20,000
+       Both new bounds are SOUND. But H3 essentially never wins: in the overwhelming majority of
+       instances H2's exact per-slot [L,U] box is at least as tight, and when H3 does win it wins by
+       the smallest possible margin (1 point, i.e. one floor() boundary). This is the same shape as
+       H2's OWN relaxation relative to a single joint vector (see PART 2) -- independently maximizing
+       two additive terms (here: sum-with-threshold-DP vs. H2's S_max/sp_max) tends to be LOOSER than
+       a single, correlated vector-based estimate, even though each is individually a sound (if
+       pessimistic) bound.
+
+       DATA -- PART 2, real DFS branch-and-bound SIMULATOR (800 instances, N=6-9 slots, best-first
+       candidate ordering, actual recursive search with each variant as the live pruning rule --
+       not an isolated per-node check, so this measures nodes AND wall-clock AND whether an unsound
+       bound corrupts the final answer, which isolated soundness checks cannot):
+         variant                 | avg nodes  | avg time(ms) | wrong answers
+         brute (no bound)        |     6318.2 |       1.0360 | 0/800
+         r2Vec (== this file's __d)|     99.2 |       0.0494 | 0/800
+         dacVec (v16.14.0's, UNSOUND, for reference only -- NOT in this file since v16.15.0) |
+                                    76.1 |       0.0562 | 25/800  <-- WRONG FINAL SQUAD in 3.1% of runs
+         h2NodeBound (v16.16.0 prototype, ALONE) | 424.4 | 2.7177 | 0/800
+         combined(h2,H3)          |    343.1 |       4.1262 | 0/800
+
+       WHY dacVec STAYS REJECTED (confirms, doesn't just repeat, the v16.15.0 revert): this is the
+       first time dacVec's unsoundness was measured inside an actual search rather than as an isolated
+       per-node check against a brute-force oracle. Result: 25/800 (3.1%) of full DFS runs returned
+       the WRONG final squad -- not a rare edge-case miss, a wrong answer a user would have seen and
+       had no way to detect. Do not resurrect any per-node "pick a winner slot for a contested group"
+       collision-resolution scheme (this file's DAC, or any equivalent) without a full from-scratch
+       targeted-collision proof, per the v16.15.0 entry's own standard -- this run only adds evidence
+       to an already-closed case.
+
+       WHY H3 / combined(h2,H3) WERE NOT ADOPTED: sound, but not worth it. H3 tightens over H2 in
+       2/20,000 cases by 1 point -- essentially never. combined(h2,H3) reduced node count by ~19%
+       (343.1 vs 424.4) purely from those rare wins, but paying for BOTH the assignment-DP (H2) AND
+       the threshold-DP (H3) on every single node pushed average time-per-instance from 2.72ms to
+       4.13ms -- roughly 1.5x SLOWER overall despite visiting fewer nodes. Fewer nodes is not the
+       goal; faster real solves are. A bound that only pays for itself in 0.01% of cases while taxing
+       the other 99.99% is a net loss once actually timed, not just node-counted. REJECTED.
+
+       WHY h2NodeBound ITSELF IS NOW ALSO DISABLED (this is the new finding this session, beyond just
+       rejecting H3): Part 2 is the FIRST direct node-count comparison of h2NodeBound ALONE against
+       plain r2Vec/__d on the same generator, in a real search rather than an isolated per-node check.
+       Result: h2NodeBound alone visited MORE nodes (424.4 avg) than __d alone (99.2 avg) -- i.e. it
+       was measurably LOOSER in typical (uncontested-group) instances, despite being an exact S_max/
+       sp_max decomposition and despite the v16.16.0 entry's own hand-picked contested-group example
+       showing H2 tighter than a naive vector there. Both things are true and don't contradict: H2 IS
+       tighter than r2Vec specifically on the rare contested-group nodes it was built for, but
+       maximizing S_max and sp_max INDEPENDENTLY (so neither term has to "dominate" the true
+       completion -- the whole soundness argument for H2 over DAC) is provably safe but LOOSER than
+       r2Vec's single correlated vector on the common case, where there's no contested group for H2's
+       exclusivity-awareness to win back. Typical drafts are mostly the common case, so on average H2
+       loses more than it gains. Net effect once measured on a real search: WORSE pruning than the
+       simpler bound it was meant to improve on, at ~55x the per-node cost (2.7177ms vs 0.0494ms).
+
+       RESULT / WHAT'S LIVE NOW: h2NodeBound()/assignMaxSumNode()/spMaxFreeBox() are left DEFINED in
+       both solveBest copies (not deleted -- the exact-assignment machinery may still be useful input
+       to a future, different bound design) but UNCALLED; __d (plain r2Vec) is the sole per-node
+       pruning bound again, exactly as after the v16.15.0 DAC revert. This IS r2Vec -- it was already
+       live under the name __dacV/__d since v16.15.0, so "implementing r2Vec" here means confirming it
+       as the sole bound going forward and turning off the two things that were tried on top of it,
+       not adding new code.
+
+       DO NOT RETRY, without new evidence that specifically clears the bar below: (1) any bound that
+       maximizes two or more components of the rating formula (sum, spread-above-mean, or similar)
+       INDEPENDENTLY and combines them additively -- this shape has now measurably underperformed
+       plain r2Vec/__d twice (H2 alone vs. __d; H3/combined vs. H2 alone) for the same underlying
+       reason: decoupling correlated quantities to dodge a domination trap is a real soundness fix
+       but a real tightness cost, and the cost has now twice outweighed the benefit on typical
+       drafts. (2) any per-node scheme that resolves a "which slot wins a contested group" question
+       by picking a winner (DAC-shaped) -- proven unsound twice (v16.15.0's own revert; this session's
+       25/800 wrong-answer DFS confirmation). THE BAR for any future bound-tightening attempt: it must
+       beat plain r2Vec/__d on BOTH node count AND measured wall-clock time in a real DFS
+       branch-and-bound simulator (solver_bound_tests_v3.js's PART 2 shape, or equivalent) -- an
+       isolated per-node soundness check or an isolated per-node tightness-vs-H2 comparison (PART 1's
+       shape) is necessary but not sufficient, since that is exactly the kind of test both rejected
+       ideas above already passed cleanly before losing on the test that actually matters. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.16.1-proto</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -5493,14 +5592,21 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
         }
         const __d=Math.floor(futRatingRaw(__dacV));
         if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=best:__u<best)return;}
-        // v16.16.0 H2-node: only pay for the assignment-DP bound when the cheap __d above didn't
-        // already prune. Taking min(__d,__h2) is sound regardless of whether __h2 actually
-        // dominates __d in general -- both are independently valid upper bounds on the same
-        // quantity, so their minimum is too, and using the smaller one can only prune more.
-        {const __h2=h2NodeBound(k,order,cand,usedGroups,pick);
+        // v16.16.1 DISABLED (see the v16.16.1 CHANGELOG entry above the <h1> for full data): the
+        // v16.16.0 H2-node call that used to sit here is turned off, not deleted -- h2NodeBound()/
+        // assignMaxSumNode()/spMaxFreeBox() below are still defined but now unreachable. A real DFS
+        // branch-and-bound simulator (solver_bound_tests_v3.js, off-tree) measured h2NodeBound ALONE
+        // visiting MORE nodes on average (424.4) than plain __d/r2Vec alone (99.2) across 800 real
+        // search instances -- looser in the common case despite being exact per-node, because
+        // maximizing S_max and sp_max INDEPENDENTLY (the fix that made it sound) costs more tightness
+        // on typical drafts than it recovers on the rare contested-group nodes it targets. __d (plain
+        // r2Vec) is once again the sole per-node pruning bound. DO NOT re-enable this call without
+        // re-clearing the bar in that changelog entry (beat __d on BOTH node count AND wall-clock time
+        // in a real DFS simulator, not just an isolated per-node soundness/tightness check).
+        /* {const __h2=h2NodeBound(k,order,cand,usedGroups,pick);
          if(__h2!==null&&__h2<__d&&__h2<RC){
            const __u2=ub-RC+__h2;if(ST?__u2<=best:__u2<best)return;
-         }}
+         }} */
         // v16.14.0 UB-A (parent-side candidate rating threshold): reuse the vector just built.
         // For a candidate c at this slot, a sound envelope of its child's bound is
         // (ub-RC) + floor(futRatingRaw(vector with position k := c.rating)) -- the child's
@@ -11181,14 +11287,15 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
         }
         const __d=Math.floor(futRatingRaw(__dacV));
         if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=best:__u<best)return;}
-        // v16.16.0 H2-node: only pay for the assignment-DP bound when the cheap __d above didn't
-        // already prune. Taking min(__d,__h2) is sound regardless of whether __h2 actually
-        // dominates __d in general -- both are independently valid upper bounds on the same
-        // quantity, so their minimum is too, and using the smaller one can only prune more.
-        {const __h2=h2NodeBound(k,order,cand,usedGroups,pick);
+        // v16.16.1 DISABLED -- see v16.16.1 CHANGELOG entry in the live file (above its <h1>) for
+        // full data. This is the verbatim-extracted appendix copy of prod_solver.js; kept in sync
+        // with the live solveBest's v16.16.1 revert so this harness file matches production. h2NodeBound()/
+        // assignMaxSumNode()/spMaxFreeBox() remain defined but unreachable; __d (plain r2Vec) is the
+        // sole per-node pruning bound again.
+        /* {const __h2=h2NodeBound(k,order,cand,usedGroups,pick);
          if(__h2!==null&&__h2<__d&&__h2<RC){
            const __u2=ub-RC+__h2;if(ST?__u2<=best:__u2<best)return;
-         }}
+         }} */
         // v16.14.0 UB-A (parent-side candidate rating threshold): reuse the vector just built.
         // For a candidate c at this slot, a sound envelope of its child's bound is
         // (ub-RC) + floor(futRatingRaw(vector with position k := c.rating)) -- the child's
