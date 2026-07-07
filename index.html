@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.6.3</title>
+<title>Draft Solver v17.6.4</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -3022,6 +3022,39 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           fix (per section G's discipline — this entry documents the FINDING, not a completed fix).
   -->
 
+  <!-- FOR FUTURE MAINTAINERS —
+       W. FULL-SOLVER SOUNDNESS RE-RUN (added v17.6.4, doc-only, no logic changed). Unlike section
+          V (which exercised the isolated component primitives via solver_bound_tests_v2.js),
+          this pass ran the section H harness's fuzz_run_rcsens.js -- the one that calls the
+          ACTUAL live solveBest/scoreXI/maxPossibleRating against indep_brute.js's independent
+          odometer-style exhaustive oracle. prod_solver.js's placeholder was filled in by
+          extracting the live <script>'s scoreXI/solveBest/maxPossibleRating dependency closure
+          via AST analysis (not hand-copied), pulling in exactly: futRatingRaw, leagueOf,
+          trueChem/trueChemPerCard, ubDComponent, ubEGlobal, minCostMaxFlow, spMaxBoundPerSlot,
+          ubH2Bound -- matches this section's own H entry's dependency list.
+
+          RESULTS (562 drafts tested, cumulative across all 12 fuzz_gen.js regimes -- ties,
+          narrow, wide, monoNation, polyMax, iconHeavy, heroLeagues, holds, multiPos, dupSlots,
+          kitchenSink, realDB):
+            - SOUNDNESS (auto-RC or RC=103 vs brute): 0/562 findings. solveBest never once
+              returned below the true brute-force optimum in any regime.
+            - RC-1 boundary probe (score dropped, not just a tie loss): 0/562.
+            - RC-2 smoke/positive-control (deliberately over-tight RC, expected to occasionally
+              miss): 1/562 miss, 561/562 matches. The single miss is the EXPECTED signal that RC
+              pruning is actually load-bearing (not a no-op) -- not a soundness bug.
+            - 0 brute-force timeouts; 54 drafts skipped as too large for the combo cap (3-6M) in
+              the time budget used -- large-realistic-tier coverage is still section D-gap #3's
+              open item, not closed by this pass. realDB regime only got 11 samples (thin; the
+              other 11 regimes got ~40-50 each) -- worth a longer/dedicated realDB-weighted run
+              before treating that regime as equally covered.
+
+          NET: no full-solver soundness violations found this pass, on top of section V's finding
+          that the ONLY known issue (spMaxFreeBox's looseness) lives in code not currently called
+          by any live solve path. Findings would have been appended to fuzz_rcsens_findings.jsonl
+          per fuzz_run_rcsens.js's own logic; none were, consistent with the 0-findings count
+          above. STILL a v17 fork; revert path unchanged (discard this file, main line v16.21.1
+          untouched). -->
+
   <!-- left in section C's place above). Superseded by section H; kept here only for the rare case
        someone needs to check a reported miss against this exact original harness run.
 
@@ -3843,7 +3876,15 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        per-node bound) -- so this finding doesn't affect anything currently reachable by a real
        solve, live or appendix, but it WOULD need the same fix applied in-file too if h2NodeBound
        is ever re-enabled per section T's bar. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.6.3</span></h1>
+  <!-- v17.6.4 -- Documentation only, no logic changed. Added section W to the FOR FUTURE
+       MAINTAINERS block: ran section H's fuzz_run_rcsens.js (the full-solver harness -- live
+       solveBest/scoreXI/maxPossibleRating vs indep_brute.js's independent brute-force oracle,
+       not the isolated primitives section V tested) across 562 drafts spanning all 12
+       fuzz_gen.js regimes. 0/562 soundness findings, 0/562 RC-1 score-dropped, RC-2 positive
+       control fired as expected (1/562, proves RC pruning is load-bearing). No full-solver
+       soundness violations found this pass -- see section W for the full breakdown, including
+       coverage caveats (54 large drafts skipped, realDB regime thinly sampled at 11). -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.6.4</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
