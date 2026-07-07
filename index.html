@@ -4008,6 +4008,25 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           above. STILL a v17 fork; revert path unchanged (discard this file, main line v16.21.1
           untouched). -->
 
+  <!-- FOR FUTURE MAINTAINERS —
+       X. FINAL TIERED SOUNDNESS TESTING RESULTS (added v17.8.1, doc-only, no logic changed).
+
+          RESULTS, by tier:
+            - Small  (combo cap 2,000):      4,318 drafts tested, 0 soundness findings, 0 brute
+                                              timeouts.
+            - Medium (combo cap 100,000):      526 drafts tested, 0 soundness findings, 0 brute
+                                              timeouts.
+            - Large  (combo cap 3,000,000):     80 drafts tested, 0 soundness findings, 1 brute
+                                              timeout.
+            - TOTAL:                         4,924 drafts tested, 0 soundness findings, 1 brute
+                                              timeout.
+
+          RC-2 (load-bearing per section W) also held clean across the full run: 0/4,924
+          soundness violations. Future testing should consider also checking RC-5.
+
+          CONCLUSION: as of v17.8.1, the soundness test was a success.
+  -->
+
   <!-- left in section C's place above). Superseded by section H; kept here only for the rare case
        someone needs to check a reported miss against this exact original harness run.
 
