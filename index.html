@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.16.1 (prototype)</title>
+<title>Draft Solver v16.17.0 (prototype)</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -3184,7 +3184,22 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        isolated per-node soundness check or an isolated per-node tightness-vs-H2 comparison (PART 1's
        shape) is necessary but not sufficient, since that is exactly the kind of test both rejected
        ideas above already passed cleanly before losing on the test that actually matters. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.16.1-proto</span></h1>
+  <!-- v16.17.0 — Fixed the 150M+ parallel-search path, broken since v16.9.2. That version split
+       trueChem into trueChemPerCard (the real per-card logic) + trueChem (a thin sum wrapper over
+       it) to support per-slot chem badges in the Solve summary -- correct on its own, but
+       _buildSolverWorkerBlob's serialization list (which ships live function source into each
+       Worker via .toString(), per the "serializes solveBest by name only" note elsewhere in this
+       file) was never updated to include trueChemPerCard. Every worker got trueChem's wrapper body
+       (which calls trueChemPerCard) but not trueChemPerCard itself, so any XI that wasn't already
+       full chem (33) -- i.e. nearly every XI evaluated on a real 150M+ draft -- threw "trueChemPerCard
+       is not defined" inside the worker's onmessage handler. That fires the worker's onerror on the
+       main thread; since every spawned worker hit it near-simultaneously (not the single-worker-
+       failure case the existing fallback path was built for), the stop button and the solve-in-
+       progress scroll lock were left in a half-torn-down state instead of the intended clean serial
+       fallback -- read externally as "the whole parallel path is broken, page scrolls during solve,
+       stop button doesn't work." Fix: added trueChemPerCard to the serialized-functions array.
+       No chem math changed; this only fixes what the worker had available to call. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.17.0-proto</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -5704,7 +5719,18 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
 function _parallelBetaOn(){const cb=$('#parBeta');return !!(cb&&cb.checked);}
 function _parWorkerCount(){const el=$('#parWorkers');const v=el?parseInt(el.value,10):4;return(isNaN(v)||v<2)?2:Math.min(v,64);}
 function _buildSolverWorkerBlob(){
-  const src=[futRatingRaw,leagueOf,trueChem,scoreXI,solveBest].map(f=>f.toString()).join('\n')
+  // FIX (v16.16.1.1): trueChem was split into trueChemPerCard (real logic) + trueChem (thin sum
+  // wrapper) back in v16.9.2. This list still only serialized trueChem's wrapper source, never
+  // trueChemPerCard itself -- so any worker that reached a non-full-chem XI (i.e. nearly every
+  // XI on a real 150M+ draft) threw "trueChemPerCard is not defined" inside its onmessage handler,
+  // which fires the worker's onerror on the main thread. Every spawned worker hit this near-
+  // simultaneously, which is what left the stop button and the solve-in-progress scroll lock in
+  // a half-torn-down state instead of cleanly falling back to serial (the single-worker-failure
+  // path was fine; the all-workers-fail-at-once path wasn't). trueChemPerCard must be included
+  // here -- same rule called out at the "serializes solveBest by name only" comment above: any
+  // helper trueChem/scoreXI/solveBest calls has to be in this array or it won't exist in the
+  // worker's scope.
+  const src=[futRatingRaw,leagueOf,trueChemPerCard,trueChem,scoreXI,solveBest].map(f=>f.toString()).join('\n')
     +'\nonmessage=function(e){const d=e.data;'
     +'const allow=d.rootAllowIds?new Set(d.rootAllowIds):undefined;'
     +'const r=solveBest(d.form,d.cards,d.nodeCap,d.ratingCeil,d.seedBest,d.seedXIs,d.skipTies,undefined,allow);'
