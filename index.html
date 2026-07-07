@@ -3587,11 +3587,11 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       </div>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="skipTies" checked onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
-        <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t collect every equal-scoring lineup (faster, on by default). Ties share the identical score and are auto-tiebroken for display anyway, so you still get the best XI; untick only if you want to browse all equal-scoring alternatives.</span>
+        <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t collect every equal-scoring lineup (faster, on by default).</span>
       </label>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="parBeta" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
-        <span><b>Parallel search</b> &mdash; split any solve across CPU workers. Same answer, roughly &divide; workers wall-clock. Off by default (usually not needed since UB-R/UB-A/UB-D landed \u2014 30M+ solves are now fast serial); safe to enable at any node count. Untick if anything looks off.</span>
+        <span><b>Parallel search</b> &mdash; split any solve across CPU workers. Same answer, roughly &divide; workers wall-clock. Off by default.</span>
       </label>
       <div style="margin:2px 0 8px 26px">
         <label style="font-size:11px;color:var(--mut);display:flex;justify-content:space-between"><span>Workers</span><span id="parWorkersLbl">4</span></label>
