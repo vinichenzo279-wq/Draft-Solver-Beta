@@ -11960,6 +11960,96 @@ main();
 -->
 
 
+<!-- ===== FILE: common.js ===== -->
+<!--
+'use strict';
+const { futRatingRaw, leagueOf, scoreXI } = require('./scoring');
+
+// Builds every piece of per-draft precomputation shared by solveBestBase / solveBestR2 /
+// solveBestR3 / all solveBestR4_* variants: candidate lists (rating-desc sorted, tie-broken
+// by nation/club scarcity exactly as in the live file), slot processing order (fewest
+// candidates first), and the static per-slot UB tables (icon/hero top-2 suffix scan) that
+// feed the `ub` (non-rating) bound. This is copied verbatim from solveBestBase/solveBestR2
+// in solvers.js -- not re-derived -- so every variant shares exactly the same setup as the
+// file being benchmarked.
+function buildPrecompute(form, cards, ratingCeil) {
+  const RC = ratingCeil !== undefined ? ratingCeil : 99;
+  const slots = form.slots;
+
+  const cand = slots.map(s => {
+    const list = cards.filter(c => c.pos.includes(s));
+    const natCount = {}, clubCount = {};
+    for (const c of list) {
+      natCount[c.nation] = (natCount[c.nation] || 0) + 1;
+      if (c.type === 'normal') clubCount[c.club] = (clubCount[c.club] || 0) + 1;
+    }
+    return list.map(c => ({ c, k: c.rating + 0.4 / (natCount[c.nation] || 1) + (c.type === 'normal' ? 0.4 / (clubCount[c.club] || 1) : 0) }))
+      .sort((a, b) => b.k - a.k).map(x => x.c);
+  });
+  if (cand.some(l => l.length === 0))
+    return { error: 'A slot has no eligible card: ' + slots.filter((s, i) => cand[i].length === 0).join(', ') };
+
+  for (const slot of cand) for (const c of slot) {
+    if (c._lg === undefined) c._lg = leagueOf(c);
+    if (c._group === undefined) c._group = c.hold || ('C' + c.id);
+  }
+  const order = slots.map((s, i) => i).sort((a, b) => cand[a].length - cand[b].length);
+
+  const slotTypes = cand.map(list => { const s = new Set(); for (const c of list) s.add(c.type); return s; });
+  const slotHeroAllPrem = cand.map(list => {
+    const heroes = list.filter(c => c.type === 'hero');
+    return heroes.length > 0 && heroes.every(c => c.league === 'England Premier League');
+  });
+  const MULTI_LG = cards.some(c => c.type === 'normal' && c.league && c.league !== 'England Premier League');
+  const N = slots.length;
+  const ubBaseline = new Array(N), ubSuffixBase = new Array(N + 1).fill(0);
+  const ubTopIconV = new Array(N + 1), ubTopIconI = new Array(N + 1), ubTopIconV2 = new Array(N + 1), ubTopIconI2 = new Array(N + 1);
+  const ubTopHeroV = new Array(N + 1), ubTopHeroI = new Array(N + 1), ubTopHeroV2 = new Array(N + 1), ubTopHeroI2 = new Array(N + 1);
+  ubTopIconV[N] = -Infinity; ubTopIconI[N] = -1; ubTopIconV2[N] = -Infinity; ubTopIconI2[N] = -1;
+  ubTopHeroV[N] = -Infinity; ubTopHeroI[N] = -1; ubTopHeroV2[N] = -Infinity; ubTopHeroI2[N] = -1;
+  for (let k = N - 1; k >= 0; k--) {
+    const idx = order[k];
+    const st = slotTypes[idx];
+    const heroBase = (MULTI_LG || !slotHeroAllPrem[idx]) ? 2 : 1;
+    let b = -Infinity;
+    if (st.has('normal')) b = MULTI_LG ? 3 : 2;
+    if (st.has('hero') && b < heroBase) b = heroBase;
+    if (st.has('icon') && b < 1) b = 1;
+    ubBaseline[k] = b; ubSuffixBase[k] = ubSuffixBase[k + 1] + b;
+    let iv = ubTopIconV[k + 1], ii = ubTopIconI[k + 1], iv2 = ubTopIconV2[k + 1], ii2 = ubTopIconI2[k + 1];
+    if (st.has('icon')) { const g = 3 - b; if (g > iv) { iv2 = iv; ii2 = ii; iv = g; ii = k; } else if (g > iv2) { iv2 = g; ii2 = k; } }
+    ubTopIconV[k] = iv; ubTopIconI[k] = ii; ubTopIconV2[k] = iv2; ubTopIconI2[k] = ii2;
+    let hv = ubTopHeroV[k + 1], hi = ubTopHeroI[k + 1], hv2 = ubTopHeroV2[k + 1], hi2 = ubTopHeroI2[k + 1];
+    if (st.has('hero')) { const g = 1; if (g > hv) { hv2 = hv; hi2 = hi; hv = g; hi = k; } else if (g > hv2) { hv2 = g; hi2 = k; } }
+    ubTopHeroV[k] = hv; ubTopHeroI[k] = hi; ubTopHeroV2[k] = hv2; ubTopHeroI2[k] = hi2;
+  }
+
+  // Static, one-time (not per-node) precompute for R4-candidate-3: which slot PAIRS could
+  // ever collide under UB-R2/R3's "remaining slot's live top candidate" logic. Two slots can
+  // only ever collide if they share a candidate GROUP somewhere in their lists (a group with
+  // >1 members some of which live in different slots' candidate pools -- either a hold group
+  // spanning multiple slots, or a single multi-position-eligible card appearing in both
+  // slots' candidate lists). If two slots share zero groups, no scan at any node can ever
+  // make them cite the same group as their max -- the pair can be skipped entirely, always.
+  const groupsOfSlot = cand.map(list => new Set(list.map(c => c._group)));
+  const pairCouldCollide = Array.from({ length: N }, () => new Array(N).fill(false));
+  for (let i = 0; i < N; i++) {
+    for (let j = i + 1; j < N; j++) {
+      let shares = false;
+      for (const g of groupsOfSlot[i]) if (groupsOfSlot[j].has(g)) { shares = true; break; }
+      pairCouldCollide[i][j] = pairCouldCollide[j][i] = shares;
+    }
+  }
+
+  return {
+    RC, slots, cand, order, N, ubSuffixBase, ubTopIconV, ubTopIconI, ubTopIconV2, ubTopIconI2,
+    ubTopHeroV, ubTopHeroI, ubTopHeroV2, ubTopHeroI2, pairCouldCollide
+  };
+}
+
+module.exports = { buildPrecompute, futRatingRaw, leagueOf, scoreXI };
+-->
+
 <!-- ===== END APPENDIX: SOUNDNESS HARNESS SOURCE ===== -->
 </body>
 </html>
