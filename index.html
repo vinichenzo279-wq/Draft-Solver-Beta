@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.21.1 (prototype)</title>
+<title>Draft Solver v17.6.2</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2755,6 +2755,209 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           precompute, the __symCid/__symCeil per-node read, and the `if(c.rating>__symCeil)continue;`
           skip + its save/restore) to return to the v16.19.1 UB-D+UB-A solver exactly. No other code
           depends on it.
+
+       U. v17.0.0 PIVOT-DEPTH INTERACTION — STANDALONE TEST OF CONCEPT, NOT MERGED INTO THE MAIN
+          LINE (this is a SEPARATE file/version; v16.21.1 is untouched). Motivating question: w.prem
+          is a FLAT bonus for a card matching the current helper pivot right now — should a non-pivot
+          card instead face a bar that gets HARDER the deeper the squad is already committed to the
+          pivot (more pivot bodies banked = more chem sunk-cost to protect)? A flat bonus-for-X and a
+          flat penalty-for-not-X are mathematically identical under a linear scorer (differ only by a
+          constant, and the helper only ever compares cards) — so this is ONLY a real, non-redundant
+          feature if the effect is NON-LINEAR (scales with commitment depth), which a flat weight
+          cannot express.
+          IMPLEMENTATION: new fittable weight w.pivotDepth. In _calMakeScorer, count pivotCount =
+          committed cards where (normal||hero)&&_pivotMatches (same gate as the w.prem site, so
+          "pivot-matching" means one consistent thing). Any card that does NOT itself match the pivot
+          pays w.pivotDepth*pivotCount; a pivot-matching card never pays it regardless of depth.
+          Added 'pivotDepth' to BOTH the sync and async fitter's init-vector AND dims list (kept
+          identically mirrored — the section H lesson: two copies of fitting logic drift silently if
+          only one is touched). Backward compatible: old saved NOHOLD_CAL.weights objects lack the
+          key, read as (w.pivotDepth||0) — a pre-v17 calibration behaves identically until re-run.
+          VERIFIED: loads clean; old-style weights object (no pivotDepth key) scores without error;
+          a synthetic non-pivot card's score decreases by exactly w.pivotDepth per additional
+          committed pivot-matching card (mechanism confirmed exact); a pivot-matching card's score
+          stays flat regardless of depth (never pays the term, as designed); fresh calibration on the
+          stock demo DB fits pivotDepth ≈ -0.057 (near zero) -- expected and NOT a bug: the stock
+          DEFAULT_DB is still all-Premier-League normals (section N/Q.3 -- the real multi-league DB
+          hasn't landed), so there are ~no non-pivot normals for the fitter to ever see a training
+          signal from. This weight's real test can only happen once genuine multi-league draft data
+          exists; until then a near-zero fit is the CORRECT, honest answer, not evidence the feature
+          is broken.
+          STATUS / HOW TO REVERT: this is v17.0.0, forked from v16.21.1 specifically so the main line
+          is never at risk. If it tests worse (or the fitted weight stays negligible on real
+          multi-league data once available), simply discard this file and keep using v16.21.1 --
+          nothing here needs undoing in the main line because nothing in the main line was touched.
+          If it earns its place, port the five changed spots (scorer term + both fitters' init/dims)
+          back into whatever the main line has become by then.
+
+
+          v17.1.0 FOLLOW-UP: tested the user's sharper critique -- pivotDepth is 0 at pick ONE
+          (no cards committed yet), so it can never discourage a tempting non-pivot FIRST card even
+          when we already know the pivot dominates. Correct diagnosis; the fix attempted (a second
+          weight w.pivotDominance multiplying PIVOT_EDGE, a DB-level dominance signal from
+          analyzePivots()) FAILED and was REVERTED, for two distinct, both-important reasons:
+
+          (1) MATHEMATICALLY REDUNDANT AS BUILT: PIVOT_EDGE is constant for an entire calibration
+          run (recomputed only when the pivot/DB changes, deliberately NOT per-candidate --
+          analyzePivots() costs ~6-11ms, fine once, not fine per script step). A free weight times a
+          run-constant produces a FLAT offset for non-pivot cards -- exactly the same redundancy
+          already ruled out for a plain bonus-vs-penalty swap earlier in this design, just
+          reintroduced one level deeper. Confirmed empirically: fitted pivotDominance landed
+          negligible (~0.06) every run, and adding it as a free dimension made the OTHER fitted
+          weights (pivotDepth itself) noisier for no measurable gain.
+
+          (2) THE FALLBACK HYPOTHESIS ALSO FAILED, which matters more: tested whether w.prem already
+          absorbs true DB-level dominance on its own (since calibration simulates real drafts
+          against the real DB and scores them with the real scoreXI()) -- it does NOT. Fit across
+          four synthetic DBs with reliability ratios 10.56x/5.94x/1.9x/1.06x gave w.prem =
+          -0.671/1.433/1.635/1.635 -- NOT monotonic, and NEGATIVE at the most extreme dominance,
+          the opposite of expected. This means the calibration engine (random-search + coordinate-
+          ascent, one DB per run) is not reliably capturing a real, strong signal (a 10x reliability
+          gap) that is clearly present in the data. That is a CALIBRATION-ROBUSTNESS problem, not
+          something an extra scorer term can paper over -- adding more free parameters to a fitter
+          that already can't reliably resolve the signal just adds more noise to fit.
+
+          WHAT'S STILL LIVE vs REVERTED: PIVOT_EDGE and _refreshPivotEdge() are LEFT IN (computed
+          correctly, refreshed on pivot change / calibration start) but NO LONGER READ by the
+          scorer -- available for a future, genuinely non-redundant use (e.g. as an informed prior
+          that shapes the FITTER'S SEARCH RANGE for prem/clash rather than as a second free
+          parameter competing with them) but not applied naively again. pivotDepth (the board-state
+          term) is UNCHANGED and still the validated, working piece of this prototype.
+
+          OPEN QUESTION FOR WHOEVER PICKS THIS UP: why doesn't w.prem track true dominance
+          monotonically? Prime suspects, in rough order of likelihood: (a) _calMakeScripts' draw
+          probabilities may not be realistically reliability-weighted for MULTI-LEAGUE pools
+          specifically (copies-weighting was fixed for single-DB rarity at v16.10.1, but this is a
+          different question -- does the SIMULATED offer stream correctly reflect how rarely a thin
+          league's cards actually appear across a real multi-card draft, not just per-DB-row
+          weighting); (b) the fitter itself (600 random vectors + coordinate-ascent hill-climbing)
+          may simply be too coarse for weakly-identified dimensions like prem in a moderate DB --
+          worth testing with a much larger nVec or averaging multiple seeds before concluding the
+          data itself is at fault. Resolve THIS before attempting any pivot-dominance feature again;
+          it is the more fundamental issue and was found by testing the fallback hypothesis, not
+          the original ask -- worth knowing on its own regardless of the pivotDominance
+          idea's fate.
+
+
+          v17.2.0 REDESIGN -- THE DEPTH TERM WAS INVERTED; THIS FIXES IT. The user's diagnosis was
+          exact: v17.0/v17.1 penalised the non-pivot card, scaling the penalty with the FIXED pivot's
+          committed depth. That means a worse pivot takes a HARD penalty BEFORE it is ever used -- so
+          (a) at pick 1 a genuinely elite off-pivot card (an 89 PL vs a 97 alternative) is mis-ranked
+          against the pivot for no board-state reason, and (b) no alternative pivot can ever emerge,
+          because committing to it only makes it MORE penalised (its cards don't match the fixed pivot,
+          and the fixed pivot's depth term only ever grows). Net: the helper gave mathematically worse
+          picks than the pre-pivot system. The correct mechanic is the mirror image:
+
+          A. POSITIVE PER-LEAGUE REINFORCEMENT (the "+", replacing the "-"). Depth is now tallied PER
+             pivot-dimension value (each league; each nation under a nation pivot) in pivotDimCount,
+             via the new _pivotDimValue(card) helper -- NOT just for the single fixed PIVOT_KEY. A
+             NORMAL card earns max(w.pivotDepth,PIVOT_SLOPE_FLOOR) * (committed bodies already sharing
+             its OWN league/nation). So every league reinforces itself as you build it. Crucially a
+             FRESH alternative has depth 0 at pick 1 -> zero reinforcement -> a tempting high-rated
+             off-pivot card still wins on rating alone when the gap is large enough (the "somewhat
+             subjective" case), and a new pivot only becomes attractive once you've actually banked
+             several of it -- never pre-emptively.
+
+          B. CRUSHING HEAD-START FOR THE KNOWN-DOMINANT PIVOT (the "extreme scale"). When a card's
+             dimension value === PIVOT_KEY, its depth is boosted by a VIRTUAL head-start
+             PIVOT_PRIOR_BASE + PIVOT_PRIOR_EDGE*max(0,PIVOT_EDGE) -- as if the dominant pivot already
+             had ~8+ bodies committed before pick 1. At the default slope floor (1 pt/body) that is ~8
+             rating points of structural pull, so an ~8-point off-pivot rating edge is the knife-edge
+             and anything smaller loses to the pivot. The head-start SCALES WITH measured dominance
+             (PIVOT_EDGE): a close alternative shrinks it (pick-1 genuinely subjective, matching "if
+             spain ends up close to prem"); a crushing pivot balloons it. An alternative overtakes only
+             once its REAL committed depth exceeds the head-start gap -- exactly "the more spain you
+             add, only then does it become the right choice."
+             This is the genuinely NON-REDUNDANT use of PIVOT_EDGE that this section flagged as open at
+             v17.1.0: it is NOT a free weight times a run-constant (that produced a flat offset the
+             fitter could already reach via prem/clash, and was correctly reverted). It is a head-start
+             inside a per-league COUNT that then competes NON-LINEARLY against alternatives' growing
+             real depth -- a shape a flat term cannot express.
+
+          C. NORMALS ONLY -- HEROES AND ICONS STAY THE OPPOSITE (non-pivot-preferred). The
+             reinforcement is gated to card.type==='normal'. Heroes and icons are diversity plays whose
+             worth comes from bringing NEW leagues/nations, and their handling (newLg, heroLeague, the
+             first-icon/first-hero one-shots, the hero-saturation curve, premHeroPenalty, the
+             _isPivotLeague exemptions) is entirely untouched. A hero/icon never receives the pivot
+             reinforcement -- which is the whole point of keeping them "the opposite". (Committed heroes
+             DO still count toward a league's depth for the reinforcement of NORMALS, reflecting that a
+             hero of league L doubles L's chem in-game; that only affects how much a future NORMAL of L
+             is reinforced, never the hero's own score.)
+
+          WHY STRUCTURAL, NOT FITTED: the v17.1.0 investigation above stands unrefuted -- the fitter
+          cannot reliably resolve the dominance signal (fitted w.prem was non-monotonic, even negative,
+          in true dominance). So the head-start and the slope FLOOR are hand-set from the strong domain
+          prior (PL right every edition since FC22). Fitted w.pivotDepth is retained but can now only
+          RAISE the slope above PIVOT_SLOPE_FLOOR; its init range is one-sided [0,3] in both the sync
+          and async fitters (kept mirrored -- section H). On the stock all-PL DB every normal shares
+          PIVOT_KEY, so the term is a constant offset across candidates at each step and RANKING is
+          unchanged (regression-safe); the mechanic only bites once genuine multi-league normals exist.
+
+          TUNING (v17.3.0 -- moved from fixed consts to Weights-tab SHAPE fields, see that changelog
+          entry): raise SHAPE.pivotHeadStart for an even less-escapable pivot; raise SHAPE.pivotEdgeCurve
+          to make dominance matter more; raise SHAPE.pivotDepthBonus to make any built league entrench
+          faster. The 89-vs-99 example sits at the current defaults' (head start 10) knife-edge on
+          purpose. STILL a v17 fork; revert path unchanged (discard this file, main line was never
+          touched). The v17.1.0 OPEN QUESTION about fitter/script-generator robustness remains worth
+          resolving independently -- this redesign routes AROUND that fragility structurally rather
+          than curing it.
+
+          v17.3.0 ADDENDUM: the three tunables above (base/edge/floor) were fixed JS consts at
+          v17.2.0; they're now SHAPE.pivotHeadStart/pivotEdgeCurve/pivotDepthBonus, exposed in the
+          Weights tab's "Take vs hold" group (shapeGrid-squad) right alongside starterBoost/
+          benchPenalty, per the SAME test section M already applies to that group: these are hand-set
+          judgment calls (section U just spent several paragraphs proving the fitter can't be trusted
+          with this signal), not data-derivable facts, so they belong with the other manually-owned
+          risk-preference weights, always live and never grayed by calibration. Default pivotHeadStart
+          raised 8->10 per direct request for a stronger head start; no other default or mechanism
+          changed. Read SHAPE.* directly in _calMakeScorer now instead of the old module-level consts.
+
+          v17.4.0 ADDENDUM -- THE DEPTH MECHANIC IS GONE, REPLACED WITH TWO STATELESS TERMS. The
+          user's flaw report was exact: the analyzer/helper has NO way to tell the user WHEN switching
+          pivots mid-draft is actually the right call. The v17.2.0/v17.3.0 "emergent reinforcement"
+          idea (a league/nation reinforces itself as you commit to it, so an alternative can organically
+          become "the right choice") was quietly trying to automate that judgment call by proxy through
+          committed depth -- which is a problem this tool has no real basis to solve (it has no draft-
+          outcome foresight, only a snapshot of the board so far). So it's removed entirely, along with
+          all its machinery: pivotDimCount / _pivotDimValue's use as a depth-tally key inside the
+          scorer, SHAPE.pivotDepthBonus, and w.pivotDepth (deleted from both fitters' init vectors and
+          dims lists -- nothing left for it to fit).
+
+          Replacement -- two simple, STATELESS, structural terms, no board-state read at all beyond
+          "does this card match the chosen pivot":
+            A. SHAPE.pivotHeadStart (kept, same default 10, same meaning) -- flat bonus for a NORMAL
+               matching PIVOT_KEY. Simplified from a virtual-body-count multiplied through a depth
+               formula to a literal flat add -- same number, same rough pull, less machinery.
+            B. SHAPE.pivotRankPenalty (NEW, replaces pivotEdgeCurve entirely) -- a NORMAL that does NOT
+               match the chosen pivot pays (that league/nation's own 1-indexed rank in the pivot
+               analyzer's OWN ranked list) * this weight. This is deliberately the SAME list already
+               shown to the user under "Analyze pivots from DB" -- "how far down the list they are"
+               means literally that list, not a synthesized dominance scalar. A close #1 alternative
+               (e.g. Spain just behind PL) pays only 1x the weight; something 15 spots down pays 15x.
+               Built via a new PIVOT_RANK Map (kind|key -> rank) inside _refreshPivotEdge(), from the
+               SAME analyzePivots() call PIVOT_EDGE already used -- no extra cost, refreshed at the
+               same two points (setHelperPivot(), calibration start). PIVOT_RANK_FALLBACK (worst listed
+               rank + 1) covers a league/nation too thin to even appear in the analyzer's output (under
+               the 7-card viability floor), so an unviable league is never accidentally cheaper than a
+               thin-but-listed one. PIVOT_EDGE itself is UNCHANGED and still computed (still unused by
+               the scorer, same "leave it in" precedent as v17.1.0/v17.3.0) -- it and PIVOT_RANK now
+               share one analyzePivots() call per refresh instead of two.
+
+          Both terms are NORMALS ONLY, same as every version before this -- heroes/icons remain
+          non-pivot-preferred and untouched by any of this.
+
+          PROMPTING INSTEAD OF AUTOMATING: since the tool genuinely can't judge when a mid-draft switch
+          is correct, setHelperPivot() now tells the user instead of trying to solve it for them -- an
+          alert() fires when cards.length>0 AND the pivot is actually changing (kind or key differs
+          from the current one), explaining that the head start / rank penalty (and any fitted
+          calibration, which was trained assuming the OLD pivot's card pool) are now stale and need a
+          recalibration pass. The pivot analyzer's own description paragraph states the same thing up
+          front, before the user ever clicks a "use as helper pivot" button. This is intentionally the
+          full extent of the feature -- no attempt to auto-detect a "good moment" to switch, no
+          automatic recalibration trigger; the user makes the call, the tool just makes sure they know
+          to retune afterward.
+
+          STILL a v17 fork; revert path unchanged (discard this file, main line v16.21.1 untouched).
 -->
   <!-- ARCHIVED — FORMER SECTION C, moved out of the KEY REFERENCE block at v16.13.0 (see the stub
        left in section C's place above). Superseded by section H; kept here only for the rare case
@@ -3418,7 +3621,153 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        ~163000ms. This shows the primary objective is complete: the solver officially solves any
        reasonable size within reasonable time. Further, the top score in this draft was actually
        already found by node 15M — the remaining nodes were pure filler. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.21.1-proto</span></h1>
+
+  <!-- v17.0.0 (TEST OF CONCEPT, forked from v16.21.1 -- NOT a replacement, main line untouched) --
+       Prototypes a non-linear PIVOT-DEPTH interaction in the calibrated pick-time scorer: a card
+       that does NOT match the current helper pivot pays a penalty that scales with how many
+       pivot-matching cards are ALREADY committed on the board (w.pivotDepth * pivotCount), on the
+       theory that a squad more deeply committed to its pivot has more chem sunk-cost to protect. A
+       flat bonus/penalty is mathematically redundant with the existing w.prem under a linear
+       scorer, so this only matters as a NON-LINEAR/depth-scaling effect. New weight is FIT (both
+       sync and async calibration engines, mirrored), not hand-set; backward compatible with
+       pre-v17 saved calibrations via (w.pivotDepth||0). Verified: mechanism behaves exactly as
+       designed on synthetic non-pivot vs pivot cards; fresh fit on the stock (still all-PL) demo
+       DB gives pivotDepth ≈ -0.057, expectedly near-zero since there's no non-pivot-normal
+       training signal yet -- the real test needs multi-league draft data. See new FOR FUTURE
+       MAINTAINERS section U for full rationale, verification detail, and the revert path (discard
+       this file; v16.21.1 needs no changes since it was never touched). -->
+
+  <!-- v17.1.0 -- Tested the sharper critique that pivotDepth=0 at pick one, so a first non-pivot
+       card never gets discouraged even when the pivot's dominance is already known. Attempted fix
+       (w.pivotDominance * PIVOT_EDGE, a new DB-level signal from analyzePivots()) FAILED and was
+       REVERTED: (1) mathematically redundant with existing w.prem/w.clash within a single
+       calibration run (PIVOT_EDGE is run-constant, so a free weight on it is just another flat
+       offset the fitter can already achieve via prem/clash -- confirmed empirically, fitted value
+       negligible every run); (2) more importantly, testing whether w.prem ALREADY naturally
+       absorbs true dominance (the fallback hypothesis) also failed -- across four synthetic DBs
+       spanning reliability ratios 10.56x down to 1.06x, fitted w.prem was NOT monotonic and went
+       NEGATIVE at the most extreme dominance level. That's a calibration-robustness finding, not
+       something a new scorer term can fix -- see section U's v17.1.0 follow-up for the full
+       investigation and the open question for whoever continues this (script-generator realism vs
+       fitter coarseness). pivotDepth (the validated board-state term) is unchanged. PIVOT_EDGE /
+       _refreshPivotEdge() are left in, computed correctly, but no longer read by the scorer. -->
+
+  <!-- v17.2.0 -- INVERTED THE DEPTH MECHANIC PER THE USER'S DIAGNOSIS. v17.0/v17.1 had it backwards:
+       a worse (non-dominant) pivot got a HARD penalty that grew with the FIXED pivot's committed
+       depth -- i.e. every alternative league was punished BEFORE it was ever used. That mis-ranks an
+       elite off-pivot card at pick 1 and structurally forbids any alternative pivot from ever
+       emerging, making the analyzer+helper give mathematically worse picks than the pre-pivot system.
+       New shape (see section U v17.2.0):
+         (1) POSITIVE, per-league reinforcement, not a penalty. A NORMAL card earns
+             max(w.pivotDepth,PIVOT_SLOPE_FLOOR) * (committed bodies already sharing its OWN
+             league/nation). Any league you actually build reinforces itself; a fresh alternative is
+             depth 0 at pick 1, so a tempting high-rated off-pivot card still wins on rating alone when
+             the gap is big -- the "somewhat subjective" case -- and a new pivot only becomes "the
+             right choice" once you've banked enough of it, never before.
+         (2) The KNOWN-DOMINANT pivot (PIVOT_KEY) gets a CRUSHING virtual head-start
+             (PIVOT_PRIOR_BASE=8 + PIVOT_PRIOR_EDGE*PIVOT_EDGE bodies), so at equal rating it dominates
+             from pick 1 and an alternative must be built PAST that head-start to overtake. This is the
+             requested "extreme scale", and it scales WITH measured dominance -- a close alternative
+             makes the pick-1 choice genuinely subjective, a crushing pivot makes it a blowout. This is
+             the genuinely non-redundant use of PIVOT_EDGE section U flagged: an informed structural
+             head-start that COMPETES with alternatives' real depth, not the flat run-constant offset
+             that was ruled out.
+         (3) NORMALS ONLY. Heroes and icons are the OPPOSITE (non-pivot-preferred diversity plays) and
+             are excluded from reinforcement entirely -- their value stays governed by newLg /
+             heroLeague / first-icon/hero / hero-saturation / premHeroPenalty, all untouched.
+       Structural (head-start + slope floor) rather than fitted, because section U's v17.1.0 finding
+       stands: the calibration fitter can't reliably resolve the dominance signal (its w.prem was even
+       non-monotonic in true dominance). Fitted w.pivotDepth now only RAISES the reinforcement slope
+       above the floor; its init range is one-sided [0,3] in both fitters. Still all in the v17 fork;
+       revert path unchanged (discard file, keep v16.21.1). New helper _pivotDimValue(); new constants
+       PIVOT_PRIOR_BASE / PIVOT_PRIOR_EDGE / PIVOT_SLOPE_FLOOR (all tunable, documented at declaration).
+       VERIFIED (see section U v17.2.0 for detail): loads clean; on the stock all-PL DB the term is a
+       constant offset across all normal candidates at every step so RANKING is unchanged (regression-
+       safe); on synthetic multi-league data a normal's score rises by exactly the slope per committed
+       same-league body, the dominant PL carries its full head-start from pick 1, and an alternative
+       overtakes only after its real committed depth exceeds the head-start gap; heroes/icons never
+       receive the term. -->
+  <!-- v17.3.0 -- The three v17.2.0 pivot-reinforcement tunables (fixed JS consts PIVOT_PRIOR_BASE/
+       PIVOT_PRIOR_EDGE/PIVOT_SLOPE_FLOOR) are now USER-FACING WEIGHTS: SHAPE.pivotHeadStart (default
+       10, up from the old fixed 8 -- the requested "+10 head start"), SHAPE.pivotEdgeCurve (default
+       0.5 -- the curve giving a weaker alternative pivot a steeper climb, scaling the head start with
+       measured dominance), and SHAPE.pivotDepthBonus (default 1.0 -- the bonus per same-league/nation
+       normal already committed). Exposed in the Weights tab's "Take vs hold" group (shapeGrid-squad)
+       alongside starterBoost/benchPenalty -- same bucket by section M's own test (a judgment call, not
+       a data-derivable fact) and the same reason section U gives for NOT trusting these to the
+       fitter. Always live, never grayed by calibration, exactly like starter/bench. No scoring-shape
+       change from v17.2.0 beyond the base default (8->10); the mechanism (positive per-league
+       reinforcement, crushing head-start for the known-dominant pivot, normals only, heroes/icons
+       excluded) is unchanged -- see section U's v17.2.0 note for the full rationale, which still
+       applies verbatim to these three now-tunable values. -->
+  <!-- v17.4.0 -- SIMPLIFIED: removed the stateful "emergent reinforcement" mechanic entirely (the
+       per-league committed-depth tracking from v17.2.0/v17.3.0, i.e. SHAPE.pivotDepthBonus and the
+       pivotDimCount machinery in _calMakeScorer). Diagnosis: the analyzer/helper has no way to tell
+       the user WHEN switching pivots mid-draft is actually correct, so letting a new pivot "emerge"
+       from committed depth was trying to automate a decision this tool isn't equipped to make.
+       Replaced with two simple, stateless, structural terms, both SHAPE weights (still in the Weights
+       tab's "Take vs hold" group, still always live, never grayed by calibration):
+         • SHAPE.pivotHeadStart (unchanged default 10) -- now a FLAT bonus for any NORMAL matching the
+           chosen pivot, no depth/state involved. Simpler than the old virtual-body-count version but
+           the number means the same thing: ~10 rating points of pull for the default settings.
+         • SHAPE.pivotRankPenalty (NEW, replaces pivotEdgeCurve, default 1) -- a NORMAL that does NOT
+           match the chosen pivot is penalised by (its league/nation's own rank in the pivot analyzer's
+           list) * this weight. Reuses PIVOT_RANK, built alongside the existing PIVOT_EDGE machinery in
+           _refreshPivotEdge() from the SAME analyzePivots() call (no extra cost). A close 2nd-ranked
+           alternative barely loses anything; a league sitting 15 spots down loses much more -- exactly
+           "how far down the list they are."
+       w.pivotDepth (the fitted weight this all used to lean on) is fully removed from both the sync
+       and async fitters' init vectors and dims lists (mirrored, section H discipline) -- there's
+       nothing left for it to fit.
+       PIVOT ANALYZER PROMPT: since the tool can't judge WHEN to switch, it now just tells the user.
+       setHelperPivot() shows an alert() if the board already has cards and the pivot is actually
+       changing, explaining that the head start / rank penalty (and any fitted calibration) were tuned
+       for the OLD pivot and need recalibrating. The analyzer panel's description also states this
+       up front. Full rationale in FOR FUTURE MAINTAINERS section U's v17.4.0 note. Still a v17 fork;
+       revert path unchanged (discard this file, main line v16.21.1 was never touched). -->
+  <!-- v17.4.1 -- FIX: the rank penalty was checking only the card's dimension matching PIVOT_KIND's
+       kind (e.g. under a league pivot, a Spanish La Liga normal was judged ONLY by La Liga's rank,
+       ignoring that Spain's own nation-rank might be much better). A card is a real candidate on BOTH
+       its league axis and its nation axis regardless of which kind the chosen pivot happens to be, so
+       the rank penalty now looks up BOTH ('league|'+its league, 'nation|'+its nation) in PIVOT_RANK
+       and uses whichever rank is BETTER (numerically lower = higher up the analyzer's list) -- a
+       card's true realistic alternate-pivot standing, never its worst axis. Only the penalty site
+       changed; the flat pivotHeadStart bonus for matching the CHOSEN pivot is untouched (still gated
+       by _pivotMatches, still only the pivot's own kind+key). _pivotDimValue() is no longer read by
+       the scorer as a result (comment updated); PIVOT_RANK/_refreshPivotEdge unchanged -- it already
+       stored ranks for every kind (league AND nation rows) from the single analyzePivots() call, so no
+       new computation was needed, just a new lookup shape at the one call site. -->
+  <!-- v17.5.0 -- Pivot analyzer now runs automatically at startup (once playerDB is finalized --
+       default load, possibly overwritten by a saved-session restore), and refreshes PIVOT_RANK/
+       PIVOT_EDGE every time it runs, not just at setHelperPivot()/calibration start. Two real gaps
+       this closes: (1) a brand-new session's very first picks were scoring the pivot rank penalty off
+       an EMPTY PIVOT_RANK map (fallback rank 1 for everyone) until the user manually clicked "Analyze
+       pivots from DB" or switched pivot/calibrated; (2) even clicking that button to just LOOK at the
+       rankings never actually refreshed PIVOT_RANK -- only setHelperPivot()'s side effect did. Both
+       fixed the same way: runPivotAnalysis() now calls _refreshPivotEdge(res), reusing its own already-
+       computed list so there's no extra analyzePivots() pass (_refreshPivotEdge() gained an optional
+       precomputedList parameter for this; its no-arg callers at setHelperPivot()/calibration start are
+       unchanged). The startup call is wrapped in try/catch so any hiccup can't block the rest of the
+       app loading. Cost is the same ~6-11ms the analyzer already measured for itself -- negligible at
+       startup, and the analyzer panel now shows real results immediately instead of a blank box. -->
+  <!-- v17.6.0 -- Three changes: (1) SHAPE_LABEL tooltips for pivotHeadStart/pivotRankPenalty trimmed
+       to their essential description (dropped the mechanism-detail sentences -- stateless/no-ramping,
+       "run the analyzer first", etc. -- redundant once the analyzer already runs at startup).
+       (2) Replaced the alert()-on-switch mid-draft prompt (setHelperPivot()) with a persistent inline
+       warning in the helper's own output (_pivotMismatchWarning()). Fires whenever a committed NORMAL
+       (its slot holds exactly one card) doesn't match the currently chosen pivot -- whether the
+       mismatch just happened or has been there a while. Heroes/icons never trigger it (mismatched by
+       design). Simple non-technical text pointing at the Pivot Analyser.
+       (3) Added a short "What is a pivot?" explainer paragraph at the top of the Pivot analyzer
+       panel, above the existing ranking description. -->
+  <!-- v17.6.2 -- _pivotMismatchWarning() had no excludeSlotId (unlike _calHoldDoubleCountWarning,
+       which already took one for the same reason), so it scanned every committed slot INCLUDING
+       the one whose helper you're currently looking at. Net effect: commit an off-pivot normal,
+       then open that same slot's helper, and it warns you about the pick you're actively viewing
+       -- looked identical to the icon/hero exclusion "not working" but was really a missing
+       self-exclusion, unrelated to card type. Now takes excludeSlotId (call site passes s.id,
+       same as the hold-double-count warning already does) and skips that slot. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.6.2</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -3719,7 +4068,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     </div>
     <div style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
       <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Take vs hold</div>
-      <p class="tiny" style="margin:0 0 6px">The weights the calibrator doesn't own: how much better a card's rating needs to be before the helper says TAKE over HOLD, plus how much it favors a card your projected XI starts vs discounts a likely bench rider. Risk preferences, not data-derivable facts. Always live, calibrated or not.</p>
+      <p class="tiny" style="margin:0 0 6px">The weights the calibrator doesn't own: how much better a card's rating needs to be before the helper says TAKE over HOLD, how much it favors a card your projected XI starts vs discounts a likely bench rider, and how strongly it commits to your chosen pivot league/nation (a flat head start for pivot cards, plus a penalty for alternatives that scales with how far down the pivot analyzer's ranked list they sit). Risk preferences and domain judgment calls, not data-derivable facts. Always live, calibrated or not.</p>
       <div id="shapeGrid-squad"></div>
     </div>
     <details class="hlp" style="margin-top:2px"><summary>Manual &mdash; all hand-tuned weights <span style="color:var(--mut);font-size:11px">(superseded by the calibration above while it's active)</span></summary>
@@ -3790,7 +4139,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 
   <div class="panel">
     <details class="hlp"><summary>Pivot analyzer <span style="color:var(--mut);font-size:11px">(v16 prototype)</span></summary>
-      <p class="tiny" style="margin:6px 0 7px">Ranks every viable <b>league</b> and <b>nation pivot</b> by best-XI <b>ceiling</b> and copies-weighted <b>supply</b>. Advisory only &mdash; never constrains the solver. Top 5 shown; remainder collapsed below.</p>
+      <p class="tiny" style="margin:6px 0 5px"><b>What is a pivot?</b> Your pivot is the single league or nation you plan to build around. Chemistry in this game rewards having most of your XI in one league or nation, so committing to a pivot early lets the helper steer picks toward it consistently. Set yours using the league/nation buttons above the helper.</p>
+      <p class="tiny" style="margin:0 0 7px">Ranks every viable <b>league</b> and <b>nation pivot</b> by best-XI <b>ceiling</b> and copies-weighted <b>supply</b>. Advisory only &mdash; never constrains the solver. Runs automatically at startup so the results and rank penalty are ready from your first pick; re-run any time your DB changes. Top 5 shown; remainder collapsed below.</p>
       <button class="btn sec sm" onclick="runPivotAnalysis()">Analyze pivots from DB</button>
       <div id="pivotResult" style="margin-top:8px"></div>
     </details>
@@ -4289,24 +4639,112 @@ var PIVOT_KIND,PIVOT_KEY;
   }catch(e){PIVOT_KIND='league';PIVOT_KEY='England Premier League';}
 })();
 function setHelperPivot(kind,key){
-  PIVOT_KIND=(kind==='nation')?'nation':'league';
-  PIVOT_KEY=key||(PIVOT_KIND==='league'?'England Premier League':'');
+  kind=(kind==='nation')?'nation':'league';
+  key=key||(kind==='league'?'England Premier League':'');
+  // v17.4.0: the analyzer/helper can't tell the user WHEN to switch pivots mid-draft (that
+  // judgment call is exactly what the removed depth-reinforcement mechanic tried and failed to
+  // automate -- see section U's v17.4.0 note). So instead of trying to infer it, just tell them:
+  // if the board already has cards AND the pivot is actually changing, the head start / rank
+  // penalty (and any fitted calibration) were tuned for the OLD pivot and are now stale.
+  // v17.6.0: removed alert() here -- the mismatch is surfaced as a persistent inline warning
+  // inside the helper output (_pivotMismatchWarning) instead, so it stays visible without
+  // interrupting the user mid-draft.
+  PIVOT_KIND=kind;PIVOT_KEY=key;
   try{localStorage.setItem('pacwyn_pivot_kind_v1',PIVOT_KIND);localStorage.setItem('pacwyn_pivot_key_v1',PIVOT_KEY);}catch(e){}
   const el=$('#pivotCurrent');if(el)el.textContent=(PIVOT_KIND==='nation'?'\uD83C\uDF10 ':'')+PIVOT_KEY;
+  if(typeof _refreshPivotEdge==='function')_refreshPivotEdge(); // v17.1.0: pivot changed -> dominance gap/rank list is stale, recompute
 }
 function setPivotLeague(L){setHelperPivot('league',L);} // back-compat name; old inline onclick markup (if any survives in a cached save) still resolves
 function _pivotMatches(card){return PIVOT_KIND==='nation'?card.nation===PIVOT_KEY:leagueOf(card)===PIVOT_KEY;}
+// v17.2.0: the card's value on the ACTIVE pivot dimension (nation under a nation pivot, else league).
+// Note _pivotMatches(card) is exactly (_pivotDimValue(card)===PIVOT_KEY). v17.4.1: no longer read by
+// _calMakeScorer's rank-penalty term -- that now checks the card's OWN league AND OWN nation ranks
+// directly (a card can be a real candidate on both axes regardless of which kind PIVOT_KIND is), so a
+// single "active dimension" value isn't the right question for that site anymore. Left in (same "leave
+// it in" precedent as PIVOT_EDGE) since _pivotMatches's own doc-comment above still references it and
+// it's a harmless, possibly future-useful one-liner.
+function _pivotDimValue(card){return PIVOT_KIND==='nation'?card.nation:leagueOf(card);}
+// v17.1.0 TEST OF CONCEPT: PIVOT_EDGE is a DB-LEVEL dominance signal, NOT a board-state one --
+// "how much better is the CURRENT pivot's true ceiling than the best alternative pivot", using the
+let PIVOT_EDGE=0;
+// v17.4.0 SIMPLIFICATION -- the v17.2.0/v17.3.0 "emergent reinforcement" idea (a card's own league/
+// nation reinforces itself as you commit to it) is GONE. Diagnosis (full rationale in section U's
+// v17.4.0 note): the analyzer/helper has no way to tell the user WHEN switching pivots mid-draft is
+// actually correct, so trying to let a new pivot "emerge" from committed depth was solving a problem
+// the tool isn't equipped to solve. Replaced with two simple, stateless, structural terms -- both
+// user-facing SHAPE weights in the Weights tab's "Take vs hold" group, same bucket as starterBoost/
+// benchPenalty, always live, never grayed by calibration (same reasoning as v17.3.0: section U proved
+// the fitter can't be trusted with this signal, so it's a hand-set judgment call, not a fitted one):
+//   SHAPE.pivotHeadStart  (default 10) -- flat, structural bonus for a NORMAL matching the CHOSEN
+//                         pivot (PIVOT_KEY). No depth/state involved -- every pivot-matching normal
+//                         gets it, pick 1 or pick 20, same amount every time.
+//   SHAPE.pivotRankPenalty (default 1) -- a NORMAL that does NOT match the chosen pivot is penalised
+//                         by (its league/nation's position in the pivot analyzer's own ranked list) *
+//                         this weight. The #1-ranked alternative (e.g. Spain sitting just behind PL)
+//                         takes only a small, single-rank penalty -- exactly the "somewhat subjective"
+//                         case; a thin, low-viability league sitting 15 spots down the list takes a
+//                         much heavier one. This reuses the SAME ordering already shown to the user in
+//                         the pivot analyzer, so "how far down the list" means literally that.
+// PIVOT_RANK (built below, alongside PIVOT_EDGE, from the same analyzePivots() call so there's no
+// extra cost) maps 'kind|key' -> 1-indexed rank in that list. PIVOT_RANK_FALLBACK is the penalty rank
+// used for a league/nation analyzePivots() doesn't even list (bucket under the 7-card viability floor)
+// -- one worse than the worst listed candidate, so an unviable league is never cheaper than a thin-but-
+// viable one. Both refreshed only at the two points the pivot or DB can change: setHelperPivot() and
+// the top of each calibration run (same discipline PIVOT_EDGE already established at v17.1.0) -- NOT
+// inside the hot per-candidate scorer loop (analyzePivots() costs ~6-11ms, fine once, not fine per
+// candidate per script step). PIVOT_EDGE itself is no longer read by the scorer (nothing currently
+// uses the composite ceiling/buildable/reliability dominance number) but is left in, computed
+// correctly, for any future genuinely non-redundant use -- same "leave it in" precedent as v17.1.0.
+let PIVOT_RANK=new Map(), PIVOT_RANK_FALLBACK=1;
+// v17.1.1 CORRECTION: an EARLIER version of this function used ceiling alone, and testing exposed
+// why that's wrong -- ceiling is a best-CASE number (every score term maximised independently,
+// section T) and does NOT penalise thin supply once a bucket clears its minimum 7-body threshold.
+// On a synthetic DB with a deliberately high-rated but thin second league, PL and the thin league
+// tied at ceiling=155 -- the ceiling literally cannot see "22 cards vs 180 cards" once both clear 7.
+// The signal that DOES capture it is reliability (copies-weighted draw supply): PL was ~6x the thin
+// league's reliability there, with buildable (the realistic greedy floor) also showing a small real
+// gap the ceiling missed entirely. So PIVOT_EDGE (still computed, no longer scorer-read -- see above)
+// combines all three numbers the analyzer already computes, each compared independently against
+// whichever OTHER candidate is strongest on THAT specific dimension (the most conservative
+// combination: it can only grow if EVERY dimension confirms an advantage, never inflated by one
+// dimension while another disagrees):
+//   edgeCeiling    = max(0, our ceiling    - best OTHER candidate's ceiling)
+//   edgeBuildable  = max(0, our buildable  - best OTHER candidate's buildable)
+//   edgeReliability= max(0, ln(our reliability / best OTHER candidate's reliability)) * 10
+// The x10 on the log-ratio is a NORMALIZATION constant only (so a 6x supply advantage -- ln(6)~1.8 --
+// lands in the same rough 0-20 point scale as typical ceiling/buildable gaps), not a strength choice.
+function _refreshPivotEdge(precomputedList){
+  PIVOT_RANK=new Map();PIVOT_RANK_FALLBACK=1;
+  try{
+    const list=precomputedList||analyzePivots(); // v17.5.0: accepts an already-computed list (runPivotAnalysis() passes its own `res` so a single click/startup pass only calls analyzePivots() once, not twice) -- already sorted best-first (ceiling, then buildable, then reliability) -- see analyzePivots()'s own out.sort()
+    list.forEach((r,i)=>PIVOT_RANK.set(r.kind+'|'+r.key,i+1)); // 1-indexed: rank 1 = top of the analyzer's own list
+    PIVOT_RANK_FALLBACK=list.length+1; // one worse than the worst LISTED candidate, for a league/nation too thin to even appear (< 7-card viability floor)
+    const cur=list.find(r=>r.kind===PIVOT_KIND&&r.key===PIVOT_KEY);
+    if(!cur){PIVOT_EDGE=0;return;}
+    let bestOtherCeil=-Infinity,bestOtherBuild=-Infinity,bestOtherRel=-Infinity;
+    for(const r of list){
+      if(r.kind===PIVOT_KIND&&r.key===PIVOT_KEY)continue;
+      if(r.ceiling>bestOtherCeil)bestOtherCeil=r.ceiling;
+      if(r.buildable>bestOtherBuild)bestOtherBuild=r.buildable;
+      if(r.reliability>bestOtherRel)bestOtherRel=r.reliability;
+    }
+    const edgeCeil=bestOtherCeil>-Infinity?Math.max(0,cur.ceiling-bestOtherCeil):0;
+    const edgeBuild=bestOtherBuild>-Infinity?Math.max(0,cur.buildable-bestOtherBuild):0;
+    const edgeRel=(bestOtherRel>-Infinity&&bestOtherRel>0&&cur.reliability>0)?Math.max(0,Math.log(cur.reliability/bestOtherRel))*10:0;
+    PIVOT_EDGE=edgeCeil+edgeBuild+edgeRel;
+  }catch(e){PIVOT_EDGE=0;}
+}
 // v16.9.0: the advisory layer's old hardcoded "is this the Premier League" checks all really meant
 // "is this the PIVOT's own league" — the league whose points the squad's pivot bodies already bank,
 // making it worthless as DIVERSITY. Under a league pivot that's PIVOT_KEY; under a NATION pivot no
 // league is the pivot's own, so every league point is real and none of the special cases fire.
 // This is the single interpreter for that question, mirroring _pivotMatches above.
 function _isPivotLeague(lg){return PIVOT_KIND==='league'&&lg===PIVOT_KEY;}
-const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:10,premHeroRatingThreshold:96,premHeroRatingCeiling:98,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.5,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,commonNormalLeagueBoost:0,commonNormalLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,lowIconHardBound:85,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,highIconHardBound:99,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0,lowHeroPenaltyMax:0,lowHeroHardBound:0,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,highHeroHardBound:99,lowNormalRatingThreshold:87,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,lowNormalHardBound:75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,highNormalHardBound:99,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5,holdSevBase:0.4,holdSevCap:0.85,allFirstBonus:5,allNonePenalty:5};
+const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:10,premHeroRatingThreshold:96,premHeroRatingCeiling:98,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.5,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,commonNormalLeagueBoost:0,commonNormalLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,lowIconHardBound:85,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,highIconHardBound:99,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0,lowHeroPenaltyMax:0,lowHeroHardBound:0,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,highHeroHardBound:99,lowNormalRatingThreshold:87,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,lowNormalHardBound:75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,highNormalHardBound:99,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5,holdSevBase:0.4,holdSevCap:0.85,allFirstBonus:5,allNonePenalty:5,pivotHeadStart:10,pivotRankPenalty:1};
 // Inputs floored at 0 because a negative value here would flip the formula's intent (e.g. extra icons/heroes
 // getting MORE valuable instead of less). clashBase also gets a max: above 2 a mild clash can end up scoring
 // worse than a severe one (see clashBase's label below), so 2 is the point past which the slider works against itself.
-const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[0,105],premHeroRatingCeiling:[0,105],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],commonNormalLeagueBoost:[0,1],commonNormalLeagueCount:[0,30],lowIconRatingThreshold:[0,105],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],lowIconHardBound:[0,105],highIconRatingThreshold:[0,105],highIconBoostMin:[0,1],highIconBoostMax:[0,2],highIconHardBound:[0,105],lowHeroRatingThreshold:[0,105],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],lowHeroHardBound:[0,105],highHeroRatingThreshold:[0,105],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],highHeroHardBound:[0,105],lowNormalRatingThreshold:[0,105],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],lowNormalHardBound:[0,105],highNormalRatingThreshold:[0,105],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],highNormalHardBound:[0,105],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30],holdSevBase:[0,2],holdSevCap:[0,2],allFirstBonus:[0,20],allNonePenalty:[0,20]};
+const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[0,105],premHeroRatingCeiling:[0,105],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],commonNormalLeagueBoost:[0,1],commonNormalLeagueCount:[0,30],lowIconRatingThreshold:[0,105],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],lowIconHardBound:[0,105],highIconRatingThreshold:[0,105],highIconBoostMin:[0,1],highIconBoostMax:[0,2],highIconHardBound:[0,105],lowHeroRatingThreshold:[0,105],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],lowHeroHardBound:[0,105],highHeroRatingThreshold:[0,105],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],highHeroHardBound:[0,105],lowNormalRatingThreshold:[0,105],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],lowNormalHardBound:[0,105],highNormalRatingThreshold:[0,105],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],highNormalHardBound:[0,105],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30],holdSevBase:[0,2],holdSevCap:[0,2],allFirstBonus:[0,20],allNonePenalty:[0,20],pivotHeadStart:[0,50],pivotRankPenalty:[0,10]};
 let SHAPE={...SHAPE_DEF}; // tunable: clash-draw count (rarity = P(no clash over this many random draws)) + icon/hero diminishing
 const _SHAPE_SAVE_KEY='pacwyn_shape_v1';
 function saveShapeLocal(){try{localStorage.setItem(_SHAPE_SAVE_KEY,JSON.stringify(SHAPE));}catch(e){}}
@@ -4594,6 +5032,16 @@ function _dbRestore(){try{const raw=sessionStorage.getItem(_DB_KEY)||localStorag
     setDBStatus('Loaded from your saved session (NOT the default set) \u2014 '+playerDB.length+' cards. Type a name to search. Import to add your own, Export to save this set, or use Reset to restore the true default database. \u26a0 positions are the least-checked field.','var(--warn)');
   }
 })();
+// v17.5.0: run the pivot analyzer once at startup, now that playerDB is finalized (default load,
+// possibly overwritten by a saved-session restore just above). Previously PIVOT_RANK (the rank
+// penalty's source) stayed an empty Map until the user manually clicked "Analyze pivots from DB" --
+// or switched pivot / calibrated, which also triggered a refresh as a side effect -- so a fresh
+// session's very first picks scored every non-pivot normal off an unpopulated fallback rank. The
+// analyzer itself is fast (~6-11ms per its own status line), so there's no real cost to always having
+// it ready; this also means the analyzer panel already shows results the moment the user opens it,
+// instead of a blank box waiting for a click. Wrapped defensively -- a startup hiccup here (e.g. an
+// unusual imported DB shape) should never block the rest of the app from loading.
+try{if(typeof runPivotAnalysis==='function')runPivotAnalysis();}catch(e){}
 $('#dbFile').addEventListener('change',e=>{
   const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>{try{
@@ -8426,6 +8874,25 @@ function _pickPanelSuffixes(picks,holdGroups){
 function _poolSizeWarning(){
   return cards.length>50?'<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 '+cards.length+' cards on the board \u2014 consider removing deadweight (options with no realistic shot at the XI) so the end-solve stays fast.</div>':'';
 }
+// v17.6.1: fixed -- iterate board slots via slotState/slotCards (cards[] has no .held property).
+// v17.6.2: fixed -- was including the slot currently being judged/edited in its own mismatch
+// scan, so a committed off-pivot normal warned about itself every time you opened its own slot
+// helper, not just when it showed up as a side-effect of judging a DIFFERENT slot. Now takes
+// excludeSlotId (same pattern as _calHoldDoubleCountWarning) and skips it.
+function _pivotMismatchWarning(excludeSlotId){
+  if(!PIVOT_KEY||!board)return'';
+  const mismatch=[];
+  board.forEach(s=>{
+    if(s.id===excludeSlotId)return;
+    if(slotState(s)!=='committed')return;
+    const c=slotCards(s.id)[0];
+    if(!c||c.type!=='normal')return;
+    if(!_pivotMatches(c))mismatch.push(c);
+  });
+  if(!mismatch.length)return'';
+  const names=mismatch.map(c=>esc(cardName(c))).join(', ');
+  return'<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 '+(mismatch.length===1?'<b>'+names+'</b> is committed but doesn\u2019t match your chosen pivot (<b>'+esc(PIVOT_KEY)+'</b>).':'<b>'+names+'</b> are committed but don\u2019t match your chosen pivot (<b>'+esc(PIVOT_KEY)+'</b>).')+' If intentional, ignore this \u2014 otherwise check the Pivot Analyzer.</div>';
+}
 function insWhy(c,sc){const f=[];
   if(!sc.nationSet.has(c.nation))f.push('+nat');
   if(!sc.leagueSet.has(leagueOf(c)))f.push('+lg');
@@ -9051,6 +9518,8 @@ const SHAPE_LABEL={
   takeThreshold:'Take vs hold gap \u2014 how far ahead the top option must be before the helper says TAKE not HOLD.',
   starterBoost:'Starter boost (squad mode) \u2014 helper points added to a card your projected XI starts. Pairs with the bench penalty below.',
   benchPenalty:'Bench penalty (squad mode) \u2014 helper points removed from a card your projected XI benches. With the starter boost, sets how hard the helper favours a likely starter.',
+  pivotHeadStart:'Pivot head start \u2014 flat helper bonus for any NORMAL matching your chosen pivot. Higher = harder to justify an off-pivot card. Heroes/icons are unaffected.',
+  pivotRankPenalty:'Pivot rank penalty \u2014 helper penalty for a NORMAL that does NOT match the chosen pivot, scaled by how far down the analyzer\u2019s ranked list that card\u2019s league/nation sits. Top-ranked alternatives lose very little; lower-ranked ones lose more.',
   allFirstBonus:'Flat bonus for a card new on 2/3+ of its applicable dimensions (nation always; league for heroes; club for normals) (squad mode). 0 = off.',
   allNonePenalty:'Flat penalty for a card new on none of its applicable dimensions (nation always; league for heroes; club for normals) (squad mode). 0 = off.',
 };
@@ -9067,12 +9536,12 @@ const SHAPE_CATEGORIES=[
     'highNormalRatingThreshold','highNormalHardBound','highNormalBoostMin','highNormalBoostMax']},
   {key:'clash',keys:['clashDraws','clashBase','clashStack','holdSizeBase','holdDomBoost','holdSevBase','holdSevCap','redundancySurcharge','dominantClashGap']},
   {key:'common',keys:['commonNatCount','commonNatPenalty','commonNatIconExtra','commonClubCount','commonClubPenalty','commonHeroLeagueCount','commonHeroLeaguePenalty','commonNormalLeagueCount','commonNormalLeagueBoost']},
-  {key:'squad',keys:['takeThreshold','starterBoost','benchPenalty']}, // v16.14.2: all three take-vs-hold weights live outside Manual — none are owned by the objective calibration
+  {key:'squad',keys:['takeThreshold','starterBoost','benchPenalty','pivotHeadStart','pivotRankPenalty']}, // v16.14.2: all take-vs-hold weights live outside Manual — none are owned by the objective calibration; v17.4.0: two stateless pivot tunables (head start for the chosen pivot, rank-based penalty for alternatives) — same bucket: hand-set judgment calls, not data-derivable, per section M/section U
   {key:'misc',keys:['outOfFormationPenalty','allFirstBonus','allNonePenalty']},
 ];
 // Flat order, derived from the categories above, kept for anything that still wants "every key in a sane order".
 const SHAPE_ORDER=SHAPE_CATEGORIES.reduce((a,cat)=>a.concat(cat.keys),[]);
-function _renderShapeRow(k){const dec=['iconKeep','iconErosion','heroPenalty','heroRarityRefundCap','normalFloor','normalSlope','clashBase','clashStack','holdSizeBase','holdDomBoost','holdSevBase','holdSevCap','redundancySurcharge','iconRarityRefundCap','takeThreshold','premHeroPenaltyFracLow','premHeroPenaltyFracHigh','premHeroPenaltyFracUrgentPos','commonNatPenalty','commonNatIconExtra','commonClubPenalty','commonHeroLeaguePenalty','commonNormalLeagueBoost','lowIconPenaltyMin','lowIconPenaltyMax','highIconBoostMin','highIconBoostMax','lowHeroPenaltyMin','lowHeroPenaltyMax','highHeroBoostMin','highHeroBoostMax','lowNormalPenaltyMin','lowNormalPenaltyMax','highNormalBoostMin','highNormalBoostMax'];const step=dec.includes(k)?'0.01':'1';
+function _renderShapeRow(k){const dec=['iconKeep','iconErosion','heroPenalty','heroRarityRefundCap','normalFloor','normalSlope','clashBase','clashStack','holdSizeBase','holdDomBoost','holdSevBase','holdSevCap','redundancySurcharge','iconRarityRefundCap','takeThreshold','premHeroPenaltyFracLow','premHeroPenaltyFracHigh','premHeroPenaltyFracUrgentPos','commonNatPenalty','commonNatIconExtra','commonClubPenalty','commonHeroLeaguePenalty','commonNormalLeagueBoost','lowIconPenaltyMin','lowIconPenaltyMax','highIconBoostMin','highIconBoostMax','lowHeroPenaltyMin','lowHeroPenaltyMax','highHeroBoostMin','highHeroBoostMax','lowNormalPenaltyMin','lowNormalPenaltyMax','highNormalBoostMin','highNormalBoostMax','pivotRankPenalty'];const step=dec.includes(k)?'0.01':'1';
 // These 3 keys store "fraction of penalty kept" internally (1=full, 0=forgiven) but are displayed
 // inverted so that 0 = full penalty (default, readable) and 1 = fully forgiven.
 const _INV=['premHeroPenaltyFracLow','premHeroPenaltyFracHigh','premHeroPenaltyFracUrgentPos'];
@@ -9434,7 +9903,48 @@ function _calMakeScorer(w){
     if(card.type==='hero'&&!hasHero)v+=w.firstHero;
     const bringsSomething=newNat||(card.type==='normal'?(newClub||(DB_MULTILEAGUE&&newLg)):newLg)||(card.type==='icon'&&!hasIcon)||(card.type==='hero'&&!hasHero); // v16.0.0: a non-PL normal can also bring a new league; gated so all-PL DBs behave exactly as before
     if(!bringsSomething)v+=w.clash; // negative
-    if((card.type==='normal'||card.type==='hero')&&_pivotMatches(card))v+=w.prem; // v16.0.0: "prem" factor generalized to "the current PIVOT" (defaults to PL league — identical on legacy DBs); v16.7.0: pivot can now be a league OR a nation
+    if((card.type==='normal'||card.type==='hero')&&_pivotMatches(card))v+=w.prem; // v16.0.0: flat bonus for matching the current PIVOT (defaults to PL league — identical on legacy DBs); v16.7.0: league OR nation. Heroes/icons keep their existing NON-pivot-preferred (diversity) handling elsewhere — unchanged.
+    // v17.4.0 PIVOT HEAD START / RANK PENALTY — REPLACES v17.2.0/v17.3.0's stateful "emergent
+    // reinforcement" (committed-depth tracking per league/nation). See FOR FUTURE MAINTAINERS section
+    // U's v17.4.0 note for the full rationale; short version: the analyzer/helper has no way to tell
+    // the user WHEN a new pivot is actually worth switching to, so letting one "emerge" from committed
+    // depth was solving a problem this tool can't solve. Simplified to two STATELESS, structural
+    // terms, both user-facing SHAPE weights (Weights tab -> Take vs hold, same bucket as starterBoost/
+    // benchPenalty, always live, never grayed by calibration):
+    //   • A NORMAL matching the CHOSEN pivot gets a flat SHAPE.pivotHeadStart bonus. No board-state,
+    //     no depth, no ramping — every pivot-matching normal gets exactly the same amount, pick 1 or
+    //     pick 20 (this stacks with the existing fitted w.prem above, which section U showed can't be
+    //     trusted alone to encode true dominance).
+    //   • A NORMAL that does NOT match the chosen pivot is penalised by SHAPE.pivotRankPenalty times
+    //     the BETTER (lower/higher-ranked) of its OWN league's and OWN nation's rank in the pivot
+    //     analyzer's ranked list (PIVOT_RANK, refreshed at pivot-change / calibration-start — see
+    //     _refreshPivotEdge). v17.4.1 fix: a card is simultaneously a candidate for a LEAGUE pivot
+    //     (its league) and a NATION pivot (its nation) regardless of which kind the CURRENT chosen
+    //     pivot is — e.g. a Spanish La Liga normal is a real candidate on BOTH the "Spain" nation
+    //     axis and the "La Liga" league axis. Scoring it only by whichever axis happens to match
+    //     PIVOT_KIND's kind ignored its other, possibly much better, axis and could unfairly over-
+    //     penalise a genuinely strong alternative. So both ranks are looked up and the card is judged
+    //     by its BEST one — its true realistic alternate-pivot standing, never its worst. The #1
+    //     alternative on either axis (e.g. Spain sitting just behind PL) takes only a single-rank
+    //     penalty — the "somewhat subjective" case; a card whose BOTH league and nation sit deep in
+    //     the list takes a much heavier one. "How far down the list" means literally that list — the
+    //     exact one already shown in the pivot analyzer.
+    // NORMALS ONLY, same as before. Heroes and icons are the OPPOSITE — non-pivot-preferred diversity
+    // plays — and are deliberately excluded from both terms; their value stays governed by newLg /
+    // heroLeague / first-icon/hero / the hero-saturation curves / premHeroPenalty, all untouched.
+    if(card.type==='normal'){
+      if(_pivotMatches(card)){
+        v+=SHAPE.pivotHeadStart||0;
+      }else{
+        const lgRank=PIVOT_RANK.get('league|'+leagueOf(card));
+        const natRank=PIVOT_RANK.get('nation|'+card.nation);
+        const rank=Math.min(
+          lgRank!=null?lgRank:PIVOT_RANK_FALLBACK,
+          natRank!=null?natRank:PIVOT_RANK_FALLBACK
+        ); // v17.4.1: best of the card's own league-axis and nation-axis rank, not just whichever matches PIVOT_KIND's kind — unranked/too-thin axes fall back to one worse than the worst listed candidate
+        v-=(SHAPE.pivotRankPenalty||0)*rank;
+      }
+    }
     if(card.type==='icon'||card.type==='hero')v+=w.iconHero;
     return v;
   };
@@ -9488,6 +9998,7 @@ function _calFeasible(db,forms,K){
 // seed actually drove the rng, so a manual seed never gets mistaken for a DB change (or vice versa).
 function _calibrateNoHold(db,forms,opts){
   opts=opts||{};const K=opts.K||5,nScripts=opts.nScripts||150,nVec=opts.nVec||600;
+  if(typeof _refreshPivotEdge==='function')_refreshPivotEdge(); // v17.1.0: recompute the DB-level dominance gap once, before fitting
   const feasErr=_calFeasible(db,forms,K);if(feasErr)return{error:feasErr};
   const hash=_calDbHash(db);
   const seed=(opts.seed!=null&&!isNaN(opts.seed))?(Math.min(4294967295,Math.max(0,Math.floor(opts.seed)))>>>0):hash;
@@ -9499,7 +10010,7 @@ function _calibrateNoHold(db,forms,opts){
   const R=(a,b)=>a+rng()*(b-a);
   let best=null,bestV=-Infinity;
   for(let v=0;v<nVec;v++){
-    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)};
+    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)}; // v17.4.0: pivotDepth removed — the depth-based reinforcement it fed is gone (see section U's v17.4.0 note); pivot head-start/rank-penalty are now stateless, hand-set SHAPE weights, not fitted
     const m=_calMean(train,_calMakeScorer(w));if(m>bestV){bestV=m;best=w;}
   }
   const dims=['newNat','newClub','newLg','prem','clash','iconHero','firstIcon','firstHero'];
@@ -9522,6 +10033,7 @@ function _calActive(){return NOHOLD_CAL&&NOHOLD_CAL.weights&&NOHOLD_CAL.hash===_
 function _calYield(){return new Promise(res=>setTimeout(res,0));}
 async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
   opts=opts||{};const K=opts.K||5,nScripts=opts.nScripts||150,nVec=opts.nVec||600;
+  if(typeof _refreshPivotEdge==='function')_refreshPivotEdge(); // v17.1.0: mirrors the sync path exactly (section H discipline)
   const feasErr=_calFeasible(db,forms,K);if(feasErr)return{error:feasErr};
   const hash=_calDbHash(db);
   const seed=(opts.seed!=null&&!isNaN(opts.seed))?(Math.min(4294967295,Math.max(0,Math.floor(opts.seed)))>>>0):hash;
@@ -9534,7 +10046,7 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
   let best=null,bestV=-Infinity;
   let tYield=performance.now();
   for(let v=0;v<nVec;v++){
-    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)};
+    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)}; // v17.4.0: mirrors the sync fitter exactly (section H discipline) — pivotDepth removed, same as sync
     const m=_calMean(train,_calMakeScorer(w));if(m>bestV){bestV=m;best=w;}
     if(performance.now()-tYield>40){ // ~once per animation frame's worth of work, not every iteration -- keeps overhead negligible
       if(onProgress)onProgress('Searching weight space\u2026 '+Math.round(((v+1)/nVec)*100)+'%');
@@ -9740,6 +10252,12 @@ function runPivotAnalysis(){
   const box=$('#pivotResult');if(!box)return;
   const t0=performance.now();
   let res;try{res=analyzePivots();}catch(e){box.innerHTML='<span style="color:var(--warn)">\u26a0 '+(e&&e.message||'Analysis failed')+'</span>';return;}
+  // v17.5.0: keep PIVOT_RANK/PIVOT_EDGE in sync with whatever the analyzer just showed -- previously
+  // only setHelperPivot()/calibration start refreshed them, so viewing the analyzer (without also
+  // switching pivot or recalibrating) left the pick-time rank penalty stale or, on a first-ever load,
+  // completely unpopulated (defaulting every alternative to the same fallback rank). Reuses this
+  // call's own `res` so there's no second analyzePivots() pass.
+  if(typeof _refreshPivotEdge==='function')_refreshPivotEdge(res);
   const ms=Math.max(1,Math.round(performance.now()-t0));
   if(!res.length){box.innerHTML='<span class="tiny" style="color:var(--mut)">No candidate reaches the 7-unit pivot threshold in this DB.</span>';return;}
   const K=getPivotTopK();
@@ -10801,7 +11319,7 @@ function judgeSlotInline(preCtx){
       }
     }
   }
-  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+_calHoldDoubleCountWarning(s.id,opts.length)+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id,isCap)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
+  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+_pivotMismatchWarning(s.id)+_calHoldDoubleCountWarning(s.id,opts.length)+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id,isCap)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
     +'<div class="tiny" style="margin-top:8px">Rated against your weights \u2014 feel free to overrule any call you don\u2019t agree with. It\u2019s your draft. Evaluations are generated on a per-hold basis, so re-evaluate if you make a change elsewhere.</div>'+inlineHoldNote+'</div>';
 }
 
