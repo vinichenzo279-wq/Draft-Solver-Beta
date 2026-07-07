@@ -55,7 +55,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.7</title>
+<title>Draft Solver v17.8.9</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -4184,7 +4184,19 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        step 4 of the reading order block: user-facing text (tooltips, labels, descriptions) should
        describe what a feature does for the user, not how it works internally — function names,
        variable names, and implementation details do not belong in UI-facing copy. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.7</span></h1>
+  <!-- v17.8.8 -- TWO UI CHANGES, no logic changed. (1) Collapsed the "Objective weights —
+       calibrated from your DB" section on the Helper tab into a <details> dropdown (matching the
+       existing pattern of other collapsible sections) — it was always-open and contributed to the
+       tab feeling overwhelming on first open; the calibration button and its controls are still
+       fully accessible, just collapsed by default. (2) Removed the "(v16 prototype)" label from
+       the Pivot analyzer summary — the prototype label was no longer accurate and added noise. -->
+  <!-- v17.8.9 -- UI CHANGE, no logic changed. Collapsed the Helper tab's "Take vs hold" panel
+       (shapeGrid-squad) into a <details> dropdown, matching the "Objective weights" section above
+       it and the rest of the tab's collapsible pattern. Also renamed it to "Subjective weights —
+       hand-set judgment calls": the group covers more than take-vs-hold now (pivot commitment
+       weights, clash mitigation) and the old name undersold its scope. No IDs, weights, or
+       behavior changed -- shapeGrid-squad's contents and resetSquadWeights() are untouched. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.9</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -4474,21 +4486,19 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="panel">
     <h2>Helper weights</h2>
     <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 6px"><input type="checkbox" id="hNoHold" onchange="onNoHoldToggle()"> No-hold drafting &mdash; always TAKE the top option (never suggest a hold)</label>
-    <div id="noHoldCalWrap" style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
-      <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective weights &mdash; calibrated from your DB</div>
-      <p class="tiny" style="margin:0 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; then ranks options with those weights instead of the hand-tuned ones (inside <b>Manual</b> below), whenever a valid calibration for the current DB exists. Deterministic (same DB + seed &rarr; same result). Takes a few seconds.</p>
+    <details class="hlp" style="margin:0 0 10px"><summary>Objective weights &mdash; calibrated from your DB</summary>
+      <p class="tiny" style="margin:6px 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; then ranks options with those weights instead of the hand-tuned ones (inside <b>Manual</b> below), whenever a valid calibration for the current DB exists. Deterministic (same DB + seed &rarr; same result). Takes a few seconds.</p>
       <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 6px"># drafts to simulate: <input type="number" id="calNScripts" value="150" min="1" step="1" autocomplete="off" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Seed (0&ndash;4294967295, blank = auto from DB): <input type="number" id="calSeed" placeholder="auto" min="0" max="4294967295" step="1" autocomplete="off" style="width:120px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <button class="btn sec sm" id="calBtn" onclick="runNoHoldCalibration()">Calibrate from DB</button>
       <div id="calStatus" class="tiny" style="margin-top:7px"></div>
       <div id="calResult" style="margin-top:7px"></div>
-    </div>
-    <div style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
-      <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Take vs hold</div>
-      <p class="tiny" style="margin:0 0 6px">Risk preferences and judgment calls the calibrator doesn't own. Always live, calibrated or not.</p>
+    </details>
+    <details class="hlp" style="margin:0 0 10px"><summary>Subjective weights &mdash; hand-set judgment calls</summary>
+      <p class="tiny" style="margin:6px 0 6px">Risk preferences and judgment calls the calibrator doesn't own &mdash; take vs hold, pivot commitment, and clash mitigation. Always live, calibrated or not.</p>
       <div id="shapeGrid-squad"></div>
       <button class="btn gho sm" style="margin-top:8px" onclick="resetSquadWeights()">Reset to defaults</button>
-    </div>
+    </details>
 
     <details class="hlp" style="margin-top:2px"><summary>Manual &mdash; all hand-tuned weights <span style="color:var(--mut);font-size:11px">(superseded by the calibration above while it's active)</span></summary>
     <p class="tiny" style="margin:6px 0">Bump the things you care about; reset any time.</p>
@@ -4557,7 +4567,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   </div>
 
   <div class="panel">
-    <details class="hlp"><summary>Pivot analyzer <span style="color:var(--mut);font-size:11px">(v16 prototype)</span></summary>
+    <details class="hlp"><summary>Pivot analyzer</summary>
       <p class="tiny" style="margin:6px 0 5px"><b>What is a pivot?</b> Your pivot is the single league or nation you plan to build around. Chemistry in this game rewards having most of your XI in one league or nation, so committing to a pivot early lets the helper steer picks toward it consistently. Set yours using the league/nation buttons above the helper.</p>
       <p class="tiny" style="margin:0 0 7px">Ranks every viable <b>league</b> and <b>nation pivot</b> by best-XI <b>ceiling</b> and copies-weighted <b>supply</b>. Advisory only &mdash; never constrains the solver. Runs automatically at startup so the results and rank penalty are ready from your first pick; re-run any time your DB changes. Top 5 shown; remainder collapsed below.</p>
       <button class="btn sec sm" onclick="runPivotAnalysis()">Analyze pivots from DB</button>
