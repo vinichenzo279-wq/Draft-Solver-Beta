@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.19.0 (prototype)</title>
+<title>Draft Solver v16.21.0 (prototype)</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -206,7 +206,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 
        READING ORDER FOR FUTURE MAINTAINERS (added v15.1.8): this file's version history has grown
        long enough that reading it all, every time, is no longer the efficient way in. Skip straight
-       to the "FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL" block (lettered sections A-Q) first
+       to the "FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL" block (lettered sections A-T) first
        — it holds the durable, still-relevant knowledge, kept up to date on purpose so it doesn't
        require reading the changelog to reconstruct. Only come back to the CHANGELOG blocks below
        (or the historical pre-v8.12 log) when you need the specific detail of one particular past
@@ -2631,6 +2631,130 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           the (overwhelmingly common) no-collision path — the fixed-point propagation above pays its
           cost on every evaluated node whether or not a collision exists this time, which is exactly
           why it lost.
+
+       S. FIVE ALTERNATIVE PRUNING IDEAS — CONCEPTUALIZED, MEASURED, ALL REJECTED/DEFERRED (added
+          v16.19.1, doc-only). After UB-R/UB-A/UB-D landed, a deliberate attempt was made to find a
+          MECHANICALLY DIFFERENT lever (not another rating-vector tightening — that vein is mined out
+          per the H2/H3 data in the CHANGELOG). Five ideas were built as independently-toggleable
+          components in an off-tree harness (solvers_ideas.js / run_ideas.js, same scaffold as the
+          UB-R4 harness: isolated component unit tests + brute-force soundness fuzz + a real DFS
+          node-AND-wall-clock comparison across loose RC=103, tight auto-RC, and amplified
+          holds+multiPos stress). Baseline = the current LIVE combo (UB-D dynamic diversity caps +
+          UB-A parent-side threshold + plain r2Vec, no collision-fix). Results, so nobody re-derives:
+
+          IDEA 1 — SLOT SYMMETRY (canonical order between interchangeable same-position slots, e.g.
+            two CM slots, to skip k! equivalent permutations). The ONLY idea here with multiplicative
+            rather than additive upside. NOT IMPLEMENTED: soundness requires a snapshot of each slot's
+            eligible-group set AS IT WAS at assignment time (group availability changes down the path),
+            which this DFS shape doesn't retain cheaply. Left stubbed rather than ship an unproven
+            prune (the DAC lesson: an unsound prune that "looks right" is the worst outcome). A real
+            attempt needs a purpose-built DFS variant tracking eligible-set history at each commit —
+            not a patch onto the current loop. Highest ceiling, highest risk, still open.
+
+          IDEA 2 — DUP-COLLAPSE (skip re-trying candidates that are byte-identical on every scoring
+            dimension AND the same group, at a given slot). SOUND after a key fix: the dedup key MUST
+            include _group — two cards with identical scoring signatures but DIFFERENT groups are NOT
+            interchangeable (each group's exclusivity affects other slots differently; collapsing
+            across groups drops a legally-distinct assignment and IS unsound — caught only because a
+            first cut keyed on scoring-signature alone, and note the initial "mismatches" in testing
+            were themselves a TEST BUG: the injector added a second physical card the brute oracle
+            never saw, inflating the solver, not a real solver fault). Once keyed on (group,
+            signature): 0/970 mismatches. VERDICT: sound but NOT worth merging YET — on current
+            synthetic data there are almost no same-group duplicates (dupCollapsed≈0-4 per few-hundred
+            drafts), so it's pure per-list overhead today. Its payoff is real but ENTIRELY contingent
+            on the real PACWYN 27 DB carrying genuine duplicate prints (the v16 copies/dupe feature).
+            DEFER: revisit only once a dup-heavy real DB exists; it's "free money contingent on data,"
+            not an algorithmic win.
+
+          IDEA 3 — FORCED-MOVE / SINGLETON FAST PATH (when a slot has exactly one unused-group
+            candidate, commit without the candidate-loop + threshold machinery). Fires CONSTANTLY
+            (forcedCommits ≈ 2000-6000 per few-hundred drafts). But NODE COUNT IS IDENTICAL
+            (100.000% in every regime): a singleton slot always produced exactly one branch anyway,
+            so there was never a node to save. Only upside is skipping the UB-A binary search on
+            trivially-constrained slots → ~2-3% wall-clock, within noise. VERDICT: marginally
+            positive, not worth the added surface area. DEFER.
+
+          IDEA 4 — ROOT RELAXATION CEILING + EARLY EXIT (compute one optimistic ceiling before the
+            search — same relaxation shape as the pivot analyzer's relaxCeil, adapted to the drafted
+            pool — and stop the instant an incumbent equals it). PROVEN UNSOUND and RETIRED. The
+            ceiling is POSITION-BLIND: it picks the highest-rating card-type shape (e.g. 9 normals +
+            1 icon + 1 hero) and assumes full diversity for it, but when that shape isn't positionally
+            fillable from the actual pool the ceiling lands BELOW the true reachable optimum, and the
+            early-exit then fires on a SUBOPTIMAL incumbent (measured: solver returned 114 vs brute's
+            115, etc. — mm≠0 in all three regimes). Making the ceiling position-aware requires the
+            feasibility reasoning the search itself does — i.e. re-solving — which destroys the
+            "O(1), computed once" appeal. Same class of trap as DAC/idea-1: a bound that's cheap
+            BECAUSE it ignores position feasibility cannot be sound. DO NOT retry any "cheap global
+            ceiling for early exit" that doesn't account for positional fillability.
+
+          IDEA 5 — HALL-STYLE FEASIBILITY PRECHECK (per node: bucket remaining slots by eligible-
+            group set; if any bucket has fewer distinct available groups than slots, no completion
+            exists → prune. A necessary, not sufficient, condition — so pruning on FALSE is sound).
+            SOUND (0 mismatches, hallKills ≈ 84-475 real branches cut). But WALL-CLOCK NET NEGATIVE
+            in every regime (101.7-102.6% of baseline time): the per-node bucketing scan costs more
+            than the rare infeasible-branch cut saves, because typical drafts aren't pool-starved.
+            Even the holds+multiPos stress regime (the most feasibility-constrained) stayed net
+            slower. VERDICT: sound but a measured net loss on realistic data. Might flip positive
+            only on pathologically thin pools, which real drafts aren't. NOT merged.
+
+          OVERALL VERDICT (the reason this section matters as much as any single idea): combined with
+          the H2/H3 and UB-R3 rejections, these five close the loop. EVERY per-node tightening tried
+          post-UB-R falls into exactly one of three buckets: (a) UNSOUND (DAC-C, idea 4, UB-F/UB-G) —
+          usually because it got cheap by ignoring positional feasibility or group exclusivity;
+          (b) SOUND but wall-clock net-loss despite fewer nodes (H2 at ~55x per-node cost, Hall at
+          ~1.02x, UB-R3); or (c) fires on real data but changes nothing measurable (forcedMove;
+          dupCollapse absent real dup data). The bar set in the CHANGELOG — beat plain r2Vec on BOTH
+          node count AND measured wall-clock in a real DFS simulator — remains uncleared by anything
+          new. Plain r2Vec (UB-D + UB-A) is, on current evidence, the STOPPING POINT for per-node
+          bound tightening in this solver's present shape. The only genuinely un-mined directions
+          left are STRUCTURAL, not bound-based: idea 1's slot-symmetry (multiplicative, needs a DFS
+          rewrite to make sound) and idea 2's dup-collapse (needs real dup-heavy data to be worth its
+          cost). Anything else in the "add another admissible per-node UB" family should be assumed a
+          net loss until a test clears the both-metrics bar — do not re-spend effort without it.
+
+       T. UB-SYM: SLOT SYMMETRY BREAKING — MERGED v16.20.0 (the "idea 1" of section S, which was
+          left unimplemented there). The FIRST post-UB-R optimization to clear the both-metrics bar,
+          and the first MULTIPLICATIVE win (all prior ones were additive per-node bound tightenings).
+          IDEA: a formation has repeated same-label slots (2x CB, 2-4x CM, 2x ST...). Two order-
+          positions are STRUCTURALLY SYMMETRIC iff same label AND identical STATIC candidate sets
+          (cand[] is built once and never mutated). Between symmetric slots, enforce a canonical
+          order — a later same-class slot's committed rating must be <= the earlier one's — pruning
+          the k! redundant permutations of k interchangeable slots.
+          WHY THIS SUCCEEDS WHERE THE ORIGINAL SKETCH GOT STUCK: section S's idea 1 tried to compare
+          a slot's CURRENT eligible set to an already-decided slot's HISTORICAL set, which needs a
+          per-path snapshot we don't retain — the stub correctly flagged itself unsound-cheaply.
+          UB-SYM sidesteps that entirely by using STATIC candidate-list equality (a whole-search
+          invariant, computed once, no history), at the cost of only catching symmetry that holds
+          for the entire search — not slots that become "accidentally" identical deep down one path
+          after other groups are consumed. That dynamic case is real and left as a possible future
+          extension, but it reintroduces the snapshot problem, so correctness-first (per the DAC
+          lesson) took the static version.
+          SOUNDNESS: take any completion assigning symmetric slots p1<p2 ratings r1<r2 (violating
+          canonical order). Because both slots draw from the identical static pool, the card at p2
+          was also eligible at p1 and vice-versa, so swapping them is a legal alternative using the
+          SAME overall card set (same groups consumed, same usedGroups trace everywhere else) — hence
+          identical scoreXI(). Every canonical-order violation therefore has an equally-scored
+          canonical twin reachable elsewhere in the tree; pruning the violator drops only a duplicate,
+          never the optimum. Standard value-symmetry breaking, applied to slots. (Class signature
+          uses _group ids, so two prints of the SAME player — same group — count as interchangeable,
+          which is correct.)
+          IMPLEMENTATION: buildSymmetryClasses() once up front (label + sorted group-id-set key);
+          per node, a slot inherits a canonical ceiling from the most-recently-committed member of
+          its class on the current path (__symLastRating map, saved/restored on backtrack exactly
+          like seenNat/seenLg/seenClub); the candidate loop skips any card rated above that ceiling.
+          O(1) extra per candidate; the class build is O(slots log slots) once. Nested inside
+          solveBest so solveBest.toString() still captures it for the Web-Worker parallel path.
+          MEASURED (off-tree harness, solvers_ideas.js/run_ideas.js, then independently re-verified):
+          1,686 fuzz drafts across all 12 regimes + two large sweeps, 0 soundness mismatches anywhere;
+          node count 19-43% of baseline (typically ~20-27%, i.e. a ~4-5x cut), wall-time tracking
+          nodes closely (no meaningful per-node overhead); worse=0 in every regime (never loses to
+          baseline), ~half of individual drafts strictly improved; fires on ~57% of real drafts.
+          In-browser after merge: demo optimum unchanged, 0/240 fuzz mismatches (2 formations x holds
+          x tight+loose RC), serial and parallel-worker paths both correct.
+          REVERT: delete the three UB-SYM blocks in solveBest (the __symClassOf/__symLastRating
+          precompute, the __symCid/__symCeil per-node read, and the `if(c.rating>__symCeil)continue;`
+          skip + its save/restore) to return to the v16.19.1 UB-D+UB-A solver exactly. No other code
+          depends on it.
 -->
   <!-- ARCHIVED — FORMER SECTION C, moved out of the KEY REFERENCE block at v16.13.0 (see the stub
        left in section C's place above). Superseded by section H; kept here only for the rare case
@@ -3237,7 +3361,57 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        (small or 40M); toggle on invokes it at both a small demo draft (well under 30M, correct
        answer, no errors) and a forced 40M cap (correct gating, confirm dialog still fires above
        30M either way). -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.19.0-proto</span></h1>
+
+  <!-- v16.19.1 — Documentation only, no logic changed. Added section S to the FOR FUTURE MAINTAINERS
+       block: five alternative pruning ideas (slot symmetry, dup-collapse, forced-move, root
+       relaxation ceiling, Hall-style feasibility precheck) conceptualized and measured off-tree
+       against the live UB-D+UB-A baseline. Results: idea 4 (root ceiling early-exit) PROVEN UNSOUND
+       (position-blind ceiling undercounts the true optimum → early-exit on a suboptimal incumbent),
+       retired; ideas 2/3/5 sound but rejected/deferred (dup-collapse needs real duplicate DB data to
+       be worth its cost; forced-move saves zero nodes; Hall precheck is a measured wall-clock net
+       loss); idea 1 (slot symmetry) not implemented (soundness needs a DFS rewrite to snapshot
+       eligible-set history). Overall: combined with the H2/H3/UB-R3 rejections, plain r2Vec
+       (UB-D+UB-A) is documented as the current STOPPING POINT for per-node bound tightening — every
+       post-UB-R attempt is either unsound, a wall-clock net loss, or fires-but-changes-nothing.
+       Section S records each idea, its numbers, and why it was rejected so the effort isn't
+       re-spent. -->
+
+  <!-- v16.20.0 — MERGED UB-SYM (slot symmetry breaking), section S's "idea 1", now implemented and
+       the first post-UB-R optimization to clear the both-metrics bar (and the first MULTIPLICATIVE
+       one). Between structurally-symmetric slots (same label + identical static candidate set) a
+       canonical rating order is enforced, pruning the k! redundant permutations of interchangeable
+       slots. Sound (value-symmetry breaking: every violating completion has an equal-scored
+       canonical twin — swapping two same-pool slots' cards gives the same XI). MEASURED off-tree
+       then re-verified: 1,686 drafts / 12 regimes / 0 mismatches; node count ~19-43% of baseline
+       (~4-5x cut), wall-time tracks nodes, worse=0 everywhere, fires on ~57% of drafts. In-browser:
+       demo optimum unchanged, 0/240 fuzz, serial + parallel-worker both correct. Nested in solveBest
+       so the worker path (solveBest.toString()) inherits it automatically. Full detail + soundness
+       proof + REVERT recipe in new section T. Also: REMOVED the verbatim solveBest duplicate from
+       the APPENDIX prod_solver.js block — it was a byte-identical copy of the live solver that
+       repeatedly read as a possible second/diverging solver and had to be hand-synced on every
+       change (a silent drift risk, per the v16.17.0 lesson). Replaced with a placeholder marker
+       explaining that the harness imports a fresh copy of the ONE live solver at test time; there is
+       now exactly one solveBest definition in the file. -->
+
+  <!-- v16.21.0 — SKIP TIES now DEFAULT ON. Reasoning: tied lineups share the identical score and
+       are auto-tiebroken (manager-depth / bench value) before display anyway, so collecting all of
+       them (e.g. 182 on one real draft) is wasted work and storage — the user still gets the single
+       best XI. Fully optional: untick to browse every equal-scoring alternative. Changed: checkbox
+       markup `checked`, _skipTies() comment, saveAdvSettings default-when-absent (true), explicit
+       resetAdvSettings→true. Also FIXED a latent reset drift found while here: resetAdvSettings set
+       parBeta=true with a stale "150M+ only" comment, but parallel has defaulted OFF since v16.19.0
+       — reset now sets parBeta=false to match the markup default. VERIFIED: fresh load → skipTies
+       checked, _skipTies()=true, solve returns a single correct XI (demo 153), parBeta=false.
+       NOTE (not a code change): investigated a report that an imported draft "disambiguated everyone
+       with (#1)". Root cause is NOT a bug — _pickPanelSuffixes only appends an ordinal when two
+       picks share the SAME card label (genuine confusables); confirmed it returns EMPTY suffixes for
+       this draft (33 distinct labels) and correctly returns #1/#2 only for true same-label twins. The
+       (#1) in the report came from a session whose DB had a duplicate-name card imported ("saved
+       someone for this"), which legitimately creates confusables. Working as designed. Also
+       re-verified completeOOP()/emergency-fill still routes its in-position solve through
+       solveWithDiversity→solveBest, so it inherits UB-R/UB-A/UB-D/UB-SYM automatically — NOT left
+       behind by the dynamic-RC work; runs clean with no errors. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.21.0-proto</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -3412,8 +3586,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <div id="ratingCeilWarn" style="display:none;font-size:11px;padding:7px 10px;border-radius:0 7px 7px 0;margin-bottom:8px;background:var(--panel2);border-left:2px solid var(--warn);color:var(--warn)"></div>
       </div>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
-        <input type="checkbox" id="skipTies" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
-        <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t hunt equal-scoring lineups (much faster)</span>
+        <input type="checkbox" id="skipTies" checked onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
+        <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t collect every equal-scoring lineup (faster, on by default). Ties share the identical score and are auto-tiebroken for display anyway, so you still get the best XI; untick only if you want to browse all equal-scoring alternatives.</span>
       </label>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="parBeta" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
@@ -5416,6 +5590,26 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   const seenNat=new Set(),seenLg=new Set(),seenClub=new Set();
   let partialIcon=0,partialHero=0;
   const __dacV=[]; // v16.14.0: shared scratch vector for the DAC dynamic bound (reset per node)
+  // v16.20.0 UB-SYM (slot symmetry, section T): two order-positions are STRUCTURALLY symmetric iff
+  // same slot label AND identical STATIC candidate-object sets (computed once from cand[], never
+  // history-dependent — the fact that sidesteps the eligible-set-snapshot problem the original idea-1
+  // stub hit). Between such slots we enforce a canonical order (a later same-class slot's rating must
+  // be <= the most recently committed member's), pruning redundant permutations of interchangeable
+  // slots. SOUND: swapping which specific card two same-pool slots hold yields an identically-scored
+  // completion using the same card set, so every canonical-order violation has an equal-scored
+  // canonical twin reachable elsewhere in the tree — pruning it can only drop a duplicate, never the
+  // optimum. Measured: fires on ~57% of drafts, node count ~20-24% of baseline, wall-time tracks it,
+  // 0/1686 soundness mismatches across all 12 regimes. This is the first MULTIPLICATIVE win (skips k!
+  // permutations of k interchangeable slots), not another additive per-node bound.
+  const __symClassOf=(function(){
+    const sigOf=slot=>cand[slot].map(c=>c._group).sort((a,b)=>a-b).join(','); // group ids: two prints of the same card share a group and are legitimately interchangeable
+    const groups=new Map();
+    for(let p=0;p<order.length;p++){const key=slots[order[p]]+'|'+sigOf(order[p]);let arr=groups.get(key);if(!arr){arr=[];groups.set(key,arr);}arr.push(p);}
+    const classOf=new Array(order.length).fill(-1);let cid=0;
+    for(const arr of groups.values()){if(arr.length<2)continue;for(const p of arr)classOf[p]=cid;cid++;}
+    return classOf;
+  })();
+  const __symLastRating=new Map(); // classId -> rating most recently committed in this class on the current path (save/restore on backtrack)
   // v16.16.0 "H2-node": per-node analogue of the root's UB-H2 (see ubH2Bound/spMaxBoundPerSlot
   // above), re-adding DAC's collision-aware tightening WITHOUT its soundness trap. Instead of
   // building one N-length vector that some real completion has to dominate (the shape that broke
@@ -5539,6 +5733,8 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       return;
     }
     const slotIdx=order[k];
+    const __symCid=__symClassOf[k]; // v16.20.0 UB-SYM: this slot's symmetry class (-1 = none)
+    const __symCeil=(__symCid>=0&&__symLastRating.has(__symCid))?__symLastRating.get(__symCid):Infinity; // canonical-order ceiling from the last-committed same-class member
     // v6 tighter UB — per remaining slot, use its ACTUAL candidate-type composition
     // (ubBaseline/ubSuffixBase, precomputed once above) instead of assuming every slot
     // can flex to +2. Baseline per slot (no "first icon/hero" bonus yet): normal=2
@@ -5703,6 +5899,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
     // the suffix resource caps: per-node cleverness must be measured, and it keeps losing.]
     for(const c of cand[slotIdx]){
       if(c.rating<__rStar)continue; // v16.14.0 UB-A: provably-pruned child, skipped pre-recursion
+      if(c.rating>__symCeil)continue; // v16.20.0 UB-SYM: canonical-order break — a later same-class slot may not out-rate an earlier one (redundant permutation, safe to skip)
       const g=c._group;
       if(usedGroups.has(g))continue;
       usedGroups.add(g);pick[slotIdx]=c;
@@ -5712,8 +5909,11 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       const addClub=c.type==='normal'&&!seenClub.has(c.club)?(seenClub.add(c.club),1):0;
       const addIcon=!partialIcon&&c.type==='icon'?1:0;if(addIcon)partialIcon=1;
       const addHero=!partialHero&&c.type==='hero'?1:0;if(addHero)partialHero=1;
+      const __symPrev=__symCid>=0?(__symLastRating.has(__symCid)?__symLastRating.get(__symCid):null):null;
+      if(__symCid>=0)__symLastRating.set(__symCid,c.rating);
       dfs(k+1);
       // Backtrack (O(1) each)
+      if(__symCid>=0){if(__symPrev===null)__symLastRating.delete(__symCid);else __symLastRating.set(__symCid,__symPrev);}
       if(addNat) seenNat.delete(c.nation);
       if(addLg)  seenLg.delete(c._lg);
       if(addClub)seenClub.delete(c.club);
@@ -6291,7 +6491,7 @@ function _hideSolverOverlay(){
 // RC warnings (which only exist to guide MANUAL tuning) are hidden. Off = full manual control of the
 // slider, with the warnings back. Default-on is expressed as "missing or checked" so older saved
 // states (no checkbox key) also default to auto.
-function _skipTies(){const cb=$('#skipTies');return !!(cb&&cb.checked);} // default OFF
+function _skipTies(){const cb=$('#skipTies');return !!(cb&&cb.checked);} // v16.21.0: default ON (checkbox `checked` in markup) — ties are same-score and auto-tiebroken pre-display, so collecting all of them is wasted work/storage; still fully optional
 function _divPct(){const el=$('#divPctSlider');const v=el?parseInt(el.value,10):100;return(isNaN(v)||v<0)?100:Math.min(100,v);} // default 100 = all-divstatic (matches old "Off")
 function _shuffleCount(){const el=$('#shuffleCount');const v=el?parseInt(el.value,10):0;return(isNaN(v)||v<0)?0:Math.min(256,v);} // default 0 = no shuffle passes (matches old "Off")
 function _clampShuffleCount(el){let v=parseInt(el.value,10);if(isNaN(v)||v<0)v=0;if(v>256)v=256;el.value=v;}
@@ -6363,7 +6563,7 @@ function saveAdvSettings(){
     const ar=$('#rcAutoOptimal');
     const bnc=$('#benchNodeCapInput'),mnc=$('#mgrNodeCapInput'),hnc=$('#helperNodeCapInput');
     const dp=$('#divPctSlider'),sc=$('#shuffleCount');
-    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),benchObjEV:(($('#benchObjEV')||{}).checked||false),parBeta:(($('#parBeta')||{checked:true}).checked!==false),parWorkers:(($('#parWorkers')||{value:'4'}).value),divPct:dp?dp.value:undefined,shuffleCount:sc?sc.value:undefined,benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
+    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{checked:true}).checked!==false),benchObjEV:(($('#benchObjEV')||{}).checked||false),parBeta:(($('#parBeta')||{checked:true}).checked!==false),parWorkers:(($('#parWorkers')||{value:'4'}).value),divPct:dp?dp.value:undefined,shuffleCount:sc?sc.value:undefined,benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
     localStorage.setItem(_ADV_SAVE_KEY,JSON.stringify(d));
   }catch(e){}
 }
@@ -6419,7 +6619,8 @@ function resetAdvSettings(){
   const dp=$('#divPctSlider');if(dp)dp.value=100;_updDivPctLbl(); // 100% divstatic
   const sc=$('#shuffleCount');if(sc)sc.value=0;        // 0 shuffle passes (diversity off)
   const ts=$('#targetScore');if(ts)ts.value='';        // target off
-  const pb=$('#parBeta');if(pb)pb.checked=true;       // parallel beta default on (150M+ only)
+  const pb=$('#parBeta');if(pb)pb.checked=false;      // v16.19.0: parallel default OFF (toggle-only, any node count)
+  const st=$('#skipTies');if(st)st.checked=true;      // v16.21.0: skip-ties default ON (same-score ties, auto-tiebroken pre-display)
   const bev=$('#benchObjEV');if(bev)bev.checked=false; // v15.0: EV objective default OFF (+2 gamble)
   const pw=$('#parWorkers');if(pw){pw.value='4';const pwl=$('#parWorkersLbl');if(pwl)pwl.textContent='4';}
   if(typeof updateRatingCeilLabel==='function')updateRatingCeilLabel();
@@ -10897,1051 +11098,23 @@ try{ setTimeout(_autoCalibrateOnLoad,350); }catch(e){} // v16.15.0: deferred so 
 <!-- ===== FILE: prod_solver.js ===== -->
 <!--
 'use strict';
-// Extracted verbatim from index.html (Draft Solver) — scoreXI, solveBest, maxPossibleRating
-// and their exact dependency closure (futRatingRaw, leagueOf, trueChem, ubDComponent,
-// ubEGlobal, minCostMaxFlow, spMaxBoundPerSlot, ubH2Bound). No UI/DOM code included.
-function futRatingRaw(rs){const S=rs.reduce((a,b)=>a+b,0),A=S/rs.length;let sp=0;for(const r of rs)if(r>A)sp+=r-A;return (S+sp)/rs.length;}
-function futRating(rs){return Math.floor(futRatingRaw(rs));}
-function leagueOf(c){return c.type==='icon'?'Icons':(c.league||'England Premier League')} // v16.0.0: normals now READ their per-card league (PL fallback for legacy entries) instead of hardcoding PL — see sections F.1 + P
-// Correct Pacwyn chemistry, used ONLY when full 33 isn't reached (a bust anyway).
-// icons & heroes always 3 chem each.
-// icons ALSO contribute +2 to their nation count AND +1 to every league count (universal wildcard).
-// heroes contribute a flat +2 to their own league count.
-// normals earn nation(2/5/8->1/2/3) + club(2/4/7->1/2/3) + league(3/5/8->1/2/3), capped 3.
-// league pool: normals=Prem, icons add +1 to ALL leagues, prem-heroes +2 to Prem; non-prem heroes +2 to their own league.
-function trueChem(xi){
-  const natCnt={},clubCnt={},lgCnt={};let icons=0,normals=0;
-  xi.forEach(c=>{
-    if(c.type==='icon'){
-      icons++;
-      natCnt[c.nation]=(natCnt[c.nation]||0)+2;
-    } else if(c.type==='hero'){
-      natCnt[c.nation]=(natCnt[c.nation]||0)+1;
-      const lg=leagueOf(c);
-      lgCnt[lg]=(lgCnt[lg]||0)+2; // flat +2 per hero
-    } else {
-      normals++;
-      natCnt[c.nation]=(natCnt[c.nation]||0)+1;
-      clubCnt[c.club]=(clubCnt[c.club]||0)+1;
-      const nlg=leagueOf(c);lgCnt[nlg]=(lgCnt[nlg]||0)+1; // v16.0.0: a normal counts toward ITS league, not an assumed-Prem bucket
-    }
-  });
-  // v16.0.0: icons add +1 to EVERY league bucket present (generalized from the old
-  // Prem-unconditional rule — identical numbers on an all-PL-normals DB because normals now
-  // deposit into lgCnt[their real league] directly, see above, so PL's bucket already exists).
-  if(icons>0){for(const lg of Object.keys(lgCnt))lgCnt[lg]+=icons;}
-  const nP=n=>n>=8?3:n>=5?2:n>=2?1:0;
-  const cP=n=>n>=7?3:n>=4?2:n>=2?1:0;
-  const lP=n=>n>=8?3:n>=5?2:n>=3?1:0;
-  let t=0;
-  xi.forEach(c=>{
-    if(c.type==='icon'||c.type==='hero'){t+=3;return;}
-    const lg=leagueOf(c);
-    const lgScore=lP(lgCnt[lg]||0); // v16.0.0: one uniform rule — PL is just another league bucket now
-    t+=Math.min(3,nP(natCnt[c.nation]||0)+cP(clubCnt[c.club]||0)+lgScore);
-  });
-  return t;
-}
-function scoreXI(xi){
-  const ratingExact=futRatingRaw(xi.map(c=>c.rating)),rating=Math.floor(ratingExact);
-  const nations=new Set(xi.map(c=>c.nation)).size;
-  const leagues=new Set(xi.map(leagueOf)).size;
-  const premClubs=new Set(xi.filter(c=>c.type==='normal').map(c=>c.club)).size;
-  const hasIcon=xi.some(c=>c.type==='icon'),hasHero=xi.some(c=>c.type==='hero');
-  const clubs=premClubs+(hasIcon?1:0)+(hasHero?1:0);
-  const glue=xi.filter(c=>c.type==='icon'||c.type==='normal').length;
-  // v16.0.0: the full-chem shortcut generalizes from "Prem pool >= 8" to "BEST league pool >= 8":
-  // per league L, pool(L) = normals of L (x1) + heroes of L (x2) + icons (wildcard +1 to every
-  // league, mirroring trueChem). On an all-PL-normals pool max pool IS the old premPool, byte-identical.
-  const _lgPool={};let _icons=0;
-  xi.forEach(c=>{if(c.type==='icon'){_icons++;return;}const L=leagueOf(c);_lgPool[L]=(_lgPool[L]||0)+(c.type==='hero'?2:1);});
-  let _bestPool=0;for(const L in _lgPool)if(_lgPool[L]>_bestPool)_bestPool=_lgPool[L];
-  const premPool=_bestPool+_icons; // name kept for downstream readers; semantics: best-league pool
-  // v16.1.3 BUGFIX (multi-league soundness): the check above only asked "does *some* league's pool
-  // hit >=8", then applied chem=3 to EVERY card in the XI -- including normals whose OWN league is
-  // a totally different, small bucket. That's unsound. trueChem's per-card cap
-  // (Math.min(3, nP+cP+lgScore)) only auto-saturates at 3 via lgScore alone when the CARD'S OWN
-  // league is the one that reached the threshold; a normal sitting in a mismatched singleton league
-  // still needs its real nation+club+league math and can legitimately score 0 -- confirmed: a
-  // 10-card single-league pivot XI + 1 mismatched normal was scoring full 33 here while trueChem()
-  // on the identical XI returns 30 (the mismatched card actually contributes 0, not 3). Heroes/icons
-  // are unconditionally 3 in trueChem regardless of league, so they never need this check -- only
-  // normals do. Fix: the flat-3-everyone shortcut now requires EVERY normal to sit in a league whose
-  // own pool already cleared 8 (there can be more than one such league); any other case falls
-  // through to the real per-card trueChem() calc. On any all-PL-normals DB this is still exactly the
-  // old behavior (one qualifying league, every normal is in it) -- byte-identical, per the
-  // LEGACY EQUIVALENCE rule in section P.
-  const _qualifyingLgs=new Set();for(const L in _lgPool)if(_lgPool[L]>=8)_qualifyingLgs.add(L);
-  const _allNormalsQualify=xi.every(c=>c.type!=='normal'||_qualifyingLgs.has(leagueOf(c)));
-  const full=(_qualifyingLgs.size>0&&_allNormalsQualify)||xi.every(c=>c.type==='icon'||c.type==='hero');
-  const chem=full?3*xi.length:trueChem(xi);
-  return {rating,ratingExact,chem,nations,leagues,clubs,full,glue,total:rating+chem+nations+leagues+clubs,
-    nationSet:new Set(xi.map(c=>c.nation)),leagueSet:new Set(xi.map(leagueOf)),
-    clubSet:new Set(xi.filter(c=>c.type==='normal').map(c=>c.club))};
-}
-
-/* ============================ SOLVER (DFS + bound) ============================ */
-function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diversitySeed){
-  const ST=!!skipTies; // "Skip ties": prune branches that can only TIE the best (strict-improvement B&B) and stop collecting tied XIs. Provably keeps the optimal SCORE (never prunes a strictly-better branch, whose admissible bound must exceed best); only tied lineups are dropped.
-  const RC=ratingCeil!==undefined?ratingCeil:99;
-  const slots=form.slots;
-  // v11.0 presort — rating-desc first as always (v5.1 best-first), but ties between EQUAL-rated
-  // candidates are now broken by within-slot rarity: 1/(count of this nation in this slot's own
-  // pool) + for normals 1/(count of this club in this slot's pool), weighted 0.4 each. Max nudge
-  // 0.8 < 1, ratings are integers, so a lower-rated card can NEVER be tried before a higher-rated
-  // one (verified over 20k random pools: 0 rating-order violations) — this is purely a tie-break.
-  // Rationale: an equal-rated card that's the only one of its nation/club here banks a "free"
-  // diversity point earlier, so capped searches sit on a better incumbent when cut off. Computed
-  // ONCE per slot before the search (same cost class as the old sort); ordering only — candidates,
-  // pruning, UB, and traversal structure are untouched, so any completed search returns the exact
-  // same optimum as before (verified: identical best on every fixture; total node count identical
-  // in 149/150 broad fuzz drafts). Where it earns its keep is CAPPED searches on huge drafts
-  // (est. 10^8–10^12 combos, 10M-node cap, head-to-head on identical drafts): 56 hard trials —
-  // 50 all-tied, and of the 6 divergences divstatic won 5 (+1 pt each) and lost 1 (seed 91041,
-  // −2 pts). Also tested and REJECTED in the same campaign: (a) per-node dynamic re-sorting by
-  // live path state (the removed v5.6 idea, re-tried at up to 150M nodes) — never beat this static
-  // version on final score, 4–25% slower wall-time, reconfirming the v8.2 removal; (b) eight
-  // isolated single-factor tie-breaks (position-flexibility both directions, nation/club/league
-  // rarity alone, icon-first/normal-first type priority) — zero effect on total nodes in 120
-  // broad trials each, and the only hard-trial divergence had club/league/icon-first variants
-  // LOSING a point; the nation+club BLEND is the only ordering found to add anything.
-  //
-  // v12.0 DIVERSITY: when `diversitySeed` is a number, each slot's candidate list is instead
-  // FULLY SHUFFLED (deterministically, from that seed) rather than divstatic-ordered. This throws
-  // away best-first on purpose so the search walks a completely different region of the tree — used
-  // only by the optional, default-off "search diversity" wrapper (solveWithDiversity below), which
-  // spends part of the node budget on divstatic first (best incumbent) and the rest on one or more
-  // seeded-shuffle passes, keeping whichever pass scored highest. As a FORCED default this is worse
-  // (best-first ordering does real work — pure-shuffle lost to divstatic on ~65% of hard drafts),
-  // but as an OPTIONAL alternate it strictly beat pure divstatic at equal budget on ~13% of hard
-  // realistic drafts (+1 to +3 pts), symmetric high-variance — so it only ever helps here because
-  // the wrapper keeps the max across passes, never the shuffle alone. Ordering-only, exactly like
-  // the divstatic path: pruning/UB/traversal untouched, so a run that COMPLETES still returns the
-  // true optimum regardless of seed. See the v12.0 CHANGELOG entry for the full experiment.
-  const _divShuffle=(typeof diversitySeed==='number');
-  let _dseed=(diversitySeed|0)||1;
-  const _drand=()=>{_dseed|=0;_dseed=(_dseed+0x6D2B79F5)|0;let t=Math.imul(_dseed^(_dseed>>>15),1|_dseed);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};
-  const cand=slots.map(s=>{
-    const list=cards.filter(c=>c.pos.includes(s));
-    if(_divShuffle){ // deterministic Fisher–Yates from the per-call seed (advances _dseed across slots)
-      const a=list.slice();
-      for(let i=a.length-1;i>0;i--){const j=Math.floor(_drand()*(i+1));const tmp=a[i];a[i]=a[j];a[j]=tmp;}
-      return a;
-    }
-    const natCount={},clubCount={};
-    for(const c of list){
-      natCount[c.nation]=(natCount[c.nation]||0)+1;
-      if(c.type==='normal')clubCount[c.club]=(clubCount[c.club]||0)+1;
-    }
-    return list.map(c=>({c,k:c.rating+0.4/(natCount[c.nation]||1)+(c.type==='normal'?0.4/(clubCount[c.club]||1):0)}))
-      .sort((a,b)=>b.k-a.k).map(x=>x.c);
-  });
-  if(cand.some(l=>l.length===0))
-    return {error:'A slot has no eligible card: '+slots.filter((s,i)=>cand[i].length===0).join(', ')};
-  // v5.5 #2: cache _lg (leagueOf) and _group on every candidate once instead of recomputing in the hot loop
-  for(const slot of cand)for(const c of slot){
-    if(c._lg===undefined)c._lg=leagueOf(c);
-    if(c._group===undefined)c._group=c.hold||('C'+c.id);
-  }
-  const order=slots.map((s,i)=>i).sort((a,b)=>cand[a].length-cand[b].length);
-  // v6 UB precompute — per remaining slot, the OLD bound assumed a flat "+2" for anything
-  // that wasn't the one reserved "first icon"/"first hero" slot. That's safe (never an
-  // underestimate) but loose whenever a slot's candidate pool is icon-only or hero-only —
-  // e.g. a position where a user has stacked several icons and has no normal/hero card that
-  // fits there. A 2nd+ icon can only ever add +1 (nation; "Icons" league + the icon club-
-  // bonus are awarded once, to whichever icon comes first), so an icon-only slot's true max
-  // is +1, not +2. This is computed ONCE per solveBest() call (static — resorting cand[] for
-  // traversal order doesn't change which TYPES are present) as suffix aggregates, so the
-  // per-node bound check below stays O(1), same as before.
-  const slotTypes=cand.map(list=>{const s=new Set();for(const c of list)s.add(c.type);return s;});
-  // v12.4.0: per-slot "every hero option here is a Prem-league hero" flag. A hero whose own
-  // league IS 'England Premier League' doesn't add a fresh league the way a non-Prem hero does --
-  // that league point is the same shared Prem bucket normals/premUnseen already cover globally,
-  // earned once no matter how many Prem sources could supply it. So a slot whose only hero
-  // candidates are Prem-league heroes can guarantee nation (+1) from that option, not nation+
-  // league (+2) -- the old code credited +2 unconditionally, double-counting against premUnseen
-  // in this one narrow case. See v12.4.0 CHANGELOG.
-  const slotHeroAllPrem=cand.map(list=>{
-    const heroes=list.filter(c=>c.type==='hero');
-    return heroes.length>0&&heroes.every(c=>c.league==='England Premier League');
-  });
-  // v16.0.0 SOUNDNESS GATE (see sections F.1 + P): the v12.4.0 tightened baselines below encode
-  // "Prem is one shared, premUnseen-covered league bucket". With real per-league normals in the
-  // pool a normal can bring nation+club+A FRESH LEAGUE (+3 > the old b=2), and a "Prem-only-hero"
-  // slot's league point is no longer globally shared — so the old tightenings can UNDER-count the
-  // bound and silently prune optimal branches. When ANY non-PL normal is present we therefore
-  // loosen to provably admissible baselines (normal=3, hero always=2); over-counting only slows
-  // the search, never breaks optimality. All-PL pools (every pre-v16 DB) keep the tightened
-  // bound byte-identical.
-  const MULTI_LG=cards.some(c=>c.type==='normal'&&c.league&&c.league!=='England Premier League');
-  const N=slots.length;
-  const ubBaseline=new Array(N),ubSuffixBase=new Array(N+1).fill(0);
-  const ubTopIconV=new Array(N+1),ubTopIconI=new Array(N+1),ubTopIconV2=new Array(N+1),ubTopIconI2=new Array(N+1);
-  const ubTopHeroV=new Array(N+1),ubTopHeroI=new Array(N+1),ubTopHeroV2=new Array(N+1),ubTopHeroI2=new Array(N+1);
-  ubTopIconV[N]=-Infinity;ubTopIconI[N]=-1;ubTopIconV2[N]=-Infinity;ubTopIconI2[N]=-1;
-  ubTopHeroV[N]=-Infinity;ubTopHeroI[N]=-1;ubTopHeroV2[N]=-Infinity;ubTopHeroI2[N]=-1;
-  for(let k=N-1;k>=0;k--){
-    const idx=order[k];
-    const st=slotTypes[idx];
-    // v12.4.0: hero baseline is 2 (nation+own league) unless every hero option here is Prem-only,
-    // in which case it's 1 (nation only -- the league point is the shared Prem bucket, not a
-    // fresh per-slot one).
-    const heroBase=(MULTI_LG||!slotHeroAllPrem[idx])?2:1; // v16.0.0: Prem-hero tightening only valid in the all-PL world
-    let b=-Infinity;
-    if(st.has('normal'))b=MULTI_LG?3:2; // v16.0.0: multi-league normal can bring nation+club+fresh league
-    if(st.has('hero')&&b<heroBase)b=heroBase;
-    if(st.has('icon')&&b<1)b=1;
-    ubBaseline[k]=b;ubSuffixBase[k]=ubSuffixBase[k+1]+b;
-    let iv=ubTopIconV[k+1],ii=ubTopIconI[k+1],iv2=ubTopIconV2[k+1],ii2=ubTopIconI2[k+1];
-    if(st.has('icon')){const g=3-b;if(g>iv){iv2=iv;ii2=ii;iv=g;ii=k;}else if(g>iv2){iv2=g;ii2=k;}}
-    ubTopIconV[k]=iv;ubTopIconI[k]=ii;ubTopIconV2[k]=iv2;ubTopIconI2[k]=ii2;
-    // v12.4.0: the "first hero" bonus is always exactly +1 -- the one-time hero-club flag
-    // (scoreXI's hasHero -> clubs+1) -- never 3-b. Previously b was always 2 for any hero-
-    // possible slot, so 3-b always happened to come out to 1 anyway; now that Prem-exclusive
-    // slots correctly get b=1, leaving this as 3-b would silently reinflate to 2, re-adding the
-    // league point baseline just removed. Hardcoding the true, category-independent gain avoids
-    // that regression and keeps every previously-existing case byte-identical (g was always 1
-    // there too, just derived instead of stated).
-    let hv=ubTopHeroV[k+1],hi=ubTopHeroI[k+1],hv2=ubTopHeroV2[k+1],hi2=ubTopHeroI2[k+1];
-    if(st.has('hero')){const g=1;if(g>hv){hv2=hv;hi2=hi;hv=g;hi=k;}else if(g>hv2){hv2=g;hi2=k;}}
-    ubTopHeroV[k]=hv;ubTopHeroI[k]=hi;ubTopHeroV2[k]=hv2;ubTopHeroI2[k]=hi2;
-  }
-  let best=(typeof seedBest==="number"&&seedBest>=0)?seedBest:-1;
-  let bestXIs=(best>=0&&seedXIs&&seedXIs.length)?seedXIs.map(x=>({xi:x.xi,sc:x.sc,foundAt:0,seed:true})):[];
-  // Highest TRUE squad rating (floor(ratingExact), the same integer that enters sc.total) seen across
-  // every complete XI scored. RC only ever enters the search as the rating ceiling in the pruning UB
-  // (ub = RC+33+chem/diversity); the score itself never clamps rating. So comparing this max to RC
-  // tells the user whether RC was actually binding: max<RC means RC never touched a real squad (sound,
-  // and RC could be lowered to save time); max===RC is the boundary (a higher-rated squad, if one
-  // exists, would rate >RC and could have been pruned before we ever scored it); max>RC means the UB
-  // underestimated at least one branch's rating, so better squads were likely pruned. One integer
-  // compare per leaf — sc.rating is already computed for the score, so this adds no measurable cost.
-  let maxRating=-1;
-  if(bestXIs.length)for(const b of bestXIs){const rr=b.sc&&b.sc.rating;if(typeof rr==='number'&&rr>maxRating)maxRating=rr;}
-  let nodes=0;const CAP=nodeCap||3000000;let capped=false;
-  const usedGroups=new Set(),pick=new Array(slots.length).fill(null);
-  // v5.5 #1: incremental diversity state — add on descent, delete on backtrack; eliminates
-  // ~9M Set allocations at the 3M-node cap that the old per-node filter/map/Set pattern caused.
-  const seenNat=new Set(),seenLg=new Set(),seenClub=new Set();
-  let partialIcon=0,partialHero=0;
-  const __dacV=[]; // v16.14.0: shared scratch vector for the DAC dynamic bound (reset per node)
-  // v16.16.0 "H2-node": per-node analogue of the root's UB-H2 (see ubH2Bound/spMaxBoundPerSlot
-  // above), re-adding DAC's collision-aware tightening WITHOUT its soundness trap. Instead of
-  // building one N-length vector that some real completion has to dominate (the shape that broke
-  // DAC), this bounds the exact max SUM over the R remaining slots via a small assignment (each
-  // remaining slot gets at most one not-yet-used group, respecting exclusivity exactly -- no
-  // guessing which slot "wins" a contested group) and separately bounds the max spread-above-mean
-  // over each slot's own achievable [L,U] range intersected with that sum cap, then combines them
-  // additively -- so no single vector has to dominate the true completion, and the UB-F/UB-G/DAC
-  // counterexample (two legal completions whose rating vectors don't dominate each other) cannot
-  // recur, because neither S_max nor sp_max relies on picking a winner between them; both are
-  // exact maxima of two genuinely different, non-competing quantities.
-  // Nested (not top-level) so solveBest.toString() still captures it whole for the Web Worker
-  // parallel path (see _buildSolverWorkerBlob, which serializes solveBest by name only -- a new
-  // top-level helper would NOT exist inside the worker and would throw).
-  // COST/GATING: only invoked when the cheap __d check below does NOT already prune (paying the
-  // assignment DP only on the harder nodes), and only for R<=8 remaining slots (always true here
-  // since this whole section is gated k>=4, so R<=N-4<=7 for an 11-slot XI) -- vertex enumeration
-  // is O(2^R + R*2^(R-1)) (<=576 evals at R=7); the assignment DP is O(groups * 2^R * R).
-  // STATUS: sound by construction (argument above), but per this file's own F.2/Q.2 discipline this
-  // is a fresh addition and has NOT yet been run through the full off-tree twelve-regime harness +
-  // a DAC-style targeted collision generator -- run that before treating this as release-final.
-  function assignMaxSumNode(remSlots,cand,usedGroups){
-    const R=remSlots.length;
-    const L=new Array(R),U=new Array(R);
-    const groupBest=new Map(); // group -> Array(R) of its best rating for that remaining slot, or -Infinity
-    for(let i=0;i<R;i++){
-      const list=cand[remSlots[i]];let lo=Infinity,hi=-Infinity;
-      for(const c of list){
-        if(usedGroups.has(c._group))continue;
-        if(c.rating>hi)hi=c.rating;
-        if(c.rating<lo)lo=c.rating;
-        let arr=groupBest.get(c._group);
-        if(!arr){arr=new Array(R).fill(-Infinity);groupBest.set(c._group,arr);}
-        if(c.rating>arr[i])arr[i]=c.rating;
-      }
-      if(hi===-Infinity)return null; // this slot has zero legal candidates -- no legal completion here
-      L[i]=lo;U[i]=hi;
-    }
-    // Max-weight assignment of distinct groups to the R remaining slots, via bitmask DP over which
-    // slots are filled so far (classic "one side small" assignment trick -- exact, not a relaxation,
-    // and respects group exclusivity precisely instead of letting two slots double-claim one group).
-    const full=(1<<R)-1;
-    let dp=new Array(1<<R).fill(-Infinity);dp[0]=0;
-    for(const arr of groupBest.values()){
-      const next=dp.slice(); // read from the pre-this-group snapshot so each group is used at most once
-      for(let mask=0;mask<=full;mask++){
-        if(dp[mask]===-Infinity)continue;
-        for(let i=0;i<R;i++){
-          if(mask&(1<<i))continue;
-          if(arr[i]===-Infinity)continue;
-          const nm=mask|(1<<i),val=dp[mask]+arr[i];
-          if(val>next[nm])next[nm]=val;
-        }
-      }
-      dp=next;
-    }
-    const Smax=dp[full];
-    if(Smax===-Infinity)return null; // no way to give every remaining slot a distinct group
-    return {Smax,L,U};
-  }
-  // Exact max of sp(x)=sum(max(0,x_i-mean(x))) over the FULL N-length vector (k fixed committed
-  // ratings + R free coords bounded by [L_i,U_i]) intersected with sum(free)<=freeCap, where sp is
-  // convex so its max over this box-plus-hyperplane region is attained at a vertex with at most one
-  // free coordinate not pinned to its own L/U -- same shape/argument as the root's
-  // spMaxBoundPerSlot, just restricted to the R free dims with the k committed values held fixed.
-  function spMaxFreeBox(fixedVals,L,U,SmaxTotal){
-    const R=L.length,N=fixedVals.length+R,EPS=1e-9;
-    const fixedSum=fixedVals.reduce((a,b)=>a+b,0),freeCap=SmaxTotal-fixedSum;
-    function spOf(freeVals){
-      const S=fixedSum+freeVals.reduce((a,b)=>a+b,0),A=S/N;let sp=0;
-      for(const v of fixedVals)if(v>A)sp+=v-A;
-      for(const v of freeVals)if(v>A)sp+=v-A;
-      return sp;
-    }
-    let best=-Infinity;
-    const total=1<<R;
-    for(let mask=0;mask<total;mask++){
-      const vals=new Array(R);let s=0;
-      for(let i=0;i<R;i++){const v=(mask&(1<<i))?U[i]:L[i];vals[i]=v;s+=v;}
-      if(s<=freeCap+EPS){const sp=spOf(vals);if(sp>best)best=sp;}
-    }
-    for(let flex=0;flex<R;flex++){
-      const others=[];for(let i=0;i<R;i++)if(i!==flex)others.push(i);
-      const M=others.length,subTotal=1<<M;
-      for(let mask=0;mask<subTotal;mask++){
-        const vals=new Array(R);let sumOthers=0;
-        for(let mkk=0;mkk<M;mkk++){const i=others[mkk];const v=(mask&(1<<mkk))?U[i]:L[i];vals[i]=v;sumOthers+=v;}
-        let v=freeCap-sumOthers;
-        if(v<L[flex])v=L[flex];
-        if(v>U[flex])v=U[flex];
-        vals[flex]=v;
-        const sp=spOf(vals);if(sp>best)best=sp;
-      }
-    }
-    return best;
-  }
-  function h2NodeBound(k,order,cand,usedGroups,pick){
-    const N=order.length,R=N-k;
-    if(R<=1||R>8)return null; // trivial, or (defensively) too large to be cheap -- __d bound still applies
-    const remSlots=new Array(R);for(let i=0;i<R;i++)remSlots[i]=order[k+i];
-    const asn=assignMaxSumNode(remSlots,cand,usedGroups);
-    if(!asn)return null;
-    const committed=new Array(k);for(let j=0;j<k;j++)committed[j]=pick[order[j]].rating;
-    const fixedSum=committed.reduce((a,b)=>a+b,0);
-    const SmaxTotal=fixedSum+asn.Smax;
-    const spMax=spMaxFreeBox(committed,asn.L,asn.U,SmaxTotal);
-    return Math.floor((SmaxTotal+spMax)/N);
-  }
-  function dfs(k){
-    let __rStar=-Infinity; // v16.14.0 UB-A: per-node minimal surviving candidate rating (set below)
-    if(nodes++>CAP){capped=true;return;}
-    if(capped)return;
-    if(k===order.length){
-      const xi=pick.slice(),sc=scoreXI(xi);
-      if(sc.rating>maxRating)maxRating=sc.rating;   // cheap: sc.rating already computed for the score
-      if(sc.total>best){best=sc.total;const key=xi.map(c=>c.id).sort().join(',');bestXIs=[{xi,sc,foundAt:nodes,key}]}
-      else if(!ST && sc.total===best){
-        const key=xi.map(c=>c.id).sort().join(',');
-        if(!bestXIs.some(b=>(b.key||(b.key=b.xi.map(c=>c.id).sort().join(',')))===key))bestXIs.push({xi,sc,foundAt:nodes,key});
-      }
-      return;
-    }
-    const slotIdx=order[k];
-    // v6 tighter UB — per remaining slot, use its ACTUAL candidate-type composition
-    // (ubBaseline/ubSuffixBase, precomputed once above) instead of assuming every slot
-    // can flex to +2. Baseline per slot (no "first icon/hero" bonus yet): normal=2
-    // (nation+club), hero=2 (nation+own league), icon=1 (nation only — "Icons" league
-    // and the icon club-bonus are only ever awarded once, to the first icon overall).
-    // On top of the suffix's total baseline we optimally award the at-most-one remaining
-    // "first icon" bonus (+2 over that slot's baseline) and at-most-one "first hero" bonus
-    // (+1 over baseline) to whichever eligible slots gain the most — trying both assignment
-    // orders (icon picks first vs hero picks first) since a slot able to take either bonus
-    // can only be awarded one of them. Falls back to the old flat "+2 everywhere" bound
-    // whenever every remaining slot also has a normal/hero option (the common case), so this
-    // only bites — and only helps — when a position pool has gone icon/hero-only.
-    // Verified against 20k+ randomized states + brute force: never below the true max,
-    // and strictly tighter than the old bound in ~45% of those states.
-    if(best>=0){
-      const premUnseen=seenLg.has('England Premier League')?0:1;
-      let total0=ubSuffixBase[k];
-      // v16.14.0 UB-D (dynamic diversity caps): total0 statically credits each remaining slot its
-      // max nat/lg/club gain, but the pool cannot deliver more NEW distinct values than it has
-      // left: each cap = min(remaining slots, pool distinct - already seen). min() with the static
-      // suffix is sound (both are valid upper credits) and bites hardest deep, where prunes decide.
-      // (The v12.4.0 "diversity tightening never pays" verdict predates UB-R; with the rating term
-      // now tight, this 1-4 pt slack is frequently the binding looseness. Measured in the UB-R4
-      // harness: contributes on top of UB-A in every regime, O(1)/node.)
-      {const __R=order.length-k;
-       const __cN=Math.max(0,Math.min(__R,__PN-seenNat.size));
-       const __cL=Math.max(0,Math.min(__R,__PL-seenLg.size));
-       const __cC=Math.max(0,Math.min(__normTail[k],__PC-seenClub.size));
-       const __alt=__cN+__cL+__cC;if(__alt<total0)total0=__alt;}
-      let bonusGain;
-      if(partialIcon&&partialHero){
-        bonusGain=0;
-      }else{
-        const ic0v=partialIcon?0:(ubTopIconV[k]>0?ubTopIconV[k]:0),ic0i=partialIcon?-1:ubTopIconI[k];
-        const he0v=partialHero?0:(ubTopHeroV[k]>0?ubTopHeroV[k]:0),he0i=partialHero?-1:ubTopHeroI[k];
-        let orderA=ic0v; // icon takes its best slot first
-        if(!partialHero){
-          if(he0i!==ic0i)orderA+=he0v;
-          else orderA+=(ubTopHeroV2[k]>0?ubTopHeroV2[k]:0);
-        }
-        let orderB=he0v; // hero takes its best slot first
-        if(!partialIcon){
-          if(ic0i!==he0i)orderB+=ic0v;
-          else orderB+=(ubTopIconV2[k]>0?ubTopIconV2[k]:0);
-        }
-        bonusGain=Math.max(orderA,orderB);
-      }
-      const ub=RC+33
-        +seenNat.size+seenLg.size+seenClub.size+partialIcon+partialHero
-        +total0+bonusGain+premUnseen;
-      if(ST?ub<=best:ub<best)return;
-      // v16.13.3 UB-R (see FUTURE-MAINTAINERS section R): tighter admissible rating cap from THIS
-      // path -- committed picks' real ratings + each remaining slot's max candidate rating (card
-      // reuse/group exclusivity relaxed => never underestimates). futRatingRaw is per-component
-      // monotone, so this dynRC >= any completion's true rating; min with RC keeps it no looser.
-      // Gated k>=4 (near-root committed info too thin to pay for the O(11) vector build).
-      //
-      // v16.13.5 PROTOTYPE UB-R2 (see FUTURE-MAINTAINERS section R, "UB-R2" addendum): the plain
-      // __slotMaxR lookup is stale -- precomputed ONCE before search starts, so it never looks at
-      // usedGroups and can keep crediting a remaining slot with a card already consumed by a
-      // committed pick (same shape of over-count UB-C fixed for the static root bound, here
-      // showing up in the per-node vector instead). UB-R2 replaces it with a LIVE scan of each
-      // remaining slot's (already ratings-desc-sorted) candidate list, taking the first candidate
-      // whose group is NOT in usedGroups -- component-wise <= the old vector in every case, so it
-      // is never looser, only tighter or equal (soundness proof + honest verdict in the section R
-      // addendum). Fuzz-verified so far at "first pass" scale only (314 synthetic drafts, 0/314
-      // soundness mismatches vs brute force, 0 cases worse than UB-R, 35 strictly better) -- NOT
-      // yet run against the full off-tree twelve-regime harness + fingerprint fixtures per F.2/Q.2
-      // discipline. THIS BLOCK IS SAFE TO REVERT if that harness ever turns up a mismatch: swap
-      // the inner per-slot scan back to the single `__slotMaxR[order[__j]]` lookup (still computed
-      // below, just unused for now, so reverting is a one-line change).
-      if(best>=0&&k>=4){
-        // v16.15.0 FIX (was "v16.14.0 UB-R4 DAC vector: UB-R2's live scan PLUS first-hit collision
-        // fix"): the collision fix has been REVERTED. Targeted fuzzing built specifically for the
-        // two-hold-group/two-position non-dominating shape (see FUTURE-MAINTAINERS section R,
-        // UB-F/UB-G counterexample) found 11,340 soundness violations across 144,366 feasible
-        // trials (~8.5%) -- the "DAC" collision resolution below arbitrarily picked a "winner" slot
-        // for a group two remaining slots both cited as their live-best, and demoted the "loser" to
-        // its own next-best. That is structurally the same move UB-F/UB-G made at the root and were
-        // rejected for: when the two legal completions' true rating vectors don't dominate each
-        // other ([100,85] vs [95,90]-style), guessing which slot the contested group actually lands
-        // on can lock in the wrong guess, so the demoted slot's credited value can come in BELOW
-        // what the real completion assigns it -- __d too low -> ub' too low -> a still-live branch
-        // gets pruned. Reverted to the plain UB-R2 live scan: each remaining slot independently takes
-        // its own first not-yet-used candidate, with NO cross-slot collision resolution, so two
-        // slots may credit the same group's rating at once. That is a pure relaxation of group
-        // exclusivity (same argument UB-A/UB-R/UB-R2 already rely on) and can only loosen the bound,
-        // never tighten it past the true max -- sound by construction, and this exact scan was
-        // fuzz-verified 0/314 before DAC's collision fix was layered on top in v16.14.0.
-        // A CORRECT tightening (not implemented here -- needs its own from-scratch fuzz harness
-        // before merge, per F.2/Q.2): an "H2-node" bound, the per-node analogue of the root's UB-H2.
-        // Instead of building one vector that some completion must dominate, bound S_max (exact max
-        // sum over the R remaining slots via a small max-weight bipartite matching / min-cost-flow,
-        // since a raw sum has no domination trap) and sp_max (spread-above-mean, convex, so its max
-        // over each slot's own [L,U] box intersected with sum<=S_max is attained at a box vertex --
-        // cheap to enumerate for R<=7) INDEPENDENTLY, then combine (S_max+sp_max)/N. No single vector
-        // has to dominate the true completion, so the UB-F/UB-G/DAC counterexample can't recur.
-        __dacV.length=0;
-        for(let __j=0;__j<order.length;__j++){
-          if(__j<k){__dacV.push(pick[order[__j]].rating);continue;}
-          const __slot=order[__j],__list=cand[__slot];let __m=0;
-          for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(!usedGroups.has(__c._group)){__m=__c.rating;break;}}
-          __dacV.push(__m);
-        }
-        const __d=Math.floor(futRatingRaw(__dacV));
-        if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=best:__u<best)return;}
-        // v16.16.1 DISABLED -- see v16.16.1 CHANGELOG entry in the live file (above its <h1>) for
-        // full data. This is the verbatim-extracted appendix copy of prod_solver.js; kept in sync
-        // with the live solveBest's v16.16.1 revert so this harness file matches production. h2NodeBound()/
-        // assignMaxSumNode()/spMaxFreeBox() remain defined but unreachable; __d (plain r2Vec) is the
-        // sole per-node pruning bound again.
-        /* {const __h2=h2NodeBound(k,order,cand,usedGroups,pick);
-         if(__h2!==null&&__h2<__d&&__h2<RC){
-           const __u2=ub-RC+__h2;if(ST?__u2<=best:__u2<best)return;
-         }} */
-        // v16.14.0 UB-A (parent-side candidate rating threshold): reuse the vector just built.
-        // For a candidate c at this slot, a sound envelope of its child's bound is
-        // (ub-RC) + floor(futRatingRaw(vector with position k := c.rating)) -- the child's
-        // remaining maxima can only be <= this vector's, and the parent's static part already
-        // over-credits slot k. The envelope is monotone in c.rating, so binary-search the minimal
-        // surviving rating ONCE, then skip lower-rated candidates with one compare in the loop
-        // below, BEFORE paying recursion + set bookkeeping. Order-independent (a per-candidate
-        // skip, not a break), so the v5.6 rejection of presorting is untouched. Biggest measured
-        // UB-R4 win: ~5-6% fewer nodes at loose AND tight RC, 0 regressions in 400 drafts.
-        {const __S0=ub-RC,__old=__dacV[k];
-         const __D=(__r)=>{__dacV[k]=__r;const __dd=Math.floor(futRatingRaw(__dacV));return __dd<RC?__dd:RC;};
-         const __pass=(__u2)=>!(ST?__u2<=best:__u2<best);
-         if(!__pass(__S0+__D(__RMAX))){__dacV[k]=__old;return;} // no candidate at this slot can survive
-         if(__pass(__S0+__D(__RMIN))){__rStar=-Infinity;}
-         else{let __lo=__RMIN,__hi=__RMAX;
-           while(__lo+1<__hi){const __mid=(__lo+__hi)>>1;if(__pass(__S0+__D(__mid)))__hi=__mid;else __lo=__mid;}
-           __rStar=__hi;}
-         __dacV[k]=__old;}
-      } // ST: a branch that can only reach `best` is a tie we do not need
-    }
-    // v5.6 dynamic in-flight presort — reorders cand[slotIdx] using the *live* path state
-    // (seenNat/seenLg/seenClub/partialIcon/partialHero) instead of the static rating-only
-    // order computed once before the search began. A card's true value along THIS path is
-    // rating + whatever NEW nation/league/club it would add right now; that marginal value
-    // shifts every time a different sibling is picked higher up the tree, so resorting per
-    // node keeps best-first traversal accurate as the search descends, not just at depth 0.
-    // This is ordering only — every candidate already in cand[slotIdx] is still iterated and
-    // the usedGroups skip + UB bound above are untouched, so no node is pruned that the static
-    // order would have visited; we only change WHEN each sibling is tried, which lets `best`
-    // converge faster and makes the existing UB cutoff bite earlier on capped searches.
-    // Safe to sort in place: `order` is a fixed permutation computed once, so each depth k
-    // owns exactly one slotIdx for the whole search — no other stack frame is ever mid-loop
-    // over this same array, so resorting it here can't disturb a parent's in-progress iteration.
-    // [v8.2 REMOVED: the v5.6 dynamic in-flight presort that lived here — a full comparator sort
-    // (~10 Set.has per comparison) at EVERY node with >1 candidate. Measured head-to-head: optimum
-    // identical on every fixture at every RC, capped-incumbent quality identical at 500k/3M caps on
-    // the two hardest drafts, fingerprint 357,777 untouched — and removing it is 10-16% faster
-    // wall-time across the board (nodes +1.8% on one fixture, each node far cheaper). The static
-    // rating-order computed once before the search already finds the incumbent just as fast; the
-    // endgame is bound-proving, which ordering cannot help. Same lesson as scarcity ordering and
-    // the suffix resource caps: per-node cleverness must be measured, and it keeps losing.]
-    for(const c of cand[slotIdx]){
-      if(c.rating<__rStar)continue; // v16.14.0 UB-A: provably-pruned child, skipped pre-recursion
-      const g=c._group;
-      if(usedGroups.has(g))continue;
-      usedGroups.add(g);pick[slotIdx]=c;
-      // Incremental updates (O(1) each)
-      const addNat=seenNat.has(c.nation)?0:(seenNat.add(c.nation),1);
-      const addLg =seenLg.has(c._lg)   ?0:(seenLg.add(c._lg),1);
-      const addClub=c.type==='normal'&&!seenClub.has(c.club)?(seenClub.add(c.club),1):0;
-      const addIcon=!partialIcon&&c.type==='icon'?1:0;if(addIcon)partialIcon=1;
-      const addHero=!partialHero&&c.type==='hero'?1:0;if(addHero)partialHero=1;
-      dfs(k+1);
-      // Backtrack (O(1) each)
-      if(addNat) seenNat.delete(c.nation);
-      if(addLg)  seenLg.delete(c._lg);
-      if(addClub)seenClub.delete(c.club);
-      if(addIcon)partialIcon=0;
-      if(addHero)partialHero=0;
-      usedGroups.delete(g);pick[slotIdx]=null;
-      if(capped)return;
-    }
-  }
-  // v16.13.3 UB-R: per-slot max candidate rating, for the per-node dynamic rating cap in dfs()
-  // v16.13.5: no longer READ by the live UB-R2 scan above (kept computed so a revert to plain
-  // UB-R, if the full harness later turns up an unsoundness, is a one-line change back).
-  const __slotMaxR=cand.map(l=>l.length?Math.max.apply(null,l.map(c=>c.rating)):0);
-  // v16.14.0 UB-R4 "DAC" precompute (section R addendum): pool distinct counts for the dynamic
-  // diversity caps (UB-D), remaining-normal-capable suffix (club cap), and the pool rating range
-  // for the parent-side candidate threshold search (UB-A).
-  const __PN=new Set(cards.map(c=>c.nation)).size;
-  const __PL=new Set(cards.map(c=>leagueOf(c))).size;
-  const __PC=new Set(cards.filter(c=>c.type==='normal').map(c=>c.club)).size;
-  const __normTail=new Array(order.length+1).fill(0);
-  for(let __j=order.length-1;__j>=0;__j--)__normTail[__j]=__normTail[__j+1]+(cand[order[__j]].some(c=>c.type==='normal')?1:0);
-  let __RMIN=Infinity,__RMAX=-Infinity;for(const c of cards){if(c.rating<__RMIN)__RMIN=c.rating;if(c.rating>__RMAX)__RMAX=c.rating;}
-  dfs(0);
-  return {best,bestXIs,nodes,capped,slots,maxRating,rcUsed:RC};
-}
-
-
-// v12.0 — optional "search diversity" wrapper around solveBest. DEFAULT OFF: mode 0 (or falsy)
-// runs plain divstatic exactly as before, one call, zero overhead — so nobody who leaves the
-// setting alone is affected in any way. When a diversity mode is chosen, the SAME total node
-// budget `cap` is split into phases: phase 1 is always divstatic (best-first, establishes a strong
-// incumbent), and the remaining phases are seeded-shuffle passes (see solveBest's diversitySeed)
-// that walk different regions of the tree. Every phase is seeded with the best score+lineups found
-// so far (solveBest's seedBest/seedXIs), so a later phase's pruning starts hot and it can only ADD
-// lineups/score relative to the phases BEFORE it in this same run — never lose ground already
-// found earlier in the run. If ANY phase completes its whole tree (not capped), that result is
-// the proven optimum and we stop early.
-// CORRECTED v12.3.2 (see CHANGELOG): this does NOT mean the wrapper's result is >= a plain,
-// uninterrupted divstatic solve at the same total budget — that was the original claim here and
-// testing showed it's false. Phase 1 only gets a FRACTION of the budget, and divstatic's own
-// best-first trajectory doesn't always plateau early; sometimes the back half of an uninterrupted
-// run is still finding better incumbents, not just proving optimality. Cutting phase 1 short to
-// make room for shuffle passes can lose that, and shuffle passes rarely retrace the specific path
-// that would have found it. So: monotonic WITHIN a diversity run, not >= Off at equal budget.
-// Phase plans below are exactly the ones measured (see CHANGELOG): fractions of the budget.
-// helper: build a {divstatic frac} + N even shuffle passes plan, e.g. mkPlan(.5,4) ==
-// mode 3's plan (50% divstatic + 4x12.5% shuffles). Used for the multi6/8/16 and aggrNN_4
-// variants below so the fraction math can't drift out of sync with the label.
-function ubDComponent(candList, positions, need){
-  const groupOf=c=>c.hold||('C'+c.id);
-  const groups={};
-  for(const c of candList){
-    const g=groupOf(c);
-    if(!groups[g]) groups[g]={eligPos:new Set(), bestRating:-Infinity};
-    for(const p of c.pos){
-      if(positions.includes(p)){
-        groups[g].eligPos.add(p);
-        if(c.rating>groups[g].bestRating) groups[g].bestRating=c.rating;
-      }
-    }
-  }
-  const groupIds=Object.keys(groups)
-    .filter(g=>groups[g].eligPos.size>0)
-    .sort((a,b)=>groups[b].bestRating-groups[a].bestRating); // greedy processes highest weight first
-
-  const posAssignments={}; for(const p of positions) posAssignments[p]=[];
-
-  // Kuhn's-algorithm augmenting-path search: try to place `gid`, bumping/re-routing an existing
-  // occupant to a different eligible position if that's what it takes to make room.
-  function tryAugment(gid, visitedPos){
-    for(const p of groups[gid].eligPos){
-      if(visitedPos.has(p)) continue;
-      visitedPos.add(p);
-      if(posAssignments[p].length<need[p]){
-        posAssignments[p].push(gid);
-        return true;
-      }
-      for(let k=0;k<posAssignments[p].length;k++){
-        const other=posAssignments[p][k];
-        if(tryAugment(other, visitedPos)){
-          posAssignments[p][k]=gid;
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  const K=positions.reduce((s,p)=>s+need[p],0);
-  const chosen=[];
-  let matched=0;
-  for(const gid of groupIds){
-    if(tryAugment(gid, new Set())){
-      matched++;
-      chosen.push(groups[gid].bestRating);
-      if(matched===K) break;
-    }
-  }
-  if(matched<K) return {feasible:false};
-  return {feasible:true, chosen};
-}
 // ============================================================================================
-// UB-E CANNOT BE TIGHTENED FURTHER (documented v10.1.0.2, no logic change — this is a record of
-// two failed follow-up attempts, kept here so nobody re-tries the same fix without knowing why it
-// doesn't work). Neither attempt below is present in this file; this is a write-up of dead ends.
+// PLACEHOLDER, NOT A SECOND SOLVER. This file is where the harness's copy of the LIVE solver
+// goes: to reconstitute the off-tree soundness harness, paste in scoreXI + solveBest +
+// maxPossibleRating and their exact dependency closure (futRatingRaw, leagueOf, trueChem,
+// ubDComponent, ubEGlobal, minCostMaxFlow, spMaxBoundPerSlot, ubH2Bound, plus the v16.14.0
+// UB-D/UB-A and v16.20.0 UB-SYM additions) EXACTLY as they appear in the live <script> above,
+// then append:  module.exports = { scoreXI, solveBest, maxPossibleRating };
 //
-// THE ITCH: UB-E still credits a hold-group's contribution using its GLOBAL best rating (best
-// rating among ANY member, at ANY eligible position), regardless of which specific position the
-// matching actually assigns that group to. Concretely: hold group H has card A (rating 99,
-// eligible ONLY for GK) and card B (rating 60, eligible ONLY for RW). If the matching assigns H's
-// "slot" to RW (because some other group needed GK more), UB-E still credits 99 there, even though
-// no real card could contribute 99 at RW. Feels like obvious slack to remove.
-//
-// ATTEMPT 1 ("UB-F"): keep UB-E's exact matching/placement decisions (unchanged — proven correct
-// for FEASIBILITY), but once the matching stabilizes, credit each group at its FINAL assigned
-// position using posBest[group][thatPosition] (best rating among ONLY the members actually
-// eligible there) instead of the group's unconstrained global best.
-// ATTEMPT 2 ("UB-G"): a genuinely from-scratch construction (not a patch on the UB-D/E lineage) —
-// ground set = (hold-group, position) EDGES, each with its own honest position-specific weight, no
-// group-level union-of-positions at all; greedily take edges in descending weight order subject to
-// position capacity and one-edge-per-group.
-//
-// BOTH ARE UNSOUND. Fuzz-tested against the brute-force oracle (same harness used for UB-E's own
-// v9.5.0 verification, extended with adversarial cross-component / shared-hold / extreme-spread
-// generators): UB-F produced 862–876 violations per ~12,000 comparable trials across repeated
-// runs; UB-G produced 963 violations per 11,020. Both undercounted the true max on REAL generated
-// drafts, not just contrived inputs — this is a critical-class bug for either one, so neither was
-// merged.
-//
-// WHY, NOT JUST THAT: this isn't a bug in the implementations that a smarter version could route
-// around — position-specific (or edge-specific) crediting is fundamentally incompatible with the
-// domination guarantee this whole file relies on, given futRatingRaw's shape. Concrete
-// counterexample, using ratings in the app's normal 60-99 range:
-//   Formation needs one GK and one RW.
-//   Group 1 (one hold): card A, rating 100(*), eligible ONLY for GK. Card B, rating 90, eligible
-//     ONLY for RW.
-//   Group 2 (different hold): card C, rating 95, eligible ONLY for GK. Card D, rating 85, eligible
-//     ONLY for RW.
-//   (*ratings shown slightly outside 60-99 for round numbers; the same shape reproduces inside
-//   60-99, e.g. 99/85/94/80 — the point is the CROSSING pattern, not the exact values.)
-//   Only two real legal XIs exist: [A,D] = sorted [100,85], futRatingRaw = 96.25. Or
-//   [C,B] = sorted [95,90], futRatingRaw = 93.75.
-//   Neither sorted vector element-wise dominates the other: 100>95 but 85<90. So a method that
-//   credits group 1 at "wherever it actually lands" gets EITHER [100,?] or [?,90] depending on
-//   which position it's assigned — and if it happens to land group 1 at RW (crediting 90) while the
-//   TRUE best actually needed group 1 at GK (crediting 100) and group 2 filling RW with D (85), the
-//   position-specific method has no way to recover the 100 it left on the table: it only tracked
-//   "group 1's value at RW", never "group 1's value at GK", because it discarded the global best in
-//   favour of the position-specific one. Concretely this is where UB-F/UB-G's undercounts come
-//   from: they lock in a value tied to a placement decision that turned out to be the wrong one to
-//   have committed to, for THIS instance's actual numbers.
-//   The only credit that's safe regardless of which of the two real XIs is the "true" one is the
-//   group's UNCONSTRAINED best rating (100 for group 1, 95 for group 2) — i.e. exactly UB-E's
-//   existing rule. Crediting anything tighter is, in the general case, a bet on which position a
-//   group's best card will end up needing, and futRatingRaw's mean+spread-above-mean shape (which
-//   over-weights the top value relative to a plain average, same reason raw sum-maximisation was
-//   already rejected for UB-D — see the long comment above maxPossibleRating()) means that bet can
-//   lose in either direction depending on the specific numbers involved. Also checked lexicographic-
-//   max crediting (favour whichever real option has the single highest top value) as a possible
-//   safe alternative — it isn't: [99,60] is lexicographically greater than [98,98] (99>98) but
-//   scores LOWER under futRatingRaw (89.25 vs 98), so "pick the lex-greater option" is not a safe
-//   proxy for "pick the futRatingRaw-greater option" either.
-//
-// CONCLUSION: UB-E is very likely at the practical ceiling for the matroid-greedy-domination
-// technique this whole file uses, given futRatingRaw's specific scoring shape. Getting tighter than
-// this would need a genuinely different kind of relaxation (e.g. bounding the mean and the
-// spread-above-mean terms separately, rather than building one credited N-length vector and hoping
-// it dominates) — not a smarter matching/weighting scheme layered on the same one. Not attempted
-// here; flagging as the honest next lead if this is ever revisited, not a recommendation to build
-// it blindly — anything new in this space still needs the same brute-force fuzz gauntlet before it
-// goes near maxPossibleRating().
+// WHY THE VERBATIM COPY WAS REMOVED (v16.20.0): it was a byte-for-byte duplicate of the live
+// solver, which repeatedly caused confusion — at a glance it looked like a SECOND, possibly
+// diverging solver, and every solver change meant editing it too (a silent drift risk, and the
+// v16.17.0 lesson shows how costly a "looks identical but isn't" copy can be). There is exactly
+// ONE source of truth for the solver: the live <script>. The harness simply imports a copy of it;
+// keeping a stale paste here added risk with no benefit. Copy the CURRENT live solver at the
+// moment you run the harness, so the harness always tests what actually ships — see section H for
+// how the six harness files require each other.
 // ============================================================================================
-// UB-E helper (added v9.5.0, safe to delete along with the "UB-E:" block in maxPossibleRating()
-// if this method is ever found to be wrong — UB-A/B/C/D do not depend on it): identical algorithm
-// to ubDComponent() (matroid-greedy + Kuhn's-algorithm augmenting-path placement), but run as ONE
-// global problem over every eligible position in the formation instead of one component at a
-// time — see the long "UB-E" comment above maxPossibleRating() for why this only ever tightens
-// (never loosens) the bound relative to UB-D's per-component version.
-function ubEGlobal(elig, slots, need){
-  const groupOf=c=>c.hold||('C'+c.id);
-  const positions=Object.keys(need);
-  const groups={};
-  for(const c of elig){
-    const g=groupOf(c);
-    if(!groups[g]) groups[g]={eligPos:new Set(), bestRating:-Infinity};
-    for(const p of c.pos){
-      if(need[p]!==undefined){
-        groups[g].eligPos.add(p);
-        if(c.rating>groups[g].bestRating) groups[g].bestRating=c.rating;
-      }
-    }
-  }
-  const groupIds=Object.keys(groups)
-    .filter(g=>groups[g].eligPos.size>0)
-    .sort((a,b)=>groups[b].bestRating-groups[a].bestRating);
-
-  const posAssignments={}; for(const p of positions) posAssignments[p]=[];
-  function tryAugment(gid, visitedPos){
-    for(const p of groups[gid].eligPos){
-      if(visitedPos.has(p)) continue;
-      visitedPos.add(p);
-      if(posAssignments[p].length<need[p]){
-        posAssignments[p].push(gid);
-        return true;
-      }
-      for(let k=0;k<posAssignments[p].length;k++){
-        const other=posAssignments[p][k];
-        if(tryAugment(other, visitedPos)){
-          posAssignments[p][k]=gid;
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  const N=slots.length;
-  const chosen=[];
-  let matched=0;
-  for(const gid of groupIds){
-    if(tryAugment(gid, new Set())){
-      matched++;
-      chosen.push(groups[gid].bestRating);
-      if(matched===N) break;
-    }
-  }
-  if(matched<N) return {feasible:false};
-  return {feasible:true, chosen};
-}
-// UB-H2 helper 1/3 (added v10.3, safe to delete along with the "UB-H2:" block in
-// maxPossibleRating() below if this method is ever found to be wrong -- UB-A/B/C/D/E do not depend
-// on it): plain min-cost-max-flow over a small layered graph (SOURCE -> hold-groups -> positions ->
-// SINK), used to find the EXACT maximum possible SUM of ratings over any real legal XI. This is a
-// different objective from every UB-A..E matching (which chase futRatingRaw's mean+spread shape via
-// domination) -- raw sum has no domination trap, so solving it exactly here is safe. Bellman-Ford
-// shortest-path augmentation; the graph is small (hold-groups + positions + 2), so this is fast.
-function minCostMaxFlow(numNodes, source, sink, edges, targetFlow){
-  const graph = Array.from({length:numNodes}, ()=>[]);
-  const edgeList = [];
-  function addEdge(u,v,cap,cost){
-    edgeList.push({u,v,cap,cost,flow:0});
-    edgeList.push({u:v,v:u,cap:0,cost:-cost,flow:0});
-    graph[u].push(edgeList.length-2);
-    graph[v].push(edgeList.length-1);
-  }
-  for(const e of edges) addEdge(e.u,e.v,e.cap,e.cost);
-
-  let totalFlow=0, totalCost=0;
-  while(totalFlow<targetFlow){
-    const dist = new Array(numNodes).fill(Infinity);
-    const inQueue = new Array(numNodes).fill(false);
-    const prevEdge = new Array(numNodes).fill(-1);
-    dist[source]=0;
-    const queue=[source]; inQueue[source]=true;
-    let head=0, iterations=0;
-    const maxIter = numNodes*numNodes*4+50;
-    while(head<queue.length && iterations<maxIter){
-      iterations++;
-      const u=queue[head++]; inQueue[u]=false;
-      for(const ei of graph[u]){
-        const e=edgeList[ei];
-        if(e.cap-e.flow<=0) continue;
-        if(dist[u]+e.cost < dist[e.v]-1e-9){
-          dist[e.v]=dist[u]+e.cost;
-          prevEdge[e.v]=ei;
-          if(!inQueue[e.v]){ queue.push(e.v); inQueue[e.v]=true; }
-        }
-      }
-    }
-    if(dist[sink]===Infinity) break; // no more augmenting paths
-    let bottleneck=targetFlow-totalFlow;
-    let v=sink;
-    while(v!==source){
-      const ei=prevEdge[v];
-      const e=edgeList[ei];
-      bottleneck=Math.min(bottleneck, e.cap-e.flow);
-      v=e.u;
-    }
-    v=sink;
-    while(v!==source){
-      const ei=prevEdge[v];
-      edgeList[ei].flow+=bottleneck;
-      edgeList[ei^1].flow-=bottleneck;
-      totalCost += edgeList[ei].cost*bottleneck;
-      v=edgeList[ei].u;
-    }
-    totalFlow+=bottleneck;
-  }
-  return {flow:totalFlow, cost:totalCost};
-}
-
-// UB-H2 helper 2/3 (added v10.3): exact max of sp(x)=sum(max(0,x_i-mean(x))) over
-// {L_i<=x_i<=U_i for each i} intersected with {sum(x)<=Smax}. sp is convex, so its max over this
-// bounded box-plus-one-hyperplane region is attained at a vertex, and every such vertex has at
-// most one coordinate not pinned to its own L_i/U_i bound. Enumerates both vertex families (pure
-// box vertices, and one-flex-coordinate vertices forced by the sum constraint) and returns the
-// best feasible one -- this is an EXACT computation of the max over the relaxed region, not a
-// further relaxation. See the v10.3 CHANGELOG entry for the full soundness argument.
-function spMaxBoundPerSlot(bounds, Smax){
-  const N = bounds.length;
-  const EPS = 1e-9;
-  function spOf(vals){
-    const S=vals.reduce((a,b)=>a+b,0), A=S/vals.length;
-    let sp=0; for(const v of vals) if(v>A) sp+=v-A;
-    return sp;
-  }
-  let best = -Infinity;
-
-  const total = 1<<N;
-  for(let mask=0; mask<total; mask++){
-    const vals = new Array(N);
-    let s = 0;
-    for(let i=0;i<N;i++){
-      const v = (mask & (1<<i)) ? bounds[i].U : bounds[i].L;
-      vals[i] = v; s += v;
-    }
-    if(s <= Smax + EPS){
-      const sp = spOf(vals);
-      if(sp > best) best = sp;
-    }
-  }
-
-  for(let flex=0; flex<N; flex++){
-    const others = [];
-    for(let i=0;i<N;i++) if(i!==flex) others.push(i);
-    const M = others.length;
-    const subTotal = 1<<M;
-    for(let mask=0; mask<subTotal; mask++){
-      const vals = new Array(N);
-      let sumOthers = 0;
-      for(let k=0;k<M;k++){
-        const i = others[k];
-        const v = (mask & (1<<k)) ? bounds[i].U : bounds[i].L;
-        vals[i] = v; sumOthers += v;
-      }
-      let v = Smax - sumOthers;
-      if(v < bounds[flex].L) v = bounds[flex].L;
-      if(v > bounds[flex].U) v = bounds[flex].U;
-      vals[flex] = v;
-      const sp = spOf(vals);
-      if(sp > best) best = sp;
-    }
-  }
-  return best;
-}
-
-// UB-H2 helper 3/3 (added v10.3, safe to delete along with the "UB-H2:" block in
-// maxPossibleRating() below if this method is ever found to be wrong): computes S_max (exact, via
-// minCostMaxFlow) and sp_max (via spMaxBoundPerSlot, using PER-SLOT [L,U] -- best/worst rating
-// among cards eligible for each individual slot's own position, not one global range shared by
-// every slot) and returns (S_max+sp_max)/N, a valid upper bound on futRatingRaw for any real legal
-// XI. Returns null if no legal XI exists (consistent with UB-A..E's own opt-out convention).
-function ubH2Bound(elig, slots, need){
-  const N = slots.length;
-  const positions = Object.keys(need);
-  const groupOf = c=>c.hold||('C'+c.id);
-
-  const posBest={};
-  const posLmin={}, posUmax={};
-  for(const c of elig){
-    const g=groupOf(c);
-    if(!posBest[g]) posBest[g]={};
-    for(const p of c.pos){
-      if(need[p]!==undefined){
-        if(posBest[g][p]===undefined || c.rating>posBest[g][p]) posBest[g][p]=c.rating;
-        if(posLmin[p]===undefined || c.rating<posLmin[p]) posLmin[p]=c.rating;
-        if(posUmax[p]===undefined || c.rating>posUmax[p]) posUmax[p]=c.rating;
-      }
-    }
-  }
-  const groupIds=Object.keys(posBest);
-
-  const G=groupIds.length, P=positions.length;
-  const SOURCE=0, groupBase=1, posBase=1+G, SINK=1+G+P;
-  const numNodes=SINK+1;
-  const edges=[];
-  for(let gi=0; gi<G; gi++) edges.push({u:SOURCE, v:groupBase+gi, cap:1, cost:0});
-  for(let gi=0; gi<G; gi++){
-    const g=groupIds[gi];
-    for(let pi=0; pi<P; pi++){
-      const p=positions[pi];
-      if(posBest[g][p]!==undefined) edges.push({u:groupBase+gi, v:posBase+pi, cap:1, cost:-posBest[g][p]});
-    }
-  }
-  for(let pi=0; pi<P; pi++) edges.push({u:posBase+pi, v:SINK, cap:need[positions[pi]], cost:0});
-
-  const {flow, cost} = minCostMaxFlow(numNodes, SOURCE, SINK, edges, N);
-  if(flow<N) return null;
-
-  const Smax = -cost;
-  const bounds = slots.map(p => ({L: posLmin[p], U: posUmax[p]}));
-  const spMax = spMaxBoundPerSlot(bounds, Smax);
-  return (Smax + spMax)/N;
-}
-function maxPossibleRating(pool,form){
-  if(!pool||!pool.length||!form)return null;
-  const slots=form.slots,slotSet=new Set(slots),N=slots.length;
-  const groupOf=c=>c.hold||('C'+c.id);
-  const elig=pool.filter(c=>c.pos&&c.pos.some(p=>slotSet.has(p))); // a card that fits no slot can never be in an XI
-  const ubs=[];
-  // UB-A: hold-collapsed, position-relaxed top-11
-  {
-    const byGroup={};
-    for(const c of elig){const g=groupOf(c);if(byGroup[g]===undefined||c.rating>byGroup[g])byGroup[g]=c.rating;}
-    const rs=Object.keys(byGroup).map(k=>byGroup[k]).sort((a,b)=>b-a);
-    if(rs.length>=N)ubs.push(futRatingRaw(rs.slice(0,N)));
-  }
-  // UB-B: per-position head-count, hold-distinct within the position
-  {
-    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
-    const chosen=[];let feasible=true;
-    for(const pos in need){
-      const k=need[pos];
-      const cand=elig.filter(c=>c.pos.includes(pos)).sort((a,b)=>b.rating-a.rating);
-      const seen=new Set(),top=[];
-      for(const c of cand){const g=groupOf(c);if(seen.has(g))continue;seen.add(g);top.push(c.rating);if(top.length===k)break;}
-      if(top.length<k){feasible=false;break;} // too few distinct-hold cards for this position -> skip method
-      for(const r of top)chosen.push(r);
-    }
-    if(feasible&&chosen.length===N)ubs.push(futRatingRaw(chosen));
-  }
-  // UB-C: position-adjacency components — union any two formation positions that share a real
-  // eligible card in the pool (transitively, via union-find), then treat each resulting component
-  // as ONE shared hold-distinct bucket (headcount = sum of its positions' needs). An LB/LM/LW card
-  // unions those three positions into one bucket and can only be picked ONCE within it, fixing
-  // UB-B's per-position double-count for versatile cards, while GK (which normally shares no
-  // eligible card with any outfield position) still splits into its own singleton component instead
-  // of "borrowing" bound from a stacked outfield position the way UB-A's single global bucket does.
-  {
-    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
-    const posArr=Object.keys(need);
-    const parent={};posArr.forEach(p=>parent[p]=p);
-    const find=x=>{while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;};
-    const union=(a,b)=>{const ra=find(a),rb=find(b);if(ra!==rb)parent[ra]=rb;};
-    for(const c of elig){
-      const rel=c.pos.filter(p=>need[p]!==undefined); // this card's positions that are actually needed by the formation
-      for(let i=1;i<rel.length;i++)union(rel[0],rel[i]); // any card eligible for 2+ needed positions links them into one component
-    }
-    const comps={};
-    for(const p of posArr){const r=find(p);(comps[r]=comps[r]||[]).push(p);}
-    let feasible=true;const chosen=[];
-    for(const r in comps){
-      const compPos=new Set(comps[r]);
-      const k=comps[r].reduce((s,p)=>s+need[p],0);
-      const cand=elig.filter(c=>c.pos.some(p=>compPos.has(p))).sort((a,b)=>b.rating-a.rating);
-      const seen=new Set(),top=[];
-      for(const c of cand){const g=groupOf(c);if(seen.has(g))continue;seen.add(g);top.push(c.rating);if(top.length===k)break;}
-      if(top.length<k){feasible=false;break;} // too few distinct-hold cards for this component -> skip method
-      for(const rr of top)chosen.push(rr);
-    }
-    if(feasible&&chosen.length===N)ubs.push(futRatingRaw(chosen));
-  }
-  // UB-D: same components as UB-C, but each component's exact per-position capacity is verified
-  // via matroid-greedy + augmenting-path placement instead of UB-C's "aggregate headcount only"
-  // check — never looser than UB-C, sometimes strictly tighter. See ubDComponent() and the long
-  // comment above this function for why this must NOT be a sum-maximising matching.
-  {
-    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
-    const posArr=Object.keys(need);
-    const parent={};posArr.forEach(p=>parent[p]=p);
-    const find=x=>{while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;};
-    const union=(a,b)=>{const ra=find(a),rb=find(b);if(ra!==rb)parent[ra]=rb;};
-    for(const c of elig){
-      const rel=c.pos.filter(p=>need[p]!==undefined);
-      for(let i=1;i<rel.length;i++)union(rel[0],rel[i]);
-    }
-    const comps={};
-    for(const p of posArr){const r=find(p);(comps[r]=comps[r]||[]).push(p);}
-    let feasible=true;const chosen=[];
-    for(const r in comps){
-      const compPos=new Set(comps[r]);
-      const candList=elig.filter(c=>c.pos.some(p=>compPos.has(p)));
-      const result=ubDComponent(candList, comps[r], need);
-      if(!result.feasible){feasible=false;break;}
-      for(const rr of result.chosen)chosen.push(rr);
-    }
-    if(feasible&&chosen.length===N)ubs.push(futRatingRaw(chosen));
-  }
-  // UB-E: same matroid-greedy + augmenting-path placement as UB-D, but as ONE global problem over
-  // every eligible position in the formation instead of splitting into components first — a
-  // hold-group can only be placed (and credited) once overall, closing UB-D's narrower "once per
-  // component" leak. Independently valid, but does NOT dominate UB-D (corrected v10.3.0.1 — neither
-  // method dominates the other; kept side by side in the min() on equal footing). See ubEGlobal()
-  // and the long "UB-E" comment above this function for the full argument and counterexample.
-  {
-    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
-    const result=ubEGlobal(elig, slots, need);
-    if(result.feasible && result.chosen.length===N)ubs.push(futRatingRaw(result.chosen));
-  }
-  // UB-H2: a genuinely different relaxation from A-E's matroid-greedy-domination family (see the
-  // v10.3 CHANGELOG entry and the "UB-H2 helper" comments above ubH2Bound() for the full
-  // soundness argument) — bounds futRatingRaw's sum and spread-above-mean terms SEPARATELY
-  // instead of building one credited vector and hoping it dominates the true winner, so it isn't
-  // subject to the UB-F/UB-G counterexample. Never proven to dominate A-E in every case (or vice
-  // versa), so it's combined via min() rather than replacing them.
-  {
-    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
-    const h2=ubH2Bound(elig, slots, need);
-    if(h2!==null)ubs.push(h2);
-  }
-  if(!ubs.length)return null;
-  return Math.floor(Math.min(...ubs)); // min of valid upper bounds is still valid, and tightest
-}function _rcCeilWarnHTML(ub,rc,xiCapped){
-  // ub = maxPossibleRating(): a guaranteed upper bound on any legal squad's rating. Because ub >= the
-  // true max legal rating M, RC vs ub decides soundness outright: RC >= ub  ==>  RC >= M  ==>  the
-  // rating cap never pruned a real squad. Three states, all provable (not "likely"):
-  //   RC <  ub : RC may be too low -> a better-rated squad could have been pruned. RED. Recommend RC=ub.
-  //   RC == ub : RC is exactly the smallest ceiling that prunes nothing real. GREEN. Provably optimal.
-  //   RC >  ub : sound (guaranteed optimal). Silent when the search finished; if it was node-capped,
-  //              AMBER -> the useful move isn't "search deeper", it's LOWER RC to ub to prune harder.
-  if(typeof ub!=='number'||typeof rc!=='number'||ub<0)return '';
-  const capNote=xiCapped?'<div class="tiny" style="margin-top:4px">\u26a0 The XI search itself was capped at its node budget \u2014 finish a full, uncapped search (\u201csearch to the end\u201d) before treating this as final.</div>':'';
-  if(rc<ub){
-    return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 Rating Ceiling may be too low</b> \u2014 a legal squad on this draft can rate as high as '+ub+', which is '+(ub-rc)+' above your RC of '+rc+'. Pruning at this RC may have missed better solutions. Set RC to '+ub+' for a guaranteed-optimal search.</div>';
-  }
-  if(rc===ub){
-    return '<div class="note" style="border-color:var(--good);margin-bottom:10px"><b>\u2713 Rating Ceiling is exactly optimal</b> \u2014 no legal squad on this draft can rate above '+ub+', so this RC prunes nothing real. It\u2019s the fastest ceiling that still guarantees the best solution'+(xiCapped?' once the search finishes.':'.')+capNote+'</div>';
-  }
-  // rc > ub : provably sound. Only worth a word if capped (nudge to lower RC instead of searching on).
-  if(xiCapped){
-    const lower=Math.max(75,ub); // slider floor, not the old 85 -- widened in v10.1
-    return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Rating Ceiling higher than needed</b> \u2014 no legal squad here can rate above '+ub+', below your RC of '+rc+'. Rather than search deeper at this RC, lower RC to '+lower+': it prunes harder and can finish faster, still guaranteed-optimal.</div>';
-  }
-  return ''; // rc > ub and the search completed uncapped: provably optimal, nothing to flag
-}
 module.exports = { scoreXI, solveBest, maxPossibleRating };
 
 -->
