@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.13.2 (prototype)</title>
+<title>Draft Solver v16.15.0 (prototype)</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2442,8 +2442,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                     DEFAULT_DB only at major versions. Keep the extraction script and its source
                     URL in the repo notes so the next edition is a re-run, not a re-derivation.
 
-       R. UB-R: A MEASURED-AND-PROMISING PER-NODE DYNAMIC RATING CAP — STAGED, NOT MERGED (added
-          v16.13.2, doc-only). Sections J and O record per-node tightenings that lost; this one is
+       R. UB-R: A PER-NODE DYNAMIC RATING CAP — MERGED v16.13.3 (staged/measured v16.13.2). NOTE:
+          now LIVE in both solveBest copies; the "why not merged" caveat below is retained for
+          history but superseded by the v16.13.3 changelog. Sections J and O record per-node
+          tightenings that lost; this one is
           the first that WINS, and it is exactly the direction the v12.4.0 diversity-tightening
           post-mortem predicted ("it'd need to tighten a term that isn't dwarfed by RC+33 — e.g. a
           cheaper per-branch rating cap"). Recorded here with data so the next maintainer can take
@@ -2486,6 +2488,149 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           budgets still behave with the much smaller trees); (5) after merge, revisit whether
           Auto-RC's ensemble work should shrink (maxPossibleRating still matters at the ROOT and
           for RC verdict UI, but its in-search role is largely superseded).
+
+          --- UB-R2 ADDENDUM (added v16.13.5, PROTOTYPE-MERGED same version) ---
+          THE GAP UB-R2 CLOSES: __slotMaxR above is precomputed ONCE, before the search starts —
+          the single highest rating in each slot's whole candidate list, full stop. It never looks
+          at usedGroups, the very Set already sitting in scope at every node tracking which
+          hold-groups the COMMITTED picks have already consumed. That's real, structural slack: if
+          a remaining slot's global-max candidate shares a hold group with (or literally IS) a card
+          already placed higher up the path, __slotMaxR keeps crediting that card's rating to the
+          remaining slot as if it were still available. Same shape of over-count UB-A had before
+          UB-C fixed it for the static root bound (a versatile/held card counted more than once) —
+          just showing up in the dynamic per-node vector this time.
+          THE FIX: for each remaining slot, scan its (already ratings-descending-sorted) candidate
+          list and take the rating of the first candidate whose group is NOT in usedGroups:
+            let m = 0;
+            for (const c of cand[slot]) { if (!usedGroups.has(c._group)) { m = c.rating; break; } }
+          Because the list is already sorted, this is a short scan with early exit (measured
+          average 1.625 steps per evaluated slot) — not a re-sort or a matching computation.
+          SOUNDNESS: same proof shape as UB-R itself, one more case closed. Committed entries (j<k):
+          unchanged, exact. Remaining entries with an available candidate: the live scan finds the
+          true best rating among candidates not already ruled out by the committed path — tighter
+          (lower-or-equal) but still valid, since any real completion's card for that slot must
+          avoid every group already used by the committed picks. Remaining entries where every
+          candidate is already used up (m stays 0): can only happen when the slot has ZERO legal
+          completions on this path, so pruning it costs nothing — soundness holds vacuously.
+          UB-R2's vector is component-wise <= UB-R's vector in every case (same relaxation with one
+          more valid constraint folded in), so UB-R2's dynRC is never looser than UB-R's, by
+          construction — min() with the static bound isn't even needed.
+          FUZZ SO FAR (off-tree, this session, not the full section-B harness): 11-regime synthetic
+          generator, 194 drafts, RC fixed loose at 103: 0/194 soundness mismatches vs independent
+          brute force; UB-R2 never produced more nodes than UB-R, strictly fewer in 23/194 (aggregate
+          6,677,343 -> 6,611,990 nodes, 0.98% fewer; biggest wins dupSlots 5.55%, wide 3.01%; flat on
+          ties/narrow/polyMax/holds/kitchenSink at this sample size); wall time 99.23% of UB-R's (the
+          node reduction pays for the scan cost). Targeted stress run (holds + multiPos density
+          dialed up past the base generator's settings, 120 drafts): 0/120 mismatches; node count
+          5,850,658 -> 5,847,268 (0.06% fewer — smaller than expected; the specific collision this
+          bound targets is fairly rare in absolute terms even with hold/multi-position density
+          cranked, a useful finding on its own). COMBINED: 314 drafts, 0 soundness violations, 0
+          cases worse than UB-R, 35 cases strictly better.
+          HONEST ASSESSMENT (same bar section O held UB-N to): real, not inert — node counts do move,
+          and only in the right direction — but modest (sub-1% to ~5% depending on regime) at this
+          sample size, and cheap enough that it's a "why not" rather than a "must-have": no case so
+          far where it costs anything, real if unspectacular upside.
+          MERGE STATUS: left LIVE (not staged-only) in v16.13.5 on the strength of the closed
+          soundness proof + zero regressions in 314 drafts, but this is explicitly a smaller sample
+          than UB-R's own pre-merge bar cleared (160 drafts vs section H's full ~1,774-draft scale) —
+          NOT run yet against the full off-tree twelve-regime harness + fingerprint fixtures, ST mode,
+          or the diversity/parallel-worker wrapper. SAFE TO REVERT if any of those turn up a mismatch:
+          see the inline comment at the UB-R2 scan in dfs() — __slotMaxR is still computed and just
+          sitting there unused, so reverting is swapping the scan back to that single lookup.
+          NEXT (UB-R3, if this clears the full harness): resolve collisions AMONG the remaining slots
+          themselves — right now UB-R2 only checks remaining-vs-committed, not remaining-vs-remaining
+          (two different remaining slots can still both credit the same uncommitted card). Direct
+          per-node analogue of UB-C fixing UB-B.
+
+          --- REAL-WORLD WALL-TIME NOTE (added v16.13.6) ---
+          The v16.13.3 in-file numbers above (demo fixture: 2,255ms -> 7ms at RC99, etc.) were all
+          measured on ONE curated demo fixture via source-patching, not on a broad sample of actual
+          usage. Live user reporting after the merge surfaced the gap: on at least one real draft,
+          the MERGED v16.13.3 UB-R (plain __slotMaxR, no usedGroups-awareness) actually ran SLOWER
+          in wall-clock time than the pre-UB-R baseline (no per-node dynamic cap at all) despite
+          visiting far fewer nodes — the O(11) vector-build-plus-futRatingRaw-call cost per evaluated
+          node was not being paid back by the prune it bought, on that draft's shape. This is exactly
+          the failure mode the v12.4.0 diversity-tightening post-mortem warned about in the abstract
+          (a per-node tightening that's real but too expensive per-call can be a NET LOSS even while
+          "working" by every node-count metric) — UB-R had avoided that fate on the demo fixture but
+          not universally. UB-R2, tested against that same kind of real draft, came in AHEAD of the
+          pre-UB-R baseline on both axes: one directly-compared example measured 785 nodes / 137ms
+          for UB-R2 vs. 10,286 nodes / 166ms for the pre-UB-R baseline (single reference draft, not a
+          controlled fuzz batch — treat as anecdotal, consistent-with rather than proof-of the fuzz
+          numbers above). The likely reason UB-R2 recovers what UB-R lost: its early-exit scan design
+          (avg. 1.625 steps per evaluated slot, see FUZZ SO FAR above) is cheaper per node than a
+          blind full-array Math.max-style pass would suggest, AND it's tighter (prunes strictly more),
+          so it pays for itself where UB-R's blind lookup, despite being O(1) per slot, sometimes
+          didn't cut enough extra nodes to earn back even that O(1) cost across 11 slots every node.
+          TAKEAWAY for future per-node UB work: a demo-fixture "nodes went down, ms went down" result
+          is necessary but not sufficient — per-node cost must be validated against varied real drafts
+          (not just the synthetic fuzz regimes) before trusting it generalizes; node-count reduction
+          alone is not the metric that matters, wall-clock is.
+
+          CORRECTION / WEAKENING (added v16.13.7): re-running the SAME draft on the SAME file
+          produced 109ms on one run, then 395ms and 387ms for the identical code+draft pair on a
+          different device — a >3x spread with no code change at all. That swamps the ~29ms gap
+          (137 vs 166) the single-example comparison above was built on. Wall-clock millisecond
+          readings at this scale are dominated by JIT warm-up, GC timing, device load, and browser-tab
+          background throttling, not by the algorithmic difference being measured — a single
+          before/after pair (or even a handful) cannot distinguish "UB-R2 is faster than pre-UB-R" from
+          "this run happened to be faster." THE NODE-COUNT CLAIMS ABOVE STILL STAND (node counts are
+          deterministic given the same draft + RC + code, unlike wall-clock) — it is specifically the
+          "UB-R was a wall-time regression, UB-R2 fixes it" NARRATIVE that is now WEAKENED to "plausible,
+          not established": real, but nowhere near confirmed off one comparison. Needs many repeated
+          timed trials per draft (median/min of, say, 20+ runs, same device, same tab, ideally via the
+          off-tree harness's process.hrtime timing rather than in-browser Date.now/performance.now)
+          across a range of real drafts before any wall-clock verdict between UB-R/UB-R2/pre-UB-R is
+          treated as settled. Recorded here so nobody cites the single-example ms numbers above as
+          proven — they are a hypothesis with one noisy, unreplicated data point behind them, not a
+          result. (This does NOT extend to the UB-R3 timing numbers directly below — those come from
+          the off-tree harness's process.hrtime, aggregated over 191 and 120 drafts each, not a single
+          in-browser reading — a materially more rigorous measurement, though still worth eventually
+          replicating across devices for the same reason.)
+
+          --- UB-R3: TESTED AND REJECTED (v16.13.6) ---
+          Prototyped and fuzz-tested off-tree (never merged into this file — the live code here still
+          only carries UB-R2). THE IDEA (as sketched in the NEXT note above): UB-R2 only excludes
+          groups already used by COMMITTED picks per remaining slot, independently per slot — it does
+          NOT stop two different remaining slots from both citing the same not-yet-committed card as
+          their max. The only way to close that gap WITHOUT breaking soundness is to only exclude a
+          group from other slots when it's NECESSARILY going to be consumed — i.e. Hall's-theorem-
+          style single-vertex deficiency: if some remaining slot has exactly ONE non-excluded candidate
+          group left after UB-R2's usual exclusions, every real completion of this branch MUST give it
+          that group, so that group can be safely excluded from every OTHER remaining slot's scan too.
+          This can cascade (excluding it may newly force a second slot, etc.), so the implementation
+          iterates to a fixed point, bounded by the number of remaining slots. This is provably sound
+          (each exclusion added is a necessary fact, not an assumption) — arbitrarily picking a winner
+          among two slots that both merely WANT the same card, with no forcing, is NOT sound and was
+          correctly avoided (an earlier version of this reasoning that tried exactly that was caught
+          and discarded before ever being fuzzed — see soundness argument in the addendum above: only
+          UB-R2's per-slot-independent relaxation is trivially safe; anything tighter needs a genuine
+          necessity proof, not a convenient tie-break).
+          RESULTS (off-tree, same harness as the UB-R2 addendum, `solveBestR3` alongside `solveBestR2`
+          and `solveBestBase`):
+          - Main fuzz (11 regimes, 191 comparable drafts, RC=103): 0/191 soundness mismatches, but
+            UB-R3's node count was IDENTICAL to UB-R2's in every single draft tested — 0 strictly
+            better, 0 strictly worse, 191/191 tied. Wall time: UB-R3 was 101.55% of the pre-UB-R
+            baseline and 103.20% of UB-R2 — i.e. slower than UB-R2 for zero additional pruning.
+          - Targeted stress run (holds + multiPos density cranked well past the base generator's own
+            settings, same recipe as the UB-R2 stress test, 120 drafts): 0/120 mismatches; UB-R3 beat
+            UB-R2's node count in only 2/120 drafts, and the aggregate difference was negligible
+            (4,726,180 vs. UB-R2's 4,726,339 nodes — a 0.003% reduction). Wall time: 101.47% of
+            baseline, 102.64% of UB-R2 — again slower than UB-R2, even under conditions specifically
+            engineered to make remaining-vs-remaining collisions common.
+          VERDICT: the remaining-vs-remaining collision UB-R3 targets is real in principle but too
+          rare in practice — even under amplified hold/multi-position density — to pay back the extra
+          propagation-scan cost. This is a clean, measured NET LOSS on wall-clock time with essentially
+          zero node-count upside, and empirically confirms the concern this file already flags
+          repeatedly (sections J, O, and the v12.4.0 post-mortem): a per-node tightening's admissible
+          -ness doesn't matter if its cost isn't paid back, and "running too many parallel per-node UBs
+          risks a net loss even when each one is individually sound." NOT merged, not carried further.
+          Recorded here in full (idea + soundness shape + numbers) so nobody re-spends the effort
+          re-deriving and re-testing this exact approach without seeing this data first. A genuinely
+          different angle (not attempted here) would need a detection mechanism that costs ~nothing on
+          the (overwhelmingly common) no-collision path — the fixed-point propagation above pays its
+          cost on every evaluated node whether or not a collision exists this time, which is exactly
+          why it lost.
 -->
   <!-- ARCHIVED — FORMER SECTION C, moved out of the KEY REFERENCE block at v16.13.0 (see the stub
        left in section C's place above). Superseded by section H; kept here only for the rare case
@@ -2768,7 +2913,117 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        identical optima everywhere, 83-99.6% node reduction on the demo fixture, near RC-insensitive
        search, 0/160 brute-force fuzz mismatches. Staged with full merge checklist, NOT merged (per
        F.2/Q.2, UB changes are release blockers until the full section-B harness passes). -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.13.2-proto</span></h1>
+
+  <!-- v16.13.3 — MERGED UB-R, the per-node dynamic rating cap (section R). In both solveBest copies
+       (live + harness twin, kept in sync per section H), immediately after the static UB prune and
+       gated k>=4: dynRC = floor(futRatingRaw(committed picks' ratings + each remaining slot's max
+       candidate rating)); prune on ub' = ub - RC + min(RC,dynRC). Admissible (component-wise
+       dominance + futRatingRaw monotonicity; card reuse/group exclusivity relaxed only loosens).
+       __slotMaxR precomputed once per solve. VERIFIED: demo optimum unchanged (153) with nodes
+       989,934->3,516 at RC99 (99.6%), 19,959->3,377 at RC95; search now near RC-insensitive;
+       soundness fuzz 0/200 vs brute force (multi-league pools, tight maxPossibleRating AND loose
+       RC=103). Parallel-worker path inherits the patch automatically (workers serialize
+       solveBest.toString()). Auto-RC / maxPossibleRating still used at the ROOT and for RC-verdict
+       UI; their in-SEARCH dominance is now largely superseded. Full section-B twelve-regime harness
+       + fingerprint fixtures still recommended before treating this as release-final (that harness
+       is off-tree); merged here on the strength of the in-file fuzz + measurement. -->
+  <!-- v16.13.4 — Retired the Rating Ceiling slider + Optimal RC checkbox from the visible Advanced
+       settings UI. Reason: UB-R (v16.13.3's per-node dynamic rating cap) made hand-tuning RC a moot
+       lever — demo measurements showed the search near RC-insensitive (see v16.13.3 entry above), so
+       manual RC is now a pure debug/soundness-testing concern, not something that belongs in the main
+       UI. SAFE-REMOVAL, not a logic change: the slider, checkbox, label, and warning div are still in
+       the DOM (wrapped in a display:none container) rather than deleted, so getRatingCeil(),
+       _applyAutoRC(), _toggleAutoRC(), updateRatingCeilLabel(), save/restoreAdvSettings(), and the RC
+       completeness-warning path in applyTie() all keep running byte-for-byte as before — Optimal RC
+       is just permanently checked now with no UI left to uncheck it. Manual RC for soundness fuzzing
+       still lives on the archived pre-16.13.3 build (export/reimport a draft there to test by hand). -->
+  <!-- v16.13.5 — PROTOTYPE MERGE of UB-R2 (see FUTURE-MAINTAINERS section R, "UB-R2" addendum), a
+       live/usedGroups-aware refinement of UB-R's per-node dynRC vector. UB-R's __slotMaxR is
+       precomputed ONCE before search starts and never looks at usedGroups, so it can keep crediting
+       a remaining slot with a card already consumed (via hold-group or multi-slot eligibility) by a
+       committed pick higher up the path -- same shape of over-count UB-C fixed for the static root
+       bound, showing up here in the per-node vector instead. UB-R2 replaces the stale lookup with a
+       short early-exit scan of each remaining slot's (already ratings-desc-sorted) candidate list,
+       taking the first candidate whose group is NOT in usedGroups. In both solveBest copies (live +
+       harness twin, kept in sync per section H), same k>=4 gate as UB-R.
+       STATUS: this is a smaller step than UB-R's own merge bar. Off-tree fuzz (11-regime generator +
+       a targeted holds/multiPos stress run, 314 drafts total, RC fixed at a loose 103): 0/314
+       soundness mismatches vs independent brute force, 0 drafts where UB-R2 did worse than UB-R
+       (node count or wall time), 35/314 strictly better (0.98% fewer nodes in aggregate, up to 5.55%
+       on the dupSlots regime); average scan length 1.625 -- the right candidate is almost always the
+       first or second one checked, so the scan pays for itself. Soundness argument is the same
+       component-wise-dominance + futRatingRaw-monotonicity shape as UB-R, with one more case closed
+       (a slot whose every remaining candidate is already used up contributes 0, which can only occur
+       on a branch with zero legal completions, so pruning it is free). UB-R2's vector is
+       component-wise <= UB-R's in every case, so it is never looser, by construction.
+       WHY "PROTOTYPE" AND NOT A FULL v16.13.3-STYLE MERGE: per F.2/Q.2 discipline a UB change is a
+       release blocker until the full off-tree twelve-regime harness (test1_tiered.js equivalent) +
+       fingerprint fixtures pass, and that harness has not been run against this yet -- this session's
+       314-draft fuzz is a first pass (it clears UB-R's own 160-draft pre-merge bar, but is well short
+       of section H's ~1,774-draft full-harness scale). skipTies (ST) interaction and the diversity/
+       parallel-worker wrapper are also untouched by this fuzz. Left live rather than staged-only
+       because the soundness argument is closed and the fuzz found zero regressions of any kind, but
+       flagged here explicitly: if the full harness or fingerprint fixtures ever turn up a mismatch,
+       this is SAFE TO REVERT (see the inline comment at the UB-R2 scan itself) back to plain UB-R's
+       __slotMaxR lookup, which is still computed and sitting right there, just currently unread.
+       NEXT STEP if this is judged worth carrying forward once the full harness clears it: UB-R3,
+       resolving collisions among the remaining slots themselves (right now UB-R2 only checks
+       remaining-vs-committed, not remaining-vs-remaining) -- the direct per-node analogue of UB-C
+       fixing UB-B. -->
+  <!-- v16.13.6 — DOCUMENTATION ONLY, no logic changed (no scoring/solver code in this file was
+       touched). Two additions to FUTURE-MAINTAINERS section R:
+       (1) REAL-WORLD WALL-TIME NOTE — a live report showed the merged v16.13.3 UB-R (plain,
+       usedGroups-blind __slotMaxR) actually running SLOWER in wall-clock than the pre-UB-R baseline
+       on at least one real draft despite visiting far fewer nodes -- the in-file v16.13.3 numbers
+       were measured on one curated demo fixture and didn't generalize. UB-R2, on that same kind of
+       draft, came in ahead on BOTH nodes and wall time (one directly-compared example: 785 nodes /
+       137ms for UB-R2 vs. 10,286 nodes / 166ms pre-UB-R baseline -- anecdotal, not a fuzz batch, but
+       consistent with the in-file fuzz numbers). Recorded so future per-node UB work is judged on
+       wall-clock against varied real drafts, not just demo-fixture node counts.
+       (2) UB-R3 TESTED AND REJECTED — prototyped off-tree (never merged; live code still only carries
+       UB-R2): a Hall's-theorem-style forced-singleton propagation closing UB-R2's one remaining gap
+       (remaining-vs-remaining collisions). Soundness holds (only necessary exclusions added, no
+       arbitrary tie-breaking), but measured across the same fuzz + a holds/multiPos-amplified stress
+       run (191 + 120 drafts, 0 mismatches): node count was IDENTICAL to UB-R2 in the main fuzz
+       (0/191 improved) and improved in only 2/120 stress drafts by a negligible 0.003% aggregate --
+       while wall time came in 3.20% (main fuzz) / 2.64% (stress) SLOWER than UB-R2. Clean net loss:
+       the collision it targets is too rare, even engineered-for, to pay back the per-node propagation
+       cost. Full idea, soundness shape, and numbers preserved in section R so nobody re-derives and
+       re-tests the identical approach blind. -->
+  <!-- v16.13.7 — DOCUMENTATION ONLY, no logic changed. CORRECTS/WEAKENS the v16.13.6 REAL-WORLD
+       WALL-TIME NOTE: re-running the identical draft on the identical file produced 109ms on one run,
+       then 395ms and 387ms for the same code+draft pair on a different device -- a >3x spread with
+       zero code change, which swamps the ~29ms gap the single-example UB-R-vs-UB-R2 comparison was
+       built on. The node-count claims are unaffected (deterministic given draft+RC+code); it's
+       specifically the wall-clock "UB-R regressed, UB-R2 fixed it" narrative that drops from
+       "measured" to "plausible, unconfirmed" pending many repeated timed trials across drafts and
+       devices. The separately-measured UB-R3 harness timings (process.hrtime, aggregated over 191 +
+       120 drafts) are a more rigorous measurement class and are NOT retracted by this, though still
+       worth eventually cross-device-replicating for the same reason. Full correction text in section
+       R, appended directly after the note it corrects. -->
+
+  <!-- v16.14.0 — (1) MERGED UB-R4 "DAC", the winning combination from the UB-R4 candidate harness
+       PLUS two NEW tightenings that beat every candidate in that writeup, found by attacking what
+       no R2/R3/R4 variant touched: UB-D (dynamic diversity caps — total0 min'd against
+       min(slotsLeft, poolDistinct−seen) per nation/league/club; the v12.4.0 "diversity tightening
+       never pays" verdict predates UB-R, and with the rating term now tight this slack is often
+       binding; O(1)/node) and UB-A (parent-side candidate rating threshold — reuse the node's own
+       dyn vector to binary-search the minimal surviving candidate rating once, then skip
+       lower-rated candidates with one compare BEFORE recursion; order-independent per-candidate
+       skip, so the v5.6 presort rejection is untouched; the single biggest win). The DAC vector
+       itself = UB-R2's live scan + R4-2/R4-3's first-hit collision fix. Harness results (same
+       protocol as the UB-R4 writeup, R2=100%): loose RC nodes 93.8%, tight RC 94.7%, stress 99.6%,
+       0 mismatches vs brute force across all regimes, 0 drafts worse anywhere; vs R4-3's 99.8%.
+       In-file: demo now 485-497 nodes (was ~3.4-3.5k post-UB-R2, ~990k pre-UB-R at RC99), optimum
+       unchanged, 0/160 in-browser fuzz incl. hold groups. Both solver copies patched in sync.
+       (2) HELPER TAB DECLUTTER: the objective calibration is NO LONGER GATED by the no-hold
+       checkbox (_calActive() drops noHoldOn(); box permanently visible) — it proved itself the
+       right main option. starterBoost/benchPenalty pulled out of misc into a new top-level
+       "Take vs hold — starter & bench" group (shapeGrid-squad; the one pair the calibrator doesn't
+       own, always live). Everything else (hwGrid + all Advanced shape groups) collapsed into one
+       "Manual" dropdown, marked as superseded while a calibration is active. Grid row counts
+       verified post-restructure (squad=2, misc=4, hw=12). -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.15.0-proto</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -2902,6 +3157,36 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <button class="btn" onclick="runSolve()" style="margin-bottom:8px">Solve best XI</button>
   <details class="hlp" style="margin-bottom:10px"><summary>Advanced &mdash; solver settings</summary>
     <div style="margin-top:8px">
+      <!-- v16.13.4 — Rating Ceiling slider + Optimal RC checkbox retired from the visible UI: UB-R
+           (the per-node dynamic rating cap, merged v16.13.3) makes the search near RC-insensitive,
+           so hand-tuning RC is no longer a meaningful lever and Auto-RC is the only mode worth
+           shipping. SAFE-REMOVAL: elements kept in the DOM with display:none rather than deleted, so
+           every function that reads/writes them (getRatingCeil, _applyAutoRC, _toggleAutoRC,
+           updateRatingCeilLabel, save/restoreAdvSettings, resetAdvSettings, the RC warning path)
+           keeps working completely unmodified — #rcAutoOptimal stays permanently checked (no UI left
+           to uncheck it), #ratingCeilSlider still gets snapped by _applyAutoRC() and still backs
+           getRatingCeil() for every solve path exactly as before. Manual RC for soundness testing
+           still lives on the pre-16.13.3 export/import build. -->
+
+  <!-- v16.14.2 — Correction to the v16.14.0 helper declutter: ALL THREE take-vs-hold weights
+       (takeThreshold, starterBoost, benchPenalty) live outside Manual now, none folded back into
+       misc — these are risk-preference weights the objective calibration doesn't own (unlike every
+       other misc/shape weight, which the calibration does supersede). shapeGrid-squad now renders
+       all 3; misc drops to 3 remaining keys (outOfFormationPenalty, allFirstBonus, allNonePenalty).
+       Panel copy updated accordingly. Verified: squad=3 rows, misc=3 rows, hwGrid unchanged=12. -->
+
+  <!-- v16.15.0 — (1) SILENT AUTO-CALIBRATION ON LOAD: _autoCalibrateOnLoad() fires ~350ms after
+       load (deferred past first paint), skips entirely if a valid hash-matching calibration
+       already exists, otherwise runs the same 150-draft/auto-seed async engine "Calibrate from DB"
+       uses in the background (~1.4-2.5s observed) — normally finished before the Helper tab is
+       even opened. Manual calibration with a custom count/seed is untouched and takes precedence.
+       (2) Position-coverage warning glyphs normalized: the "still missing" red note now uses the
+       same warning-emoji glyph as the other urgency notes (was a plain triangle, inconsistent).
+       (3) Removed an inaccurate claim: "PRIMARY (leftmost in game) first" implied FC's own card
+       data lists primary position leftmost, which isn't how it works — primary is our own
+       convention (first entry we record), not something read off the game. Label now just says
+       "PRIMARY first"; two internal comments corrected the same way. -->
+      <div style="display:none">
       <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Rating Ceiling &mdash; <span id="ratingCeilLabel" style="color:var(--ink);font-weight:800">96</span></label>
       <input type="range" id="ratingCeilSlider" min="0" max="30" value="21" style="width:100%;margin:0 0 2px;accent-color:var(--cyan)" oninput="updateRatingCeilLabel()" onchange="saveAdvSettings()">
       <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:8px"><span>75</span><span>90</span><span>105</span></div>
@@ -2911,6 +3196,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       </label>
       <p class="tiny" style="margin:0 0 8px">The highest team rating the solver assumes is reachable &mdash; a <b>speed lever</b>, and the biggest one there is. With <b>Optimal RC</b> on (the default) the solver computes the exact best ceiling for your draft and sets it before every solve &mdash; no guessing, no warnings. Turn it off to drive the slider yourself: a lower ceiling searches far fewer nodes but can miss a better squad, a higher one guarantees completeness but is slower. Left on, you always get the fastest ceiling that&rsquo;s still provably optimal.</p>
       <div id="ratingCeilWarn" style="display:none;font-size:11px;padding:7px 10px;border-radius:0 7px 7px 0;margin-bottom:8px;background:var(--panel2);border-left:2px solid var(--warn);color:var(--warn)"></div>
+      </div>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="skipTies" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t hunt equal-scoring lineups (much faster)</span>
@@ -3026,17 +3312,23 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="note">These tune the in-pick helper. Each control says what it does, its default and its range &mdash; bump what you care about, reset any time.</div>
   <div class="panel">
     <h2>Helper weights</h2>
-    <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 6px"><input type="checkbox" id="hNoHold" onchange="onNoHoldToggle()"> No-hold drafting &mdash; always TAKE the top option (never suggest a hold)</label>
-    <div id="noHoldCalWrap" style="display:none;margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
+    <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 6px"><input type="checkbox" id="hNoHold" autocomplete="off" onchange="onNoHoldToggle()"> No-hold drafting &mdash; always TAKE the top option (never suggest a hold)</label>
+    <div id="noHoldCalWrap" style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
       <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective weights &mdash; calibrated from your DB</div>
-      <p class="tiny" style="margin:0 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; then ranks options with those weights instead of the manual ones above. Deterministic (same DB + seed &rarr; same result). Takes a few seconds.</p>
+      <p class="tiny" style="margin:0 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; then ranks options with those weights instead of the hand-tuned ones (inside <b>Manual</b> below), whenever a valid calibration for the current DB exists. Deterministic (same DB + seed &rarr; same result). Takes a few seconds.</p>
       <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 6px"># drafts to simulate: <input type="number" id="calNScripts" value="150" min="1" step="1" autocomplete="off" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Seed (0&ndash;4294967295, blank = auto from DB): <input type="number" id="calSeed" placeholder="auto" min="0" max="4294967295" step="1" autocomplete="off" style="width:120px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <button class="btn sec sm" id="calBtn" onclick="runNoHoldCalibration()">Calibrate from DB</button>
       <div id="calStatus" class="tiny" style="margin-top:7px"></div>
       <div id="calResult" style="margin-top:7px"></div>
     </div>
-    <p class="tiny" style="margin:0 0 6px">Bump the things you care about; reset any time.</p>
+    <div style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
+      <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Take vs hold</div>
+      <p class="tiny" style="margin:0 0 6px">The weights the calibrator doesn't own: how much better a card's rating needs to be before the helper says TAKE over HOLD, plus how much it favors a card your projected XI starts vs discounts a likely bench rider. Risk preferences, not data-derivable facts. Always live, calibrated or not.</p>
+      <div id="shapeGrid-squad"></div>
+    </div>
+    <details class="hlp" style="margin-top:2px"><summary>Manual &mdash; all hand-tuned weights <span style="color:var(--mut);font-size:11px">(superseded by the calibration above while it's active)</span></summary>
+    <p class="tiny" style="margin:6px 0">Bump the things you care about; reset any time.</p>
     <div id="hwGrid"></div>
     <button class="btn gho sm" style="margin-top:8px" onclick="resetWeights()">Reset to defaults</button>
     <details class="hlp" style="margin-top:10px"><summary>Advanced &mdash; rarity curves &amp; diminishing</summary>
@@ -3050,6 +3342,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <details class="hlp" style="margin-top:6px"><summary>Common overrepresentation</summary><div id="shapeGrid-common" style="margin-top:6px"></div></details>
       <details class="hlp" style="margin-top:6px"><summary>Misc</summary><div id="shapeGrid-misc" style="margin-top:6px"></div></details>
       <button class="btn gho sm" style="margin-top:8px" onclick="resetShape()">Reset shapes</button>
+    </details>
     </details>
   </div>
   <div class="panel">
@@ -3165,7 +3458,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     </div>
     <div id="db-league-wrap"><label>League <span style="color:var(--mut)">&mdash; heroes: their hero league; normals: the card's real league (blank = Premier League)</span></label><div class="combo"><input type="text" id="db-league" placeholder="type to search&hellip;" autocomplete="off"><div class="combolist" id="db-league-list"></div></div></div>
     <div id="db-club-wrap"><label>Club</label><select id="db-club"></select></div>
-    <label>Positions <span style="color:var(--mut)">&mdash; tap all it can play, PRIMARY (leftmost in game) first</span></label>
+    <label>Positions <span style="color:var(--mut)">&mdash; tap all it can play, PRIMARY first</span></label>
     <div class="chips" id="dbPosChips"></div>
     <div class="row" style="margin-top:8px;align-items:flex-end">
       <div><label>Primary position <span style="color:var(--mut)">&mdash; options limited to ticked positions above</span></label><select id="db-primary"></select></div>
@@ -3339,7 +3632,7 @@ const FORMS=[
 const FMAX=Math.max(...FORMS.map(f=>f.score)),FMIN=Math.min(...FORMS.map(f=>f.score));
 
 // GOLD_DB: FC 26 rare-gold Premier League players with their PRIMARY position only.
-// Primary pos = the first (leftmost) position on the card in-game — what actually matters
+// Primary pos = the card's true primary position (the first entry by our own convention) — what actually matters
 // for formation slot calculations. Source: EA official ratings page (ea.com/ratings).
 // NOTE: GOLD_DB is kept for potential future use (e.g. rarity-based scoring experiments)
 // but is NOT currently used for formation scoring — that is now driven by FW weights.
@@ -4908,7 +5201,9 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   // ~9M Set allocations at the 3M-node cap that the old per-node filter/map/Set pattern caused.
   const seenNat=new Set(),seenLg=new Set(),seenClub=new Set();
   let partialIcon=0,partialHero=0;
+  const __dacV=[]; // v16.14.0: shared scratch vector for the DAC dynamic bound (reset per node)
   function dfs(k){
+    let __rStar=-Infinity; // v16.14.0 UB-A: per-node minimal surviving candidate rating (set below)
     if(nodes++>CAP){capped=true;return;}
     if(capped)return;
     if(k===order.length){
@@ -4938,7 +5233,19 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
     // and strictly tighter than the old bound in ~45% of those states.
     if(best>=0){
       const premUnseen=seenLg.has('England Premier League')?0:1;
-      const total0=ubSuffixBase[k];
+      let total0=ubSuffixBase[k];
+      // v16.14.0 UB-D (dynamic diversity caps): total0 statically credits each remaining slot its
+      // max nat/lg/club gain, but the pool cannot deliver more NEW distinct values than it has
+      // left: each cap = min(remaining slots, pool distinct - already seen). min() with the static
+      // suffix is sound (both are valid upper credits) and bites hardest deep, where prunes decide.
+      // (The v12.4.0 "diversity tightening never pays" verdict predates UB-R; with the rating term
+      // now tight, this 1-4 pt slack is frequently the binding looseness. Measured in the UB-R4
+      // harness: contributes on top of UB-A in every regime, O(1)/node.)
+      {const __R=order.length-k;
+       const __cN=Math.max(0,Math.min(__R,__PN-seenNat.size));
+       const __cL=Math.max(0,Math.min(__R,__PL-seenLg.size));
+       const __cC=Math.max(0,Math.min(__normTail[k],__PC-seenClub.size));
+       const __alt=__cN+__cL+__cC;if(__alt<total0)total0=__alt;}
       let bonusGain;
       if(partialIcon&&partialHero){
         bonusGain=0;
@@ -4960,7 +5267,71 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       const ub=RC+33
         +seenNat.size+seenLg.size+seenClub.size+partialIcon+partialHero
         +total0+bonusGain+premUnseen;
-      if(ST?ub<=best:ub<best)return; // ST: a branch that can only reach `best` is a tie we do not need
+      if(ST?ub<=best:ub<best)return;
+      // v16.13.3 UB-R (see FUTURE-MAINTAINERS section R): tighter admissible rating cap from THIS
+      // path -- committed picks' real ratings + each remaining slot's max candidate rating (card
+      // reuse/group exclusivity relaxed => never underestimates). futRatingRaw is per-component
+      // monotone, so this dynRC >= any completion's true rating; min with RC keeps it no looser.
+      // Gated k>=4 (near-root committed info too thin to pay for the O(11) vector build).
+      //
+      // v16.13.5 PROTOTYPE UB-R2 (see FUTURE-MAINTAINERS section R, "UB-R2" addendum): the plain
+      // __slotMaxR lookup is stale -- precomputed ONCE before search starts, so it never looks at
+      // usedGroups and can keep crediting a remaining slot with a card already consumed by a
+      // committed pick (same shape of over-count UB-C fixed for the static root bound, here
+      // showing up in the per-node vector instead). UB-R2 replaces it with a LIVE scan of each
+      // remaining slot's (already ratings-desc-sorted) candidate list, taking the first candidate
+      // whose group is NOT in usedGroups -- component-wise <= the old vector in every case, so it
+      // is never looser, only tighter or equal (soundness proof + honest verdict in the section R
+      // addendum). Fuzz-verified so far at "first pass" scale only (314 synthetic drafts, 0/314
+      // soundness mismatches vs brute force, 0 cases worse than UB-R, 35 strictly better) -- NOT
+      // yet run against the full off-tree twelve-regime harness + fingerprint fixtures per F.2/Q.2
+      // discipline. THIS BLOCK IS SAFE TO REVERT if that harness ever turns up a mismatch: swap
+      // the inner per-slot scan back to the single `__slotMaxR[order[__j]]` lookup (still computed
+      // below, just unused for now, so reverting is a one-line change).
+      if(best>=0&&k>=4){
+        // v16.14.0 UB-R4 "DAC" vector: UB-R2's live scan PLUS first-hit collision fix (R4-2/R4-3
+        // profile from the UB-R4 harness): when two remaining slots cite the SAME group as their
+        // live max, only one can really have it -- the loser rescans past that group. Map insert
+        // per first-hit, rescan only on actual collision.
+        __dacV.length=0;const __firstHit=new Map();
+        for(let __j=0;__j<order.length;__j++){
+          if(__j<k){__dacV.push(pick[order[__j]].rating);continue;}
+          const __slot=order[__j],__list=cand[__slot];let __m=0,__mg=null;
+          for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(!usedGroups.has(__c._group)){__m=__c.rating;__mg=__c._group;break;}}
+          __dacV.push(__m);
+          if(__mg!==null){const __a=__firstHit.get(__mg);if(__a)__a.push(__j);else __firstHit.set(__mg,[__j]);}
+        }
+        for(const [__g,__arr] of __firstHit){
+          if(__arr.length<2)continue;
+          let __w=__arr[0];for(const __j of __arr)if(__dacV[__j]>__dacV[__w])__w=__j;
+          for(const __j of __arr){
+            if(__j===__w)continue;
+            const __list=cand[order[__j]];let __m=0;
+            for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(__c._group===__g)continue;if(!usedGroups.has(__c._group)){__m=__c.rating;break;}}
+            __dacV[__j]=__m;
+          }
+        }
+        const __d=Math.floor(futRatingRaw(__dacV));
+        if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=best:__u<best)return;}
+        // v16.14.0 UB-A (parent-side candidate rating threshold): reuse the vector just built.
+        // For a candidate c at this slot, a sound envelope of its child's bound is
+        // (ub-RC) + floor(futRatingRaw(vector with position k := c.rating)) -- the child's
+        // remaining maxima can only be <= this vector's, and the parent's static part already
+        // over-credits slot k. The envelope is monotone in c.rating, so binary-search the minimal
+        // surviving rating ONCE, then skip lower-rated candidates with one compare in the loop
+        // below, BEFORE paying recursion + set bookkeeping. Order-independent (a per-candidate
+        // skip, not a break), so the v5.6 rejection of presorting is untouched. Biggest measured
+        // UB-R4 win: ~5-6% fewer nodes at loose AND tight RC, 0 regressions in 400 drafts.
+        {const __S0=ub-RC,__old=__dacV[k];
+         const __D=(__r)=>{__dacV[k]=__r;const __dd=Math.floor(futRatingRaw(__dacV));return __dd<RC?__dd:RC;};
+         const __pass=(__u2)=>!(ST?__u2<=best:__u2<best);
+         if(!__pass(__S0+__D(__RMAX))){__dacV[k]=__old;return;} // no candidate at this slot can survive
+         if(__pass(__S0+__D(__RMIN))){__rStar=-Infinity;}
+         else{let __lo=__RMIN,__hi=__RMAX;
+           while(__lo+1<__hi){const __mid=(__lo+__hi)>>1;if(__pass(__S0+__D(__mid)))__hi=__mid;else __lo=__mid;}
+           __rStar=__hi;}
+         __dacV[k]=__old;}
+      } // ST: a branch that can only reach `best` is a tie we do not need
     }
     // v5.6 dynamic in-flight presort — reorders cand[slotIdx] using the *live* path state
     // (seenNat/seenLg/seenClub/partialIcon/partialHero) instead of the static rating-only
@@ -4984,6 +5355,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
     // endgame is bound-proving, which ordering cannot help. Same lesson as scarcity ordering and
     // the suffix resource caps: per-node cleverness must be measured, and it keeps losing.]
     for(const c of cand[slotIdx]){
+      if(c.rating<__rStar)continue; // v16.14.0 UB-A: provably-pruned child, skipped pre-recursion
       const g=c._group;
       if(usedGroups.has(g))continue;
       usedGroups.add(g);pick[slotIdx]=c;
@@ -5004,6 +5376,19 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       if(capped)return;
     }
   }
+  // v16.13.3 UB-R: per-slot max candidate rating, for the per-node dynamic rating cap in dfs()
+  // v16.13.5: no longer READ by the live UB-R2 scan above (kept computed so a revert to plain
+  // UB-R, if the full harness later turns up an unsoundness, is a one-line change back).
+  const __slotMaxR=cand.map(l=>l.length?Math.max.apply(null,l.map(c=>c.rating)):0);
+  // v16.14.0 UB-R4 "DAC" precompute (section R addendum): pool distinct counts for the dynamic
+  // diversity caps (UB-D), remaining-normal-capable suffix (club cap), and the pool rating range
+  // for the parent-side candidate threshold search (UB-A).
+  const __PN=new Set(cards.map(c=>c.nation)).size;
+  const __PL=new Set(cards.map(c=>leagueOf(c))).size;
+  const __PC=new Set(cards.filter(c=>c.type==='normal').map(c=>c.club)).size;
+  const __normTail=new Array(order.length+1).fill(0);
+  for(let __j=order.length-1;__j>=0;__j--)__normTail[__j]=__normTail[__j+1]+(cand[order[__j]].some(c=>c.type==='normal')?1:0);
+  let __RMIN=Infinity,__RMAX=-Infinity;for(const c of cards){if(c.rating<__RMIN)__RMIN=c.rating;if(c.rating>__RMAX)__RMAX=c.rating;}
   dfs(0);
   return {best,bestXIs,nodes,capped,slots,maxRating,rcUsed:RC};
 }
@@ -8113,7 +8498,8 @@ const SHAPE_CATEGORIES=[
     'highNormalRatingThreshold','highNormalHardBound','highNormalBoostMin','highNormalBoostMax']},
   {key:'clash',keys:['clashDraws','clashBase','clashStack','holdSizeBase','holdDomBoost','holdSevBase','holdSevCap','redundancySurcharge','dominantClashGap']},
   {key:'common',keys:['commonNatCount','commonNatPenalty','commonNatIconExtra','commonClubCount','commonClubPenalty','commonHeroLeagueCount','commonHeroLeaguePenalty','commonNormalLeagueCount','commonNormalLeagueBoost']},
-  {key:'misc',keys:['takeThreshold','starterBoost','benchPenalty','outOfFormationPenalty','allFirstBonus','allNonePenalty']},
+  {key:'squad',keys:['takeThreshold','starterBoost','benchPenalty']}, // v16.14.2: all three take-vs-hold weights live outside Manual — none are owned by the objective calibration
+  {key:'misc',keys:['outOfFormationPenalty','allFirstBonus','allNonePenalty']},
 ];
 // Flat order, derived from the categories above, kept for anything that still wants "every key in a sane order".
 const SHAPE_ORDER=SHAPE_CATEGORIES.reduce((a,cat)=>a.concat(cat.keys),[]);
@@ -8554,7 +8940,7 @@ function _calibrateNoHold(db,forms,opts){
 }
 
 // Is the calibrated no-hold path currently the ACTIVE ranking source?
-function _calActive(){return noHoldOn()&&NOHOLD_CAL&&NOHOLD_CAL.weights&&NOHOLD_CAL.hash===_calDbHash(playerDB);}
+function _calActive(){return NOHOLD_CAL&&NOHOLD_CAL.weights&&NOHOLD_CAL.hash===_calDbHash(playerDB);} // v16.14.0: no longer gated by the no-hold checkbox — the objective calibration proved itself the right main option and now owns ranking whenever a valid (hash-matching) calibration exists
 
 // v13.4.1: async/chunked twin of _calibrateNoHold, used ONLY when nScripts>1000 (the same
 // threshold that triggers the "this may take minutes" confirm). Deliberately kept as a SEPARATE
@@ -8810,7 +9196,7 @@ function runPivotAnalysis(){
 //
 // Why the Gold DB: the main playerDB lists every card with ALL its playable positions (Salah as
 // RW/RM/CAM...), so it can't tell you where a player is most likely to actually appear. The embedded
-// GOLD_DB carries each player's TRUE PRIMARY position only (the leftmost in-game position) — the
+// GOLD_DB carries each player's TRUE PRIMARY position only — the
 // position at which you're most likely to draft them. So a primary-CDM star like Caicedo counts
 // toward CDM slots, NOT CM slots. This is the exact blind spot older systems had: they scored a
 // CM/CDM card and a CDM/CM card identically, when their primary positions (and thus which formation
@@ -9044,9 +9430,9 @@ function saveNoHoldChk(){try{localStorage.setItem(_NOHOLD_CHK_KEY,JSON.stringify
 function restoreNoHoldChk(){try{const raw=localStorage.getItem(_NOHOLD_CHK_KEY);if(raw==null)return;const el=$('#hNoHold');if(el)el.checked=!!JSON.parse(raw);}catch(e){}}
 function onNoHoldToggle(){
   const on=noHoldOn();
-  const wrap=$('#noHoldCalWrap'); if(wrap)wrap.style.display=on?'block':'none';
+  // v16.14.0: the calibration box is permanently visible (no longer gated by this checkbox)
   _renderCalResult();
-  _calGrayManual(on&&NOHOLD_CAL&&NOHOLD_CAL.hash===_calDbHash(playerDB));
+  _calGrayManual(_calActive());
   _solveCache=null; saveHW(); saveNoHoldChk(); // saveHW kept for the manual-weight blob; saveNoHoldChk is the real persistence for the checkbox itself
   if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
   if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
@@ -9057,17 +9443,15 @@ function _renderCalResult(){
   if(!NOHOLD_CAL||!NOHOLD_CAL.weights){box.innerHTML='';_calGrayManual(false);return;}
   const stale=NOHOLD_CAL.hash!==_calDbHash(playerDB);
   const w=NOHOLD_CAL.weights;
-  const active=noHoldOn()&&!stale;
+  const active=!stale; // v16.15.0: calibration owns ranking whenever valid, independent of the No-hold checkbox
   _calGrayManual(active);
   // interpretable "type value beyond a normal of equal rating" reading, plus per-factor lines
   const iconHeroBias=w.iconHero, premGlue=w.prem;
   let html='';
   if(stale){
     html+='<div class="note" style="border-color:var(--warn);color:var(--warn);margin:0 0 6px;padding:6px 8px;font-size:11px">\u26a0 DB changed since this calibration &mdash; the manual weights are being used until you recalibrate.</div>';
-  } else if(active){
-    html+='<div class="tiny" style="color:var(--good);margin-bottom:5px">\u2714 Active &mdash; ranking by these calibrated weights.</div>';
   } else {
-    html+='<div class="tiny" style="color:var(--mut);margin-bottom:5px">Calibrated &mdash; tick <b>No-hold drafting</b> above to use these.</div>';
+    html+='<div class="tiny" style="color:var(--good);margin-bottom:5px">\u2714 Active &mdash; ranking by these calibrated weights.</div>';
   }
   html+='<div style="font-size:11.5px;line-height:1.7">'
     +'<b>What the data says each pick-time factor is worth</b><br>'
@@ -9120,6 +9504,25 @@ function _calFinish(res,st,btn,t0){
   _recLog&&_recLog('no-hold weights calibrated \u2014 DB '+(res.hash>>>0).toString(16).slice(0,8)+' \u00b7 nat '+res.weights.newNat.toFixed(1)+' club '+res.weights.newClub.toFixed(1)+' lg '+res.weights.newLg.toFixed(1)+' prem '+res.weights.prem.toFixed(1)+' clash '+res.weights.clash.toFixed(1)+' iconHero '+res.weights.iconHero.toFixed(1)+' 1stIcon '+res.weights.firstIcon.toFixed(1)+' 1stHero '+res.weights.firstHero.toFixed(1));
   if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
   if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
+}
+// v16.15.0: silent background auto-calibration. Runs once on load (deferred so first paint isn't
+// blocked) whenever no valid calibration exists for the current DB (hash mismatch or never run).
+// Uses the chunked async engine so the tab stays responsive; ~1.4s for the default 150 drafts, so
+// it's normally finished before the Helper tab is even opened. Manual "Calibrate from DB" with a
+// custom count/seed still works exactly as before and takes precedence (it just overwrites).
+function _autoCalibrateOnLoad(){
+  try{
+    if(_calActive())return; // a valid, hash-matching calibration already owns ranking
+    if(!playerDB||!playerDB.length)return;
+    const st=$('#calStatus'), btn=$('#calBtn');
+    if(btn)btn.disabled=true;
+    if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Auto-calibrating from your DB in the background\u2026</span>';
+    const t0=performance.now();
+    _calibrateNoHoldAsync(playerDB,FORMS,{nScripts:150,seed:null},null)
+      .then(function(res){_calFinish(res,st,btn,t0);
+        if(st&&!res.error)st.innerHTML='<span style="color:var(--good)">\u2714 Auto-calibrated on load ('+Math.round(performance.now()-t0)+' ms \u00b7 150 drafts \u00b7 auto seed). Recalibrate manually any time.</span>';})
+      .catch(function(e){if(st)st.innerHTML='';if(btn)btn.disabled=false;});
+  }catch(e){}
 }
 function runNoHoldCalibration(){
   const st=$('#calStatus'), btn=$('#calBtn');
@@ -9585,7 +9988,7 @@ function judgeSlotInline(preCtx){
       } else {
         // ---- NO COVER: positions are still missing and this board doesn't help ----
         _urgentPos=new Set(missingNow);
-        urgent='<div class="tiny" style="color:var(--bad);margin-top:6px">\u26a0 Your XI is still missing <b>'+missingNow.join(', ')+'</b> and nothing here covers it \u2014 '+(pendingAfter>0?'you\'ll need that from a later board.':'you cannot fill a full squad in this draft.')+'</div>';
+        urgent='<div class="tiny" style="color:var(--bad);margin-top:6px">\u26a0\ufe0f Your XI is still missing <b>'+missingNow.join(', ')+'</b> and nothing here covers it \u2014 '+(pendingAfter>0?'you\'ll need that from a later board.':'you cannot fill a full squad in this draft.')+'</div>';
       }
 
       // ---- URGENCY note ----
@@ -10117,7 +10520,8 @@ restoreLocal();
 // v13.2: restore the persisted no-hold checkbox (see restoreNoHoldChk def) before the sync below reads it
 try{ restoreNoHoldChk(); }catch(e){}
 // v13.0: sync no-hold calibration UI to restored state (checkbox + any saved calibration)
-try{ if(typeof onNoHoldToggle==='function'){ const _wrap=$('#noHoldCalWrap'); if(_wrap)_wrap.style.display=noHoldOn()?'block':'none'; _renderCalResult(); _calGrayManual(_calActive()); } }catch(e){}
+try{ if(typeof onNoHoldToggle==='function'){ _renderCalResult(); _calGrayManual(_calActive()); } }catch(e){}
+try{ setTimeout(_autoCalibrateOnLoad,350); }catch(e){} // v16.15.0: deferred so first paint lands first
 </script>
 <!-- ================================================================================================
      APPENDIX: SOUNDNESS HARNESS SOURCE (added v13.4.4.1) -- verbatim copies of the six files
@@ -10359,7 +10763,9 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   // ~9M Set allocations at the 3M-node cap that the old per-node filter/map/Set pattern caused.
   const seenNat=new Set(),seenLg=new Set(),seenClub=new Set();
   let partialIcon=0,partialHero=0;
+  const __dacV=[]; // v16.14.0: shared scratch vector for the DAC dynamic bound (reset per node)
   function dfs(k){
+    let __rStar=-Infinity; // v16.14.0 UB-A: per-node minimal surviving candidate rating (set below)
     if(nodes++>CAP){capped=true;return;}
     if(capped)return;
     if(k===order.length){
@@ -10389,7 +10795,19 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
     // and strictly tighter than the old bound in ~45% of those states.
     if(best>=0){
       const premUnseen=seenLg.has('England Premier League')?0:1;
-      const total0=ubSuffixBase[k];
+      let total0=ubSuffixBase[k];
+      // v16.14.0 UB-D (dynamic diversity caps): total0 statically credits each remaining slot its
+      // max nat/lg/club gain, but the pool cannot deliver more NEW distinct values than it has
+      // left: each cap = min(remaining slots, pool distinct - already seen). min() with the static
+      // suffix is sound (both are valid upper credits) and bites hardest deep, where prunes decide.
+      // (The v12.4.0 "diversity tightening never pays" verdict predates UB-R; with the rating term
+      // now tight, this 1-4 pt slack is frequently the binding looseness. Measured in the UB-R4
+      // harness: contributes on top of UB-A in every regime, O(1)/node.)
+      {const __R=order.length-k;
+       const __cN=Math.max(0,Math.min(__R,__PN-seenNat.size));
+       const __cL=Math.max(0,Math.min(__R,__PL-seenLg.size));
+       const __cC=Math.max(0,Math.min(__normTail[k],__PC-seenClub.size));
+       const __alt=__cN+__cL+__cC;if(__alt<total0)total0=__alt;}
       let bonusGain;
       if(partialIcon&&partialHero){
         bonusGain=0;
@@ -10411,7 +10829,71 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       const ub=RC+33
         +seenNat.size+seenLg.size+seenClub.size+partialIcon+partialHero
         +total0+bonusGain+premUnseen;
-      if(ST?ub<=best:ub<best)return; // ST: a branch that can only reach `best` is a tie we do not need
+      if(ST?ub<=best:ub<best)return;
+      // v16.13.3 UB-R (see FUTURE-MAINTAINERS section R): tighter admissible rating cap from THIS
+      // path -- committed picks' real ratings + each remaining slot's max candidate rating (card
+      // reuse/group exclusivity relaxed => never underestimates). futRatingRaw is per-component
+      // monotone, so this dynRC >= any completion's true rating; min with RC keeps it no looser.
+      // Gated k>=4 (near-root committed info too thin to pay for the O(11) vector build).
+      //
+      // v16.13.5 PROTOTYPE UB-R2 (see FUTURE-MAINTAINERS section R, "UB-R2" addendum): the plain
+      // __slotMaxR lookup is stale -- precomputed ONCE before search starts, so it never looks at
+      // usedGroups and can keep crediting a remaining slot with a card already consumed by a
+      // committed pick (same shape of over-count UB-C fixed for the static root bound, here
+      // showing up in the per-node vector instead). UB-R2 replaces it with a LIVE scan of each
+      // remaining slot's (already ratings-desc-sorted) candidate list, taking the first candidate
+      // whose group is NOT in usedGroups -- component-wise <= the old vector in every case, so it
+      // is never looser, only tighter or equal (soundness proof + honest verdict in the section R
+      // addendum). Fuzz-verified so far at "first pass" scale only (314 synthetic drafts, 0/314
+      // soundness mismatches vs brute force, 0 cases worse than UB-R, 35 strictly better) -- NOT
+      // yet run against the full off-tree twelve-regime harness + fingerprint fixtures per F.2/Q.2
+      // discipline. THIS BLOCK IS SAFE TO REVERT if that harness ever turns up a mismatch: swap
+      // the inner per-slot scan back to the single `__slotMaxR[order[__j]]` lookup (still computed
+      // below, just unused for now, so reverting is a one-line change).
+      if(best>=0&&k>=4){
+        // v16.14.0 UB-R4 "DAC" vector: UB-R2's live scan PLUS first-hit collision fix (R4-2/R4-3
+        // profile from the UB-R4 harness): when two remaining slots cite the SAME group as their
+        // live max, only one can really have it -- the loser rescans past that group. Map insert
+        // per first-hit, rescan only on actual collision.
+        __dacV.length=0;const __firstHit=new Map();
+        for(let __j=0;__j<order.length;__j++){
+          if(__j<k){__dacV.push(pick[order[__j]].rating);continue;}
+          const __slot=order[__j],__list=cand[__slot];let __m=0,__mg=null;
+          for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(!usedGroups.has(__c._group)){__m=__c.rating;__mg=__c._group;break;}}
+          __dacV.push(__m);
+          if(__mg!==null){const __a=__firstHit.get(__mg);if(__a)__a.push(__j);else __firstHit.set(__mg,[__j]);}
+        }
+        for(const [__g,__arr] of __firstHit){
+          if(__arr.length<2)continue;
+          let __w=__arr[0];for(const __j of __arr)if(__dacV[__j]>__dacV[__w])__w=__j;
+          for(const __j of __arr){
+            if(__j===__w)continue;
+            const __list=cand[order[__j]];let __m=0;
+            for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(__c._group===__g)continue;if(!usedGroups.has(__c._group)){__m=__c.rating;break;}}
+            __dacV[__j]=__m;
+          }
+        }
+        const __d=Math.floor(futRatingRaw(__dacV));
+        if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=best:__u<best)return;}
+        // v16.14.0 UB-A (parent-side candidate rating threshold): reuse the vector just built.
+        // For a candidate c at this slot, a sound envelope of its child's bound is
+        // (ub-RC) + floor(futRatingRaw(vector with position k := c.rating)) -- the child's
+        // remaining maxima can only be <= this vector's, and the parent's static part already
+        // over-credits slot k. The envelope is monotone in c.rating, so binary-search the minimal
+        // surviving rating ONCE, then skip lower-rated candidates with one compare in the loop
+        // below, BEFORE paying recursion + set bookkeeping. Order-independent (a per-candidate
+        // skip, not a break), so the v5.6 rejection of presorting is untouched. Biggest measured
+        // UB-R4 win: ~5-6% fewer nodes at loose AND tight RC, 0 regressions in 400 drafts.
+        {const __S0=ub-RC,__old=__dacV[k];
+         const __D=(__r)=>{__dacV[k]=__r;const __dd=Math.floor(futRatingRaw(__dacV));return __dd<RC?__dd:RC;};
+         const __pass=(__u2)=>!(ST?__u2<=best:__u2<best);
+         if(!__pass(__S0+__D(__RMAX))){__dacV[k]=__old;return;} // no candidate at this slot can survive
+         if(__pass(__S0+__D(__RMIN))){__rStar=-Infinity;}
+         else{let __lo=__RMIN,__hi=__RMAX;
+           while(__lo+1<__hi){const __mid=(__lo+__hi)>>1;if(__pass(__S0+__D(__mid)))__hi=__mid;else __lo=__mid;}
+           __rStar=__hi;}
+         __dacV[k]=__old;}
+      } // ST: a branch that can only reach `best` is a tie we do not need
     }
     // v5.6 dynamic in-flight presort — reorders cand[slotIdx] using the *live* path state
     // (seenNat/seenLg/seenClub/partialIcon/partialHero) instead of the static rating-only
@@ -10435,6 +10917,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
     // endgame is bound-proving, which ordering cannot help. Same lesson as scarcity ordering and
     // the suffix resource caps: per-node cleverness must be measured, and it keeps losing.]
     for(const c of cand[slotIdx]){
+      if(c.rating<__rStar)continue; // v16.14.0 UB-A: provably-pruned child, skipped pre-recursion
       const g=c._group;
       if(usedGroups.has(g))continue;
       usedGroups.add(g);pick[slotIdx]=c;
@@ -10455,6 +10938,19 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       if(capped)return;
     }
   }
+  // v16.13.3 UB-R: per-slot max candidate rating, for the per-node dynamic rating cap in dfs()
+  // v16.13.5: no longer READ by the live UB-R2 scan above (kept computed so a revert to plain
+  // UB-R, if the full harness later turns up an unsoundness, is a one-line change back).
+  const __slotMaxR=cand.map(l=>l.length?Math.max.apply(null,l.map(c=>c.rating)):0);
+  // v16.14.0 UB-R4 "DAC" precompute (section R addendum): pool distinct counts for the dynamic
+  // diversity caps (UB-D), remaining-normal-capable suffix (club cap), and the pool rating range
+  // for the parent-side candidate threshold search (UB-A).
+  const __PN=new Set(cards.map(c=>c.nation)).size;
+  const __PL=new Set(cards.map(c=>leagueOf(c))).size;
+  const __PC=new Set(cards.filter(c=>c.type==='normal').map(c=>c.club)).size;
+  const __normTail=new Array(order.length+1).fill(0);
+  for(let __j=order.length-1;__j>=0;__j--)__normTail[__j]=__normTail[__j+1]+(cand[order[__j]].some(c=>c.type==='normal')?1:0);
+  let __RMIN=Infinity,__RMAX=-Infinity;for(const c of cards){if(c.rating<__RMIN)__RMIN=c.rating;if(c.rating>__RMAX)__RMAX=c.rating;}
   dfs(0);
   return {best,bestXIs,nodes,capped,slots,maxRating,rcUsed:RC};
 }
