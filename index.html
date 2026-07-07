@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.6.10</title>
+<title>Draft Solver v17.7.1</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -3942,7 +3942,82 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        gives a strongly punishing curve (rank 10 -> 100x the base penalty) without those absurd
        outputs. Default unchanged at 1 (linear, old behavior). Bounds-only change -- the formula, UI
        wiring, and rank-1-unaffected guarantee are untouched. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.6.10</span></h1>
+  <!-- v17.6.11 -- New inline helper warning: _topEvalPivotWarning(ranked). Distinct from the
+       existing _pivotMismatchWarning (which only flags off-pivot cards you've already COMMITTED
+       to the board): this one looks at the CURRENT ranking being shown and flags when the single
+       #1-ranked (highest-scoring) option doesn't match your chosen pivot -- e.g. "The top evaluated
+       card, [Name], doesn't fit your pivot (England Premier League). You may not want to take it
+       unless you're planning to switch pivots." Easy case to miss otherwise: a card can out-score
+       everything else in the hold on type/rating/rarity alone while still being off-pivot, and
+       taking it either eats the mismatch forever or means abandoning the pivot later. Same
+       _pivotMatches gate as every other pivot site; scoped to type==='normal' only, matching
+       _pivotMismatchWarning's existing precedent (heroes/icons have their own separate
+       non-pivot-preferred/diversity handling elsewhere, unchanged). Wired into both places options
+       get ranked and shown: judgeSlotInline (per-pick inline helper) and judgeBoard (standalone
+       Helper-tab judge), sitting alongside the existing pivot/pool-size/hold warnings. No scoring,
+       solver, or existing-warning logic touched -- purely an additional advisory note. -->
+  <!-- v17.6.12 -- Exclusion for _topEvalPivotWarning (v17.6.11): if NONE of the options in the
+       hold match the pivot, the warning no longer fires. Singling out the top-ranked card as "not
+       fitting the pivot" only carries useful signal when a pivot-fitting alternative existed in the
+       same hold and was passed over for something stronger by other measures -- if every option is
+       off-pivot, there was never a choice to make on that axis this pick, so the note was just
+       redundant noise on top of whatever _pivotMismatchWarning/Pivot Analyzer already communicates
+       about the squad's overall pivot health. Implementation: ranked.some() check across all
+       options (type==='normal' && _pivotMatches) gates the return before the top-card check; if
+       nothing in the list matches, returns '' same as the other early-outs. No change to when the
+       warning fires when a pivot-fitting option WAS available and lost out. -->
+  <!-- v17.6.13 -- BUGFIX: _calHoldDoubleCountWarning() was firing its "You're holding with
+       no-hold drafting on" message purely off _calActive() (calibrated ranking being the active
+       source), but _calActive() was deliberately decoupled from the no-hold checkbox back in
+       v16.14.0 -- calibration now owns ranking whenever a valid hash-matching calibration exists
+       for the loaded DB, checkbox state irrelevant. Net effect: the warning could claim "no-hold
+       drafting on" while the checkbox was visibly OFF, which is exactly what was reported (see
+       screenshot: hNoHold unchecked, warning still shown). Added an explicit noHoldOn() check
+       alongside the existing _calActive() gate, so the note now only fires when the checkbox it
+       names is actually checked. The underlying hold-double-count issue it warns about (calibrated
+       scorer's committed-context loop lacking hold-group awareness) is still gated on _calActive()
+       as before -- this change only narrows WHEN the note is surfaced, not what causes it. -->
+  <!-- v17.7.0 -- CALIBRATED CLASH: HOLD MITIGATION. The calibrated no-hold scorer's flat w.clash
+       "brings nothing new" penalty (_calMakeScorer) previously treated a clash against a genuinely
+       committed card identically to a clash against a card still sitting in a multi-card HOLD --
+       even though a held card isn't guaranteed to make the final XI, so clashing against it is
+       less certain than clashing against a locked pick.
+       New SHAPE weight calClashHoldMitigation (0-1, default 0.5, "squad" group -- same always-live
+       bucket as starterBoost/benchPenalty/pivot weights, never owned or grayed by calibration).
+       _calMakeScorer takes a new optional 3rd arg, holdCtx = {mitigation, sizeOf(card)}: when the
+       clash penalty fires, it walks `committed` for every card that actually contributed a matched
+       dimension (nation/club/league) and takes the SMALLEST hold-group size among them, then
+       scales w.clash by factor = 1 - mitigation*(holdSize-1)/holdSize. A committed (non-held) card
+       has size 1, which forces factor back to 1 (full penalty) -- so mitigation only ever applies
+       when EVERY blocking card is merely held, never when even one genuinely committed card would
+       cause the same clash on its own.
+       Purely additive and opt-in at the call site: _calibrateNoHold/_calMean/_calPlay (the fitting
+       engine) never pass holdCtx, so every simulated draft during calibration is bit-identical to
+       before this change -- fitted weights are completely unaffected. helpValue() (the only live
+       caller) builds holdCtx from the live `cards` pool's hold-group sizes and passes it ONLY when
+       the "No-hold drafting" checkbox is unchecked; checked -> holdCtx stays undefined -> the exact
+       old `v+=w.clash` path runs, so true no-hold boards/behaviour are byte-for-byte unchanged.
+       Verified with a standalone scorer harness: pure-committed clash unaffected (0 vs 0.5 both
+       give the full penalty), mixed held+committed clash on the same dimension unaffected (a real
+       committed blocker still forces the full penalty), and a pure all-held clash softens exactly
+       per the formula above. -->
+  <!-- v17.7.1 -- FOLLOW-UP TO v17.7.0, TWO FIXES, NO SCORER CHANGE.
+       1. UI GRAYOUT: calClashHoldMitigation sits in the "squad" SHAPE group, which _calGrayManual
+          never touches (by design -- every other weight there, starterBoost/benchPenalty/pivot*,
+          keeps a real live effect regardless of calibration state). But this weight is different:
+          it goes fully inert the moment "No-hold drafting" is checked, since holds can't exist in
+          that mode by construction. Previously the row just sat there enabled and untouched either
+          way, silently doing nothing when checked instead of visibly showing it's off. Added
+          _grayHoldMitigationRow(), gated on noHoldOn() alone (independent of _calActive()/
+          calibration state), and wired it into every point the row's DOM can appear or the
+          checkbox can change: the initial renderShape(), resetShape(), the live onNoHoldToggle()
+          handler, and the startup restoreNoHoldChk() sync -- so a persisted checked box grays the
+          row correctly on reload too, not just after a manual toggle.
+       2. LABEL: SHAPE_LABEL.calClashHoldMitigation was a dense paragraph explaining the mechanism
+          in full. Trimmed to a single sentence covering the basic idea (softens the clash penalty
+          for a still-held rival, bigger hold = softer, off when No-hold drafting is checked) --
+          the mechanism itself is documented above in the v17.7.0 entry, not needed twice. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.7.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -4915,11 +4990,11 @@ function _refreshPivotEdge(precomputedList){
 // league is the pivot's own, so every league point is real and none of the special cases fire.
 // This is the single interpreter for that question, mirroring _pivotMatches above.
 function _isPivotLeague(lg){return PIVOT_KIND==='league'&&lg===PIVOT_KEY;}
-const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:10,premHeroRatingThreshold:96,premHeroRatingCeiling:98,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.5,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,commonNormalLeagueBoost:0,commonNormalLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,lowIconHardBound:85,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,highIconHardBound:99,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0,lowHeroPenaltyMax:0,lowHeroHardBound:0,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,highHeroHardBound:99,lowNormalRatingThreshold:87,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,lowNormalHardBound:75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,highNormalHardBound:99,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5,holdSevBase:0.4,holdSevCap:0.85,allFirstBonus:5,allNonePenalty:5,pivotHeadStart:10,pivotRankPenalty:1,pivotRankSteepness:1};
+const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:10,premHeroRatingThreshold:96,premHeroRatingCeiling:98,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.5,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,commonNormalLeagueBoost:0,commonNormalLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,lowIconHardBound:85,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,highIconHardBound:99,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0,lowHeroPenaltyMax:0,lowHeroHardBound:0,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,highHeroHardBound:99,lowNormalRatingThreshold:87,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,lowNormalHardBound:75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,highNormalHardBound:99,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5,holdSevBase:0.4,holdSevCap:0.85,allFirstBonus:5,allNonePenalty:5,pivotHeadStart:10,pivotRankPenalty:1,pivotRankSteepness:1,calClashHoldMitigation:0.5};
 // Inputs floored at 0 because a negative value here would flip the formula's intent (e.g. extra icons/heroes
 // getting MORE valuable instead of less). clashBase also gets a max: above 2 a mild clash can end up scoring
 // worse than a severe one (see clashBase's label below), so 2 is the point past which the slider works against itself.
-const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[0,105],premHeroRatingCeiling:[0,105],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],commonNormalLeagueBoost:[0,1],commonNormalLeagueCount:[0,30],lowIconRatingThreshold:[0,105],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],lowIconHardBound:[0,105],highIconRatingThreshold:[0,105],highIconBoostMin:[0,1],highIconBoostMax:[0,2],highIconHardBound:[0,105],lowHeroRatingThreshold:[0,105],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],lowHeroHardBound:[0,105],highHeroRatingThreshold:[0,105],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],highHeroHardBound:[0,105],lowNormalRatingThreshold:[0,105],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],lowNormalHardBound:[0,105],highNormalRatingThreshold:[0,105],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],highNormalHardBound:[0,105],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30],holdSevBase:[0,2],holdSevCap:[0,2],allFirstBonus:[0,20],allNonePenalty:[0,20],pivotHeadStart:[0,50],pivotRankPenalty:[0,10],pivotRankSteepness:[0.2,2]};
+const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[0,105],premHeroRatingCeiling:[0,105],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],commonNormalLeagueBoost:[0,1],commonNormalLeagueCount:[0,30],lowIconRatingThreshold:[0,105],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],lowIconHardBound:[0,105],highIconRatingThreshold:[0,105],highIconBoostMin:[0,1],highIconBoostMax:[0,2],highIconHardBound:[0,105],lowHeroRatingThreshold:[0,105],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],lowHeroHardBound:[0,105],highHeroRatingThreshold:[0,105],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],highHeroHardBound:[0,105],lowNormalRatingThreshold:[0,105],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],lowNormalHardBound:[0,105],highNormalRatingThreshold:[0,105],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],highNormalHardBound:[0,105],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30],holdSevBase:[0,2],holdSevCap:[0,2],allFirstBonus:[0,20],allNonePenalty:[0,20],pivotHeadStart:[0,50],pivotRankPenalty:[0,10],pivotRankSteepness:[0.2,2],calClashHoldMitigation:[0,1]};
 let SHAPE={...SHAPE_DEF}; // tunable: clash-draw count (rarity = P(no clash over this many random draws)) + icon/hero diminishing
 const _SHAPE_SAVE_KEY='pacwyn_shape_v1';
 function saveShapeLocal(){try{localStorage.setItem(_SHAPE_SAVE_KEY,JSON.stringify(SHAPE));}catch(e){}}
@@ -9097,6 +9172,24 @@ function _pivotMismatchWarning(excludeSlotId){
   const names=mismatch.map(c=>esc(cardName(c))).join(', ');
   return'<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 '+(mismatch.length===1?'<b>'+names+'</b> is committed but doesn\u2019t match your chosen pivot (<b>'+esc(PIVOT_KEY)+'</b>).':'<b>'+names+'</b> are committed but don\u2019t match your chosen pivot (<b>'+esc(PIVOT_KEY)+'</b>).')+' If intentional, ignore this \u2014 otherwise check the Pivot Analyzer.</div>';
 }
+// v17.6.11: distinct from _pivotMismatchWarning above (which flags already-COMMITTED off-pivot
+// cards). This one looks at the CURRENT ranked options being judged right now and flags when the
+// single #1-ranked (highest scoring) option doesn't match the chosen pivot \u2014 easy to miss since
+// a strong overall score can still come from a non-pivot league/nation card, and taking it commits
+// you to either eating the mismatch or abandoning the pivot later. Same _pivotMatches gate as
+// everywhere else; scoped to type==='normal' like _pivotMismatchWarning (heroes/icons have their
+// own separate non-pivot-preferred handling, see the w.prem site\u2019s comment).
+function _topEvalPivotWarning(ranked){
+  if(!PIVOT_KEY||!ranked||!ranked.length)return'';
+  const top=ranked[0].c;
+  if(top.type!=='normal'||_pivotMatches(top))return'';
+  // v17.6.12: if NONE of the options on offer match the pivot, singling out the top one is
+  // redundant noise -- there was never a pivot-fitting choice available this pick, so the warning
+  // (which implies "pick a different one instead") has nothing useful to point toward.
+  const anyMatch=ranked.some(r=>r.c.type==='normal'&&_pivotMatches(r.c));
+  if(!anyMatch)return'';
+  return'<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 The top evaluated card, <b>'+esc(cardName(top))+'</b>, doesn\u2019t fit your pivot (<b>'+esc(PIVOT_KEY)+'</b>). You may not want to take it unless you\u2019re planning to switch pivots.</div>';
+}
 function insWhy(c,sc){const f=[];
   if(!sc.nationSet.has(c.nation))f.push('+nat');
   if(!sc.leagueSet.has(leagueOf(c)))f.push('+lg');
@@ -9727,6 +9820,7 @@ const SHAPE_LABEL={
   pivotRankSteepness:'Pivot rank steepness \u2014 how much heavier the penalty gets for alternatives further down the list. 1 = even step per rank. Higher = deep alternatives punished much harder; lower = the gap between ranks matters less.',
   allFirstBonus:'Flat bonus for a card new on 2/3+ of its applicable dimensions (nation always; league for heroes; club for normals) (squad mode). 0 = off.',
   allNonePenalty:'Flat penalty for a card new on none of its applicable dimensions (nation always; league for heroes; club for normals) (squad mode). 0 = off.',
+  calClashHoldMitigation:'Clash penalty softening for held cards \u2014 reduces the calibrated clash penalty when the only rival card is still held, not committed. Bigger hold = softer penalty. 0 = off. No effect with No-hold drafting checked.',
 };
 const SHAPE_CATEGORIES=[
   {key:'icon',keys:['iconKeep','iconErosion','iconRarityRefundCap',
@@ -9741,7 +9835,7 @@ const SHAPE_CATEGORIES=[
     'highNormalRatingThreshold','highNormalHardBound','highNormalBoostMin','highNormalBoostMax']},
   {key:'clash',keys:['clashDraws','clashBase','clashStack','holdSizeBase','holdDomBoost','holdSevBase','holdSevCap','redundancySurcharge','dominantClashGap']},
   {key:'common',keys:['commonNatCount','commonNatPenalty','commonNatIconExtra','commonClubCount','commonClubPenalty','commonHeroLeagueCount','commonHeroLeaguePenalty','commonNormalLeagueCount','commonNormalLeagueBoost']},
-  {key:'squad',keys:['takeThreshold','starterBoost','benchPenalty','pivotHeadStart','pivotRankPenalty','pivotRankSteepness']}, // v16.14.2: all take-vs-hold weights live outside Manual — none are owned by the objective calibration; v17.4.0: two stateless pivot tunables (head start for the chosen pivot, rank-based penalty for alternatives) — same bucket: hand-set judgment calls, not data-derivable, per section M/section U
+  {key:'squad',keys:['takeThreshold','starterBoost','benchPenalty','pivotHeadStart','pivotRankPenalty','pivotRankSteepness','calClashHoldMitigation']}, // v16.14.2: all take-vs-hold weights live outside Manual — none are owned by the objective calibration; v17.4.0: two stateless pivot tunables (head start for the chosen pivot, rank-based penalty for alternatives) — same bucket: hand-set judgment calls, not data-derivable, per section M/section U; vNEXT: calClashHoldMitigation joins the bucket for the same reason — it's a live, hand-set adjustment applied ONLY at helpValue() call time (never inside the calibration engine's own fit loop), so it belongs outside Manual exactly like its neighbours here
   {key:'misc',keys:['outOfFormationPenalty','allFirstBonus','allNonePenalty']},
 ];
 // Flat order, derived from the categories above, kept for anything that still wants "every key in a sane order".
@@ -9769,6 +9863,7 @@ function renderShape(){
     const keys=cat.key==='misc'?cat.keys.concat(leftover):cat.keys;
     el.innerHTML=keys.filter(k=>k in SHAPE_DEF).map(_renderShapeRow).join('');
   });
+  if(typeof _grayHoldMitigationRow==='function')_grayHoldMitigationRow(); // re-apply after the squad grid (incl. calClashHoldMitigation) is rebuilt
 }
 function resetShape(){if(!confirm('Reset all shape settings to their defaults?'))return;SHAPE={...SHAPE_DEF};renderShape();_calGrayManual(_calActive());_solveCache=null;saveShapeLocal();}
 renderShape();
@@ -10087,8 +10182,22 @@ function _calRng(seed){return function(){seed|=0;seed=(seed+0x6D2B79F5)|0;let t=
 
 // The calibrated scorer: marginal value of `card` given the already-`committed` board. All
 // features are "does this add something NEW" — the pick-time quantity the study isolated.
+// holdCtx (optional, 3rd call-time arg, NOT touched by the calibration engine — see below) lets a
+// LIVE caller soften the flat w.clash "brings nothing new" penalty when the only reason it fired is
+// that the blocking card(s) are sitting in a multi-card HOLD rather than actually committed. The
+// fitted scorer itself makes no committed/held distinction (the no-hold calibration study this was
+// fitted against has no holds by construction), so this stays a pure opt-in add-on:
+//   - _calibrateNoHold/_calMean/_calPlay never pass holdCtx, so every scripted/simulated call during
+//     fitting is bit-identical to before this change — the calibration engine and its fitted weights
+//     are completely unaffected.
+//   - helpValue() (the only live caller) passes holdCtx only when the "No-hold drafting" checkbox is
+//     OFF; when it's ON, holdCtx is omitted entirely so behaviour is identical to pre-mitigation code
+//     even before considering that a true no-hold board has no holds to mitigate anyway.
+//   - holdCtx = {mitigation, sizeOf(card)}. sizeOf returns 1 for a committed (non-held) card, so a
+//     clash that's blocked by even one genuinely committed card (mixed alongside any held ones)
+//     still takes the FULL penalty — mitigation only applies when every blocking card is held.
 function _calMakeScorer(w){
-  return function(card, committed){
+  return function(card, committed, holdCtx){
     let v=w.rating*card.rating;
     let hasIcon=false,hasHero=false;
     const nats=new Set(),clubs=new Set(),lgs=new Set();
@@ -10107,7 +10216,35 @@ function _calMakeScorer(w){
     if(card.type==='icon'&&!hasIcon)v+=w.firstIcon;
     if(card.type==='hero'&&!hasHero)v+=w.firstHero;
     const bringsSomething=newNat||(card.type==='normal'?(newClub||(DB_MULTILEAGUE&&newLg)):newLg)||(card.type==='icon'&&!hasIcon)||(card.type==='hero'&&!hasHero); // v16.0.0: a non-PL normal can also bring a new league; gated so all-PL DBs behave exactly as before
-    if(!bringsSomething)v+=w.clash; // negative
+    if(!bringsSomething){
+      let clashPen=w.clash; // negative
+      // vNEXT: hold-mitigation add-on (see _calMakeScorer's header comment). Only ever runs when the
+      // live caller opted in via holdCtx; every calibration-engine call leaves holdCtx undefined and
+      // takes the exact `v+=w.clash` path this replaces, so fitted weights are untouched.
+      if(holdCtx&&holdCtx.mitigation>0){
+        // Find every committed/held card that actually contributes one of the matched dimensions
+        // above (nation always; club/league as applicable to this card's type) and take the
+        // SMALLEST hold-group size among them. A committed (non-held) contributor has size 1, which
+        // forces the factor back to 1 (full penalty) — mitigation only kicks in when ALL of the
+        // blocking cards are merely held, never guaranteed to make the final XI.
+        let minHold=Infinity;
+        for(const c of committed){
+          const sameNat=c.nation===card.nation;
+          const sameClub=card.type==='normal'&&c.type==='normal'&&c.club===card.club;
+          const sameLg=leagueOf(c)===leagueOf(card);
+          const blocks=card.type==='normal'?(sameNat||sameClub||(DB_MULTILEAGUE&&sameLg)):(sameNat||sameLg);
+          if(blocks){
+            const hs=holdCtx.sizeOf(c);
+            if(hs<minHold)minHold=hs;
+            if(minHold<=1)break; // can't go lower — a genuinely committed blocker caps mitigation at none
+          }
+        }
+        if(minHold===Infinity)minHold=1; // shouldn't happen (bringsSomething false implies a blocker exists) but stay safe
+        const factor=1-holdCtx.mitigation*(minHold-1)/minHold; // holdSize 1 -> factor 1 (no change); larger holds -> factor approaches 1-mitigation
+        clashPen*=factor;
+      }
+      v+=clashPen;
+    }
     if((card.type==='normal'||card.type==='hero')&&_pivotMatches(card))v+=w.prem; // v16.0.0: flat bonus for matching the current PIVOT (defaults to PL league — identical on legacy DBs); v16.7.0: league OR nation. Heroes/icons keep their existing NON-pivot-preferred (diversity) handling elsewhere — unchanged.
     // v17.4.0 PIVOT HEAD START / RANK PENALTY — REPLACES v17.2.0/v17.3.0's stateful "emergent
     // reinforcement" (committed-depth tracking per league/nation). See FOR FUTURE MAINTAINERS section
@@ -10718,6 +10855,17 @@ function _calGrayManual(on){ // disable/enable the manual weight inputs while ca
     });
   }
 }
+// calClashHoldMitigation lives in the always-live 'squad' group (never touched by _calGrayManual
+// above), but unlike its neighbours there it has a real off-switch of its own: with "No-hold
+// drafting" checked, holds can't exist by definition, so the weight is inert. Grayed on the
+// checkbox's state alone -- independent of whether calibrated ranking is even active.
+function _grayHoldMitigationRow(){
+  const inp=$('#shp-calClashHoldMitigation'); if(!inp)return;
+  const on=noHoldOn();
+  inp.disabled=on;
+  const row=inp.closest('div');
+  if(row){row.style.opacity=on?'0.4':'';row.style.pointerEvents=on?'none':'';}
+}
 // v13.1 fix (audit item 1): the no-hold checkbox previously had NO real persistence -- saveHW()
 // only ever serialized the HW weight object (no no-hold field in it), so the comment in
 // onNoHoldToggle() claiming "checkbox state saved in state" was aspirational, not true. It reset
@@ -10731,6 +10879,7 @@ function onNoHoldToggle(){
   // v16.14.0: the calibration box is permanently visible (no longer gated by this checkbox)
   _renderCalResult();
   _calGrayManual(_calActive());
+  _grayHoldMitigationRow();
   _solveCache=null; saveHW(); saveNoHoldChk(); // saveHW kept for the manual-weight blob; saveNoHoldChk is the real persistence for the checkbox itself
   if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
   if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
@@ -10869,7 +11018,18 @@ function helpValue(c){
     // "committed" is just those cards; hold cards (if any linger) are treated as committed context
     // too, which is the correct pick-time reading (they occupy the board).
     const src=(squadAwareOn()?(_squadOverride||cards):cards).filter(x=>!(_judgeExclude&&x.slot===_judgeExclude)&&x.id!==c.id);
-    return _calMakeScorer(NOHOLD_CAL.weights)(c, src);
+    // vNEXT: hold-mitigation opt-in (see _calMakeScorer's header comment). Built fresh per call from
+    // the live `cards` pool (same source _shownCounts/squadInfo use for hold group sizes), and only
+    // when there's actually something for it to do: checkbox OFF (holds are a real possibility) AND
+    // the weight is non-zero. Checkbox ON -> holdCtx stays undefined -> _calMakeScorer takes the
+    // exact old `v+=w.clash` path, so true no-hold boards/behaviour are byte-for-byte unchanged.
+    let holdCtx;
+    if(!noHoldOn()&&SHAPE.calClashHoldMitigation>0){
+      const holdGroupSize={};
+      cards.forEach(x=>{if(x.hold){holdGroupSize[x.hold]=(holdGroupSize[x.hold]||0)+1;}});
+      holdCtx={mitigation:SHAPE.calClashHoldMitigation,sizeOf:(cc)=>cc.hold?(holdGroupSize[cc.hold]||1):1};
+    }
+    return _calMakeScorer(NOHOLD_CAL.weights)(c, src, holdCtx);
   }
   let v=0;
   if(c.type==='icon')v+=HW.icon;
@@ -11072,8 +11232,17 @@ function rankRows(ranked,excludeSlotId,isCap){return ranked.map((r,k)=>{
 // Fires only when: calibrated ranking is the active source, the CURRENT pick is itself a hold
 // decision (2+ options), and at least one OTHER (different) hold elsewhere on the board still
 // carries more than one card.
+// v17.6.13: FIX -- was firing purely off _calActive(), but _calActive() was deliberately
+// decoupled from the no-hold checkbox back in v16.14.0 (calibration now owns ranking whenever a
+// valid hash-matching calibration exists, checkbox or not). This function's message hard-codes
+// "no-hold drafting on", so it was firing that exact text even with the checkbox OFF -- wrong
+// claim about the board's own state. Added an explicit noHoldOn() check so the text only ever
+// fires when the checkbox it names is actually checked. The underlying hold-double-count issue
+// this warns about is still specific to calibrated ranking (hence _calActive() stays as a gate
+// too) -- this only narrows WHEN the note is shown, it doesn't change what triggers it once shown.
 function _calHoldDoubleCountWarning(excludeSlotId,curOptsLen){
   if(!_calActive())return '';
+  if(!noHoldOn())return '';
   if(!(curOptsLen>1))return ''; // not currently deciding a hold -- nothing to warn about
   const otherHoldExists=(board||[]).some(sl=>sl.id!==excludeSlotId&&!sl.busted&&slotCards(sl.id).length>1);
   if(!otherHoldExists)return '';
@@ -11094,7 +11263,7 @@ function judgeBoard(){
   if(!helpCards.length){$('#helpOut').innerHTML='<div class="note">Add the options first.</div>';return}
   const {ranked,verdict,detail}=rankAndVerdict(helpCards);
   $('#helpOut').innerHTML='<div class="summary" style="margin-bottom:0"><div class="bigrow"><div class="tot" style="font-size:30px">'+verdict+'</div></div>'
-    +'<div class="tiny" style="color:var(--ink)">'+detail+'</div>'+_calHoldDoubleCountWarning(null,helpCards.length)+'<hr><div class="divh">Ranked</div>'+rankRows(ranked)
+    +'<div class="tiny" style="color:var(--ink)">'+detail+'</div>'+_topEvalPivotWarning(ranked)+_calHoldDoubleCountWarning(null,helpCards.length)+'<hr><div class="divh">Ranked</div>'+rankRows(ranked)
     +'<div class="tiny" style="margin-top:6px">'+scoreExplain()+'</div></div>';
 }
 // Inline in-pick helper: rates the active slot's options against the rest of the board (this slot excluded, squad-awareness forced on).
@@ -11530,7 +11699,7 @@ function judgeSlotInline(preCtx){
       }
     }
   }
-  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+_pivotMismatchWarning(s.id)+_calHoldDoubleCountWarning(s.id,opts.length)+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id,isCap)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
+  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+_pivotMismatchWarning(s.id)+_topEvalPivotWarning(ranked)+_calHoldDoubleCountWarning(s.id,opts.length)+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id,isCap)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
     +'<div class="tiny" style="margin-top:8px">Rated against your weights \u2014 feel free to overrule any call you don\u2019t agree with. It\u2019s your draft. Evaluations are generated on a per-hold basis, so re-evaluate if you make a change elsewhere.</div>'+inlineHoldNote+'</div>';
 }
 
@@ -11818,7 +11987,7 @@ restoreLocal();
 // v13.2: restore the persisted no-hold checkbox (see restoreNoHoldChk def) before the sync below reads it
 try{ restoreNoHoldChk(); }catch(e){}
 // v13.0: sync no-hold calibration UI to restored state (checkbox + any saved calibration)
-try{ if(typeof onNoHoldToggle==='function'){ _renderCalResult(); _calGrayManual(_calActive()); } }catch(e){}
+try{ if(typeof onNoHoldToggle==='function'){ _renderCalResult(); _calGrayManual(_calActive()); _grayHoldMitigationRow(); } }catch(e){}
 try{ setTimeout(_autoCalibrateOnLoad,350); }catch(e){} // v16.15.0: deferred so first paint lands first
 </script>
 <!-- ================================================================================================
