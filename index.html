@@ -1,4 +1,50 @@
 <!DOCTYPE html>
+<!-- ================================================================================================
+     AI ASSISTANT / FUTURE MAINTAINER — READ THIS BEFORE TOUCHING ANYTHING
+     ================================================================================================
+     CRITICAL — FIRST CHECK: if there is a handoff comment directly below this block (between
+     this comment and the VERSION comment), read that FIRST before following the steps below.
+     It means work was interrupted mid-task, and the next step is already figured out — do not
+     re-derive the approach.
+
+     Otherwise, follow the normal reading order below:
+     ================================================================================================
+
+     This file has a documented working convention. Follow this order before making any change:
+
+     1. CHANGELOG DISCIPLINE (section G of the FOR FUTURE MAINTAINERS block, near the bottom of
+        this file): entries are written ONLY after a change is implemented and verified — never
+        before, never as a plan. Read section G first so you understand what a correct entry looks
+        like before you write one.
+
+     2. INDEX (at the top of the FOR FUTURE MAINTAINERS block): one line per section A-X. Skim it
+        to identify which sections are relevant to your task. For ANY significant change, also read
+        section M (philosophy) regardless of what else you land on.
+
+     3. RELEVANT SECTIONS: read the ones the index points you to before touching code or changelog.
+        Common starting points:
+          - Formation / position / slot logic   → L (contains the UNDERLYING DRAFT FORMAT primer),
+                                                   then F, then any UB-* sections the task touches.
+          - Solver / pruning / bounds change    → H (harness), D (known gaps), then J/O/R/S/T/V/W.
+          - DB card entry                       → I (checklist), N (scope/limitations).
+          - New arbitrary constant / threshold  → M (philosophy: advanced setting or hardcode?).
+          - Future edition / ruleset change     → Q (prep playbook), then A, E, F as relevant.
+          - Soundness re-run                    → H, then W, X for most recent baseline.
+
+     4. CODE / CHANGELOG: only after the above — diverge into the code or changelog details as the
+        specific task requires. Version bump goes LAST, once every other edit is done (see the
+        PATCH NOTE FOR FUTURE EDITORS comment further down for the exact ordering rule).
+
+     5. LONG TASKS / USAGE LIMITS: if the task is extensive and may not complete within a single
+        session, output a checkpoint version of the file as early as possible once meaningful work
+        is done — do not wait until the end. After the checkpoint, add a brief plain-English note
+        (as a comment at the very top of the file, directly below this block) stating:
+          - What has been completed.
+          - What has not yet been done.
+          - Where you got to / what the next step would be, with enough detail that a fresh session
+            can pick it up without re-deriving the approach.
+        Keep the note factual and terse — it is a handoff, not a summary.
+     ================================================================================================ -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -6,7 +52,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.1</title>
+<title>Draft Solver v17.8.6</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2655,6 +2701,38 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        Section E (added v12.4.4) is external research, not testing methodology -- update it only if a
        future game edition or a follow-up analysis changes its conclusions.
 
+       INDEX (added v17.8.2, doc-only, no logic changed) — one line per section, for skimming to
+       the relevant ones instead of reading the whole block. Full detail lives in the section
+       itself; this is a map, not a substitute. For a MAJOR change, also read section M's
+       philosophy note regardless of which specific letters you land on below.
+         A. No-hold pick-time weights, if a future edition ever removes the hold mechanic.
+         B. OLD (superseded) soundness-testing methodology — historical context only, see H.
+         C. OLD tested-baseline numbers — historical record only, see H for the current status.
+         D. Known gaps this pass found, for whoever picks work up next.
+         E. External research on pivot (league/nation) choice.
+         F. Scrutiny map: what to double-check before two specific future changes.
+         G. Changelog discipline — write it up only after it's actually shipped.
+         H. The current soundness-testing harness (replaces B), plus its verbatim source.
+         I. Checklist for adding a new DEFAULT_DB card entry.
+         J. UB-I — a tried-and-rejected rating-bound tightening (don't retry without new evidence).
+         K. Known sampling assumptions/limits of the no-hold calibration.
+         L. Formation ranking: why fillability-based approaches never worked — also contains the
+            UNDERLYING DRAFT FORMAT primer (slot-pick vs bench-pick stage rules, two different
+            position systems). Read before any significant change to formation ranking or position
+            handling; the primer is the conceptual foundation, not just background on section L.
+         M. PHILOSOPHY — when an arbitrary number should become an advanced setting.
+         N. This DB's edition scope, and two known/accepted limitations.
+         O. UB-N — a tried-and-rejected per-node nation-cap tightening.
+         P. Status of the v16.0.0 multi-league/multi-pivot prototype.
+         Q. PACWYN 27 prep playbook — pre-agreed plans for three anticipated changes.
+         R. UB-R — the per-node dynamic rating cap that DID merge (contrast with J/O).
+         S. Five alternative pruning ideas, conceptualized/measured/rejected or deferred.
+         T. UB-SYM — slot symmetry breaking, merged (one of section S's ideas).
+         U. v17.0.0 pivot-depth interaction — standalone concept test, not merged.
+         V. Known, unfixed looseness bug in spMaxFreeBox (isolated-component testing).
+         W. Full-solver soundness re-run against the live harness (contrast with V).
+         X. Final tiered soundness testing results/conclusion.
+
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
           pick committed immediately, no swapping later), pick-time candidate scoring should weight
@@ -3029,10 +3107,17 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                be expected under, that is not a mistake to fix — assume it's a special/promo
                "normal"-type card for that player and add it as given. Don't silently change the
                stated type to what "seems right" for the player.
-               
-               7. Do NOT try to read the full default DB, it is too large. Naming consistancy is the only important factor. E.g Spurs vs Tottenham, one will be used consistantly in the DB. formatting is also consistant, so seeing one entry is enough to determine the correct naming/format. Do not scan the entire section, it will be too long to read.
-               
-               8. Primary position first, secondary position ordering irrelevant
+            7. DON'T READ THE FULL DB TO CHECK SPELLING — ONE ENTRY IS ENOUGH. DEFAULT_DB is too
+               large to scan in full before every addition, and naming consistency is the only
+               thing that actually matters (e.g. "Spurs" vs "Tottenham" — the DB uses one of the
+               two consistently). Formatting is likewise consistent throughout, so a single
+               existing entry is sufficient to infer the correct naming/format for a new one;
+               don't scan the entire section looking for confirmation.
+            8. PRIMARY POSITION FIRST. Primary position is always listed first in pos; secondary
+               position ordering after that is irrelevant.
+            9. TYPE OMITTED BUT CLUB GIVEN = ASSUME NORMAL. If an entry specifies a club but its
+               card type isn't stated, don't stop and flag it under rule 4 — assume type "normal"
+               and add it as such.
 
        J. UB-I: A TRIED-AND-REJECTED RATING-BOUND TIGHTENING (added v13.4.6, doc-only — records a
           dead end so it isn't re-attempted without this write-up in hand). Motivated by section
@@ -4059,7 +4144,40 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        middle of it, so the changelog now reads as one continuous run from v8.12 through this entry,
        with this reference block following it as its own section, right before the <h1>. Matches the
        READING ORDER note's own description of how these two are meant to relate. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.1</span></h1>
+  <!-- v17.8.2 -- DOCUMENTATION ONLY, no logic/UI/content changed. Added an INDEX right after the
+       "FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL" block's intro paragraph (before section A):
+       one line per lettered section (A-X), so a maintainer can skim the list and jump straight to
+       whichever sections are relevant to the change at hand instead of reading the whole block
+       top to bottom -- e.g. a major change should check the INDEX, read section M's philosophy
+       note, and then whichever specific sections it touches (a new pruning bound touches J/O/R/S;
+       a DB edition question touches N; anything solver-soundness touches B/H/V/W/X). -->
+  <!-- v17.8.3 -- DOCUMENTATION ONLY, no logic/UI/content changed. Two doc edits: (1) expanded
+       the INDEX entry for section L to flag that L also contains the UNDERLYING DRAFT FORMAT
+       primer — the slot-pick/bench-pick stage rules, why primary position is the right lens —
+       and added a note that it should be read before any significant formation-ranking or
+       position-handling change, not just before changes to fillability logic. (2) added section
+       9 to section I's DB-entry checklist: if a card has a club but no stated type, assume normal. -->
+  <!-- v17.8.4 -- DOCUMENTATION ONLY, no logic/UI/content changed. Added an "AI ASSISTANT /
+       FUTURE MAINTAINER — READ THIS BEFORE TOUCHING ANYTHING" comment at the very top of the
+       file (line 1, before <html>) laying out the correct reading order: (1) check changelog
+       discipline in section G, (2) skim the FOR FUTURE MAINTAINERS INDEX to identify relevant
+       sections, (3) read those sections before touching any code, (4) only then diverge into
+       the code/changelog, with version bump last. Includes a task-keyed quick-reference of
+       common starting points (formation/position logic → L; solver/pruning → H/D/UB-* sections;
+       DB entry → I/N; new constants → M; future edition → Q; soundness re-run → H/W/X). -->
+  <!-- v17.8.5 -- DOCUMENTATION ONLY, no logic/UI/content changed. Added step 5 to the reading
+       order comment at the top of the file: if a task is extensive and may hit usage limits,
+       output a checkpoint version of the file early (not at the end), then add a terse handoff
+       comment directly below the reading order block stating what is done, what is not, and
+       exactly where to pick up — so a fresh session can continue without re-deriving the approach. -->
+  <!-- v17.8.6 -- DOCUMENTATION ONLY, no logic/UI/content changed. Added a meta-instruction at
+       the very top of the reading order comment: "FIRST CHECK: if there is a handoff comment
+       directly below this block, read that FIRST before following the normal steps." This ensures
+       that if work was interrupted mid-task and a checkpoint was output with a handoff comment,
+       a continuing session prioritizes reading the handoff (which explains what is done, what is
+       not, and exactly where to pick up) before following the normal reading order. Prevents
+       re-deriving an approach that is already figured out. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.6</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
