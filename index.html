@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v16.15.0 (prototype)</title>
+<title>Draft Solver v16.16.0 (prototype)</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -3023,7 +3023,61 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        own, always live). Everything else (hwGrid + all Advanced shape groups) collapsed into one
        "Manual" dropdown, marked as superseded while a calibration is active. Grid row counts
        verified post-restructure (squad=2, misc=4, hw=12). -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.15.0-proto</span></h1>
+  <!-- v16.15.0 — SOUNDNESS FIX, REVERT: removed the v16.14.0 "DAC" collision-resolution step from
+       the per-node dynamic rating vector (both solveBest copies, live + harness twin, patched in
+       sync per section H). Targeted fuzzing built specifically for the two-hold-group/two-position
+       non-dominating shape (FUTURE-MAINTAINERS section R, UB-F/UB-G counterexample) found 11,340
+       soundness violations across 144,366 feasible trials (~8.5%): DAC's "first-hit" fix picked an
+       arbitrary winner slot when two remaining slots' live scans landed on the same group, and
+       demoted the loser to its own next-best. Whenever the two legal completions' true rating
+       vectors didn't dominate each other, that guess could land on the wrong slot and under-credit
+       the demoted one, so dynRC (__d) could come in too low and prune a branch that was actually
+       still live -- the generic in-file fuzz at merge time (0/160) never happened to hit this shape,
+       same reason UB-F/UB-G's ~7% failure rate went unnoticed until a targeted generator was used.
+       FIX: reverted to UB-R2's plain live scan with no collision resolution -- two remaining slots
+       may now credit the same group's rating simultaneously, which only relaxes group exclusivity
+       (an over-credit, i.e. loosens, never tightens past the true max) and was fuzz-verified sound
+       (0/314) before DAC's collision fix was layered on top. UB-A (parent-side candidate threshold)
+       and UB-D (dynamic diversity caps) are untouched and unaffected -- both reuse/derive from this
+       vector but neither depended on the collision-resolution step. Expect a modest node-count
+       regression versus DAC on drafts that actually hit the contested-group case; correctness over
+       speed. NOT re-implemented here: the "H2-node" bound sketched in section R (independent S_max
+       via max-weight matching + sp_max via box-vertex enumeration, combined additively so no vector
+       has to dominate) would recover DAC's tightening without its soundness trap, but needs its own
+       from-scratch fuzz harness before merge, per F.2/Q.2. -->
+  <!-- v16.16.0 — PROTOTYPE, NOT FULL MERGE (per F.2/Q.2, staged pending the off-tree twelve-regime
+       harness + a DAC-style targeted collision generator run against it): adds "H2-node", the
+       per-node analogue of the root's UB-H2, re-adding v16.14.0 DAC's collision-aware tightening
+       WITHOUT the soundness trap that v16.15.0 had to revert. Two new nested helpers inside both
+       solveBest copies (nested, not top-level, so solveBest.toString() still captures them for the
+       Web Worker parallel path): assignMaxSumNode() computes the EXACT max-weight assignment of
+       distinct not-yet-used groups to the R remaining slots via a small bitmask DP (2^R states,
+       R<=7 since this is gated k>=4) instead of DAC's "pick a winner slot" heuristic -- no guessing
+       which slot a contested group lands on, so the UB-F/UB-G/DAC counterexample (two legal
+       completions whose true rating vectors don't dominate each other) cannot recur here: S_max and
+       sp_max are exact maxima of two independent, non-competing quantities, combined additively
+       (same shape as the root's UB-H2), so neither has to dominate the true completion. spMaxFreeBox()
+       is the root's spMaxBoundPerSlot vertex-enumeration argument restricted to the R free slots with
+       the k committed ratings held fixed. Wired in right after the existing (v16.15.0) cheap __d
+       check: h2NodeBound() only runs when __d didn't already prune (paying the assignment DP only on
+       harder nodes), and the final decision uses min(__d, __h2) -- sound regardless of whether __h2
+       generally dominates __d, since the minimum of two independently-valid upper bounds is itself
+       valid. VERIFICATION SO FAR (this session, off-tree, NOT the full harness): a standalone
+       extraction of assignMaxSumNode/spMaxFreeBox/h2NodeBound fuzzed against an independent brute-force
+       oracle over 3,000 randomized remaining-slot instances with deliberately contended/shared groups
+       across slots (the exact shape that broke DAC) -- 0 soundness violations. On the classic
+       contested-group instance (two slots, group A the top pick for both, group B second choice):
+       naive UB-R2 vector double-counts A ([100,95] -> bound 98) where the true optimum is 97; H2
+       correctly enforces exclusivity and lands on exactly 97 -- tighter than naive AND exactly right,
+       recovering DAC's intended tightening without its under-count risk. NOT YET DONE before this can
+       be treated as release-final: the actual off-tree twelve-regime harness + fingerprint fixtures,
+       a wall-clock/node-count comparison against plain v16.15.0 (UB-R2 alone) across real drafts, and
+       specifically re-running the same 144,366-trial targeted generator that caught DAC's ~8.5%
+       violation rate against this bound to confirm 0/144,366 here too. UB-A (parent-side candidate
+       threshold) still reuses the plain __dacV vector only, NOT the H2 bound -- left untouched to keep
+       this patch's surface area reviewable; extending UB-A to use H2 too is a possible follow-up once
+       this prototype clears the full harness. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v16.16.0-proto</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -3312,7 +3366,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="note">These tune the in-pick helper. Each control says what it does, its default and its range &mdash; bump what you care about, reset any time.</div>
   <div class="panel">
     <h2>Helper weights</h2>
-    <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 6px"><input type="checkbox" id="hNoHold" autocomplete="off" onchange="onNoHoldToggle()"> No-hold drafting &mdash; always TAKE the top option (never suggest a hold)</label>
+    <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 6px"><input type="checkbox" id="hNoHold" onchange="onNoHoldToggle()"> No-hold drafting &mdash; always TAKE the top option (never suggest a hold)</label>
     <div id="noHoldCalWrap" style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
       <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective weights &mdash; calibrated from your DB</div>
       <p class="tiny" style="margin:0 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; then ranks options with those weights instead of the hand-tuned ones (inside <b>Manual</b> below), whenever a valid calibration for the current DB exists. Deterministic (same DB + seed &rarr; same result). Takes a few seconds.</p>
@@ -5202,6 +5256,114 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   const seenNat=new Set(),seenLg=new Set(),seenClub=new Set();
   let partialIcon=0,partialHero=0;
   const __dacV=[]; // v16.14.0: shared scratch vector for the DAC dynamic bound (reset per node)
+  // v16.16.0 "H2-node": per-node analogue of the root's UB-H2 (see ubH2Bound/spMaxBoundPerSlot
+  // above), re-adding DAC's collision-aware tightening WITHOUT its soundness trap. Instead of
+  // building one N-length vector that some real completion has to dominate (the shape that broke
+  // DAC), this bounds the exact max SUM over the R remaining slots via a small assignment (each
+  // remaining slot gets at most one not-yet-used group, respecting exclusivity exactly -- no
+  // guessing which slot "wins" a contested group) and separately bounds the max spread-above-mean
+  // over each slot's own achievable [L,U] range intersected with that sum cap, then combines them
+  // additively -- so no single vector has to dominate the true completion, and the UB-F/UB-G/DAC
+  // counterexample (two legal completions whose rating vectors don't dominate each other) cannot
+  // recur, because neither S_max nor sp_max relies on picking a winner between them; both are
+  // exact maxima of two genuinely different, non-competing quantities.
+  // Nested (not top-level) so solveBest.toString() still captures it whole for the Web Worker
+  // parallel path (see _buildSolverWorkerBlob, which serializes solveBest by name only -- a new
+  // top-level helper would NOT exist inside the worker and would throw).
+  // COST/GATING: only invoked when the cheap __d check below does NOT already prune (paying the
+  // assignment DP only on the harder nodes), and only for R<=8 remaining slots (always true here
+  // since this whole section is gated k>=4, so R<=N-4<=7 for an 11-slot XI) -- vertex enumeration
+  // is O(2^R + R*2^(R-1)) (<=576 evals at R=7); the assignment DP is O(groups * 2^R * R).
+  // STATUS: sound by construction (argument above), but per this file's own F.2/Q.2 discipline this
+  // is a fresh addition and has NOT yet been run through the full off-tree twelve-regime harness +
+  // a DAC-style targeted collision generator -- run that before treating this as release-final.
+  function assignMaxSumNode(remSlots,cand,usedGroups){
+    const R=remSlots.length;
+    const L=new Array(R),U=new Array(R);
+    const groupBest=new Map(); // group -> Array(R) of its best rating for that remaining slot, or -Infinity
+    for(let i=0;i<R;i++){
+      const list=cand[remSlots[i]];let lo=Infinity,hi=-Infinity;
+      for(const c of list){
+        if(usedGroups.has(c._group))continue;
+        if(c.rating>hi)hi=c.rating;
+        if(c.rating<lo)lo=c.rating;
+        let arr=groupBest.get(c._group);
+        if(!arr){arr=new Array(R).fill(-Infinity);groupBest.set(c._group,arr);}
+        if(c.rating>arr[i])arr[i]=c.rating;
+      }
+      if(hi===-Infinity)return null; // this slot has zero legal candidates -- no legal completion here
+      L[i]=lo;U[i]=hi;
+    }
+    // Max-weight assignment of distinct groups to the R remaining slots, via bitmask DP over which
+    // slots are filled so far (classic "one side small" assignment trick -- exact, not a relaxation,
+    // and respects group exclusivity precisely instead of letting two slots double-claim one group).
+    const full=(1<<R)-1;
+    let dp=new Array(1<<R).fill(-Infinity);dp[0]=0;
+    for(const arr of groupBest.values()){
+      const next=dp.slice(); // read from the pre-this-group snapshot so each group is used at most once
+      for(let mask=0;mask<=full;mask++){
+        if(dp[mask]===-Infinity)continue;
+        for(let i=0;i<R;i++){
+          if(mask&(1<<i))continue;
+          if(arr[i]===-Infinity)continue;
+          const nm=mask|(1<<i),val=dp[mask]+arr[i];
+          if(val>next[nm])next[nm]=val;
+        }
+      }
+      dp=next;
+    }
+    const Smax=dp[full];
+    if(Smax===-Infinity)return null; // no way to give every remaining slot a distinct group
+    return {Smax,L,U};
+  }
+  // Exact max of sp(x)=sum(max(0,x_i-mean(x))) over the FULL N-length vector (k fixed committed
+  // ratings + R free coords bounded by [L_i,U_i]) intersected with sum(free)<=freeCap, where sp is
+  // convex so its max over this box-plus-hyperplane region is attained at a vertex with at most one
+  // free coordinate not pinned to its own L/U -- same shape/argument as the root's
+  // spMaxBoundPerSlot, just restricted to the R free dims with the k committed values held fixed.
+  function spMaxFreeBox(fixedVals,L,U,SmaxTotal){
+    const R=L.length,N=fixedVals.length+R,EPS=1e-9;
+    const fixedSum=fixedVals.reduce((a,b)=>a+b,0),freeCap=SmaxTotal-fixedSum;
+    function spOf(freeVals){
+      const S=fixedSum+freeVals.reduce((a,b)=>a+b,0),A=S/N;let sp=0;
+      for(const v of fixedVals)if(v>A)sp+=v-A;
+      for(const v of freeVals)if(v>A)sp+=v-A;
+      return sp;
+    }
+    let best=-Infinity;
+    const total=1<<R;
+    for(let mask=0;mask<total;mask++){
+      const vals=new Array(R);let s=0;
+      for(let i=0;i<R;i++){const v=(mask&(1<<i))?U[i]:L[i];vals[i]=v;s+=v;}
+      if(s<=freeCap+EPS){const sp=spOf(vals);if(sp>best)best=sp;}
+    }
+    for(let flex=0;flex<R;flex++){
+      const others=[];for(let i=0;i<R;i++)if(i!==flex)others.push(i);
+      const M=others.length,subTotal=1<<M;
+      for(let mask=0;mask<subTotal;mask++){
+        const vals=new Array(R);let sumOthers=0;
+        for(let mkk=0;mkk<M;mkk++){const i=others[mkk];const v=(mask&(1<<mkk))?U[i]:L[i];vals[i]=v;sumOthers+=v;}
+        let v=freeCap-sumOthers;
+        if(v<L[flex])v=L[flex];
+        if(v>U[flex])v=U[flex];
+        vals[flex]=v;
+        const sp=spOf(vals);if(sp>best)best=sp;
+      }
+    }
+    return best;
+  }
+  function h2NodeBound(k,order,cand,usedGroups,pick){
+    const N=order.length,R=N-k;
+    if(R<=1||R>8)return null; // trivial, or (defensively) too large to be cheap -- __d bound still applies
+    const remSlots=new Array(R);for(let i=0;i<R;i++)remSlots[i]=order[k+i];
+    const asn=assignMaxSumNode(remSlots,cand,usedGroups);
+    if(!asn)return null;
+    const committed=new Array(k);for(let j=0;j<k;j++)committed[j]=pick[order[j]].rating;
+    const fixedSum=committed.reduce((a,b)=>a+b,0);
+    const SmaxTotal=fixedSum+asn.Smax;
+    const spMax=spMaxFreeBox(committed,asn.L,asn.U,SmaxTotal);
+    return Math.floor((SmaxTotal+spMax)/N);
+  }
   function dfs(k){
     let __rStar=-Infinity; // v16.14.0 UB-A: per-node minimal surviving candidate rating (set below)
     if(nodes++>CAP){capped=true;return;}
@@ -5289,30 +5451,48 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       // the inner per-slot scan back to the single `__slotMaxR[order[__j]]` lookup (still computed
       // below, just unused for now, so reverting is a one-line change).
       if(best>=0&&k>=4){
-        // v16.14.0 UB-R4 "DAC" vector: UB-R2's live scan PLUS first-hit collision fix (R4-2/R4-3
-        // profile from the UB-R4 harness): when two remaining slots cite the SAME group as their
-        // live max, only one can really have it -- the loser rescans past that group. Map insert
-        // per first-hit, rescan only on actual collision.
-        __dacV.length=0;const __firstHit=new Map();
+        // v16.15.0 FIX (was "v16.14.0 UB-R4 DAC vector: UB-R2's live scan PLUS first-hit collision
+        // fix"): the collision fix has been REVERTED. Targeted fuzzing built specifically for the
+        // two-hold-group/two-position non-dominating shape (see FUTURE-MAINTAINERS section R,
+        // UB-F/UB-G counterexample) found 11,340 soundness violations across 144,366 feasible
+        // trials (~8.5%) -- the "DAC" collision resolution below arbitrarily picked a "winner" slot
+        // for a group two remaining slots both cited as their live-best, and demoted the "loser" to
+        // its own next-best. That is structurally the same move UB-F/UB-G made at the root and were
+        // rejected for: when the two legal completions' true rating vectors don't dominate each
+        // other ([100,85] vs [95,90]-style), guessing which slot the contested group actually lands
+        // on can lock in the wrong guess, so the demoted slot's credited value can come in BELOW
+        // what the real completion assigns it -- __d too low -> ub' too low -> a still-live branch
+        // gets pruned. Reverted to the plain UB-R2 live scan: each remaining slot independently takes
+        // its own first not-yet-used candidate, with NO cross-slot collision resolution, so two
+        // slots may credit the same group's rating at once. That is a pure relaxation of group
+        // exclusivity (same argument UB-A/UB-R/UB-R2 already rely on) and can only loosen the bound,
+        // never tighten it past the true max -- sound by construction, and this exact scan was
+        // fuzz-verified 0/314 before DAC's collision fix was layered on top in v16.14.0.
+        // A CORRECT tightening (not implemented here -- needs its own from-scratch fuzz harness
+        // before merge, per F.2/Q.2): an "H2-node" bound, the per-node analogue of the root's UB-H2.
+        // Instead of building one vector that some completion must dominate, bound S_max (exact max
+        // sum over the R remaining slots via a small max-weight bipartite matching / min-cost-flow,
+        // since a raw sum has no domination trap) and sp_max (spread-above-mean, convex, so its max
+        // over each slot's own [L,U] box intersected with sum<=S_max is attained at a box vertex --
+        // cheap to enumerate for R<=7) INDEPENDENTLY, then combine (S_max+sp_max)/N. No single vector
+        // has to dominate the true completion, so the UB-F/UB-G/DAC counterexample can't recur.
+        __dacV.length=0;
         for(let __j=0;__j<order.length;__j++){
           if(__j<k){__dacV.push(pick[order[__j]].rating);continue;}
-          const __slot=order[__j],__list=cand[__slot];let __m=0,__mg=null;
-          for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(!usedGroups.has(__c._group)){__m=__c.rating;__mg=__c._group;break;}}
+          const __slot=order[__j],__list=cand[__slot];let __m=0;
+          for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(!usedGroups.has(__c._group)){__m=__c.rating;break;}}
           __dacV.push(__m);
-          if(__mg!==null){const __a=__firstHit.get(__mg);if(__a)__a.push(__j);else __firstHit.set(__mg,[__j]);}
-        }
-        for(const [__g,__arr] of __firstHit){
-          if(__arr.length<2)continue;
-          let __w=__arr[0];for(const __j of __arr)if(__dacV[__j]>__dacV[__w])__w=__j;
-          for(const __j of __arr){
-            if(__j===__w)continue;
-            const __list=cand[order[__j]];let __m=0;
-            for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(__c._group===__g)continue;if(!usedGroups.has(__c._group)){__m=__c.rating;break;}}
-            __dacV[__j]=__m;
-          }
         }
         const __d=Math.floor(futRatingRaw(__dacV));
         if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=best:__u<best)return;}
+        // v16.16.0 H2-node: only pay for the assignment-DP bound when the cheap __d above didn't
+        // already prune. Taking min(__d,__h2) is sound regardless of whether __h2 actually
+        // dominates __d in general -- both are independently valid upper bounds on the same
+        // quantity, so their minimum is too, and using the smaller one can only prune more.
+        {const __h2=h2NodeBound(k,order,cand,usedGroups,pick);
+         if(__h2!==null&&__h2<__d&&__h2<RC){
+           const __u2=ub-RC+__h2;if(ST?__u2<=best:__u2<best)return;
+         }}
         // v16.14.0 UB-A (parent-side candidate rating threshold): reuse the vector just built.
         // For a candidate c at this slot, a sound envelope of its child's bound is
         // (ub-RC) + floor(futRatingRaw(vector with position k := c.rating)) -- the child's
@@ -10764,6 +10944,114 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   const seenNat=new Set(),seenLg=new Set(),seenClub=new Set();
   let partialIcon=0,partialHero=0;
   const __dacV=[]; // v16.14.0: shared scratch vector for the DAC dynamic bound (reset per node)
+  // v16.16.0 "H2-node": per-node analogue of the root's UB-H2 (see ubH2Bound/spMaxBoundPerSlot
+  // above), re-adding DAC's collision-aware tightening WITHOUT its soundness trap. Instead of
+  // building one N-length vector that some real completion has to dominate (the shape that broke
+  // DAC), this bounds the exact max SUM over the R remaining slots via a small assignment (each
+  // remaining slot gets at most one not-yet-used group, respecting exclusivity exactly -- no
+  // guessing which slot "wins" a contested group) and separately bounds the max spread-above-mean
+  // over each slot's own achievable [L,U] range intersected with that sum cap, then combines them
+  // additively -- so no single vector has to dominate the true completion, and the UB-F/UB-G/DAC
+  // counterexample (two legal completions whose rating vectors don't dominate each other) cannot
+  // recur, because neither S_max nor sp_max relies on picking a winner between them; both are
+  // exact maxima of two genuinely different, non-competing quantities.
+  // Nested (not top-level) so solveBest.toString() still captures it whole for the Web Worker
+  // parallel path (see _buildSolverWorkerBlob, which serializes solveBest by name only -- a new
+  // top-level helper would NOT exist inside the worker and would throw).
+  // COST/GATING: only invoked when the cheap __d check below does NOT already prune (paying the
+  // assignment DP only on the harder nodes), and only for R<=8 remaining slots (always true here
+  // since this whole section is gated k>=4, so R<=N-4<=7 for an 11-slot XI) -- vertex enumeration
+  // is O(2^R + R*2^(R-1)) (<=576 evals at R=7); the assignment DP is O(groups * 2^R * R).
+  // STATUS: sound by construction (argument above), but per this file's own F.2/Q.2 discipline this
+  // is a fresh addition and has NOT yet been run through the full off-tree twelve-regime harness +
+  // a DAC-style targeted collision generator -- run that before treating this as release-final.
+  function assignMaxSumNode(remSlots,cand,usedGroups){
+    const R=remSlots.length;
+    const L=new Array(R),U=new Array(R);
+    const groupBest=new Map(); // group -> Array(R) of its best rating for that remaining slot, or -Infinity
+    for(let i=0;i<R;i++){
+      const list=cand[remSlots[i]];let lo=Infinity,hi=-Infinity;
+      for(const c of list){
+        if(usedGroups.has(c._group))continue;
+        if(c.rating>hi)hi=c.rating;
+        if(c.rating<lo)lo=c.rating;
+        let arr=groupBest.get(c._group);
+        if(!arr){arr=new Array(R).fill(-Infinity);groupBest.set(c._group,arr);}
+        if(c.rating>arr[i])arr[i]=c.rating;
+      }
+      if(hi===-Infinity)return null; // this slot has zero legal candidates -- no legal completion here
+      L[i]=lo;U[i]=hi;
+    }
+    // Max-weight assignment of distinct groups to the R remaining slots, via bitmask DP over which
+    // slots are filled so far (classic "one side small" assignment trick -- exact, not a relaxation,
+    // and respects group exclusivity precisely instead of letting two slots double-claim one group).
+    const full=(1<<R)-1;
+    let dp=new Array(1<<R).fill(-Infinity);dp[0]=0;
+    for(const arr of groupBest.values()){
+      const next=dp.slice(); // read from the pre-this-group snapshot so each group is used at most once
+      for(let mask=0;mask<=full;mask++){
+        if(dp[mask]===-Infinity)continue;
+        for(let i=0;i<R;i++){
+          if(mask&(1<<i))continue;
+          if(arr[i]===-Infinity)continue;
+          const nm=mask|(1<<i),val=dp[mask]+arr[i];
+          if(val>next[nm])next[nm]=val;
+        }
+      }
+      dp=next;
+    }
+    const Smax=dp[full];
+    if(Smax===-Infinity)return null; // no way to give every remaining slot a distinct group
+    return {Smax,L,U};
+  }
+  // Exact max of sp(x)=sum(max(0,x_i-mean(x))) over the FULL N-length vector (k fixed committed
+  // ratings + R free coords bounded by [L_i,U_i]) intersected with sum(free)<=freeCap, where sp is
+  // convex so its max over this box-plus-hyperplane region is attained at a vertex with at most one
+  // free coordinate not pinned to its own L/U -- same shape/argument as the root's
+  // spMaxBoundPerSlot, just restricted to the R free dims with the k committed values held fixed.
+  function spMaxFreeBox(fixedVals,L,U,SmaxTotal){
+    const R=L.length,N=fixedVals.length+R,EPS=1e-9;
+    const fixedSum=fixedVals.reduce((a,b)=>a+b,0),freeCap=SmaxTotal-fixedSum;
+    function spOf(freeVals){
+      const S=fixedSum+freeVals.reduce((a,b)=>a+b,0),A=S/N;let sp=0;
+      for(const v of fixedVals)if(v>A)sp+=v-A;
+      for(const v of freeVals)if(v>A)sp+=v-A;
+      return sp;
+    }
+    let best=-Infinity;
+    const total=1<<R;
+    for(let mask=0;mask<total;mask++){
+      const vals=new Array(R);let s=0;
+      for(let i=0;i<R;i++){const v=(mask&(1<<i))?U[i]:L[i];vals[i]=v;s+=v;}
+      if(s<=freeCap+EPS){const sp=spOf(vals);if(sp>best)best=sp;}
+    }
+    for(let flex=0;flex<R;flex++){
+      const others=[];for(let i=0;i<R;i++)if(i!==flex)others.push(i);
+      const M=others.length,subTotal=1<<M;
+      for(let mask=0;mask<subTotal;mask++){
+        const vals=new Array(R);let sumOthers=0;
+        for(let mkk=0;mkk<M;mkk++){const i=others[mkk];const v=(mask&(1<<mkk))?U[i]:L[i];vals[i]=v;sumOthers+=v;}
+        let v=freeCap-sumOthers;
+        if(v<L[flex])v=L[flex];
+        if(v>U[flex])v=U[flex];
+        vals[flex]=v;
+        const sp=spOf(vals);if(sp>best)best=sp;
+      }
+    }
+    return best;
+  }
+  function h2NodeBound(k,order,cand,usedGroups,pick){
+    const N=order.length,R=N-k;
+    if(R<=1||R>8)return null; // trivial, or (defensively) too large to be cheap -- __d bound still applies
+    const remSlots=new Array(R);for(let i=0;i<R;i++)remSlots[i]=order[k+i];
+    const asn=assignMaxSumNode(remSlots,cand,usedGroups);
+    if(!asn)return null;
+    const committed=new Array(k);for(let j=0;j<k;j++)committed[j]=pick[order[j]].rating;
+    const fixedSum=committed.reduce((a,b)=>a+b,0);
+    const SmaxTotal=fixedSum+asn.Smax;
+    const spMax=spMaxFreeBox(committed,asn.L,asn.U,SmaxTotal);
+    return Math.floor((SmaxTotal+spMax)/N);
+  }
   function dfs(k){
     let __rStar=-Infinity; // v16.14.0 UB-A: per-node minimal surviving candidate rating (set below)
     if(nodes++>CAP){capped=true;return;}
@@ -10851,30 +11139,48 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       // the inner per-slot scan back to the single `__slotMaxR[order[__j]]` lookup (still computed
       // below, just unused for now, so reverting is a one-line change).
       if(best>=0&&k>=4){
-        // v16.14.0 UB-R4 "DAC" vector: UB-R2's live scan PLUS first-hit collision fix (R4-2/R4-3
-        // profile from the UB-R4 harness): when two remaining slots cite the SAME group as their
-        // live max, only one can really have it -- the loser rescans past that group. Map insert
-        // per first-hit, rescan only on actual collision.
-        __dacV.length=0;const __firstHit=new Map();
+        // v16.15.0 FIX (was "v16.14.0 UB-R4 DAC vector: UB-R2's live scan PLUS first-hit collision
+        // fix"): the collision fix has been REVERTED. Targeted fuzzing built specifically for the
+        // two-hold-group/two-position non-dominating shape (see FUTURE-MAINTAINERS section R,
+        // UB-F/UB-G counterexample) found 11,340 soundness violations across 144,366 feasible
+        // trials (~8.5%) -- the "DAC" collision resolution below arbitrarily picked a "winner" slot
+        // for a group two remaining slots both cited as their live-best, and demoted the "loser" to
+        // its own next-best. That is structurally the same move UB-F/UB-G made at the root and were
+        // rejected for: when the two legal completions' true rating vectors don't dominate each
+        // other ([100,85] vs [95,90]-style), guessing which slot the contested group actually lands
+        // on can lock in the wrong guess, so the demoted slot's credited value can come in BELOW
+        // what the real completion assigns it -- __d too low -> ub' too low -> a still-live branch
+        // gets pruned. Reverted to the plain UB-R2 live scan: each remaining slot independently takes
+        // its own first not-yet-used candidate, with NO cross-slot collision resolution, so two
+        // slots may credit the same group's rating at once. That is a pure relaxation of group
+        // exclusivity (same argument UB-A/UB-R/UB-R2 already rely on) and can only loosen the bound,
+        // never tighten it past the true max -- sound by construction, and this exact scan was
+        // fuzz-verified 0/314 before DAC's collision fix was layered on top in v16.14.0.
+        // A CORRECT tightening (not implemented here -- needs its own from-scratch fuzz harness
+        // before merge, per F.2/Q.2): an "H2-node" bound, the per-node analogue of the root's UB-H2.
+        // Instead of building one vector that some completion must dominate, bound S_max (exact max
+        // sum over the R remaining slots via a small max-weight bipartite matching / min-cost-flow,
+        // since a raw sum has no domination trap) and sp_max (spread-above-mean, convex, so its max
+        // over each slot's own [L,U] box intersected with sum<=S_max is attained at a box vertex --
+        // cheap to enumerate for R<=7) INDEPENDENTLY, then combine (S_max+sp_max)/N. No single vector
+        // has to dominate the true completion, so the UB-F/UB-G/DAC counterexample can't recur.
+        __dacV.length=0;
         for(let __j=0;__j<order.length;__j++){
           if(__j<k){__dacV.push(pick[order[__j]].rating);continue;}
-          const __slot=order[__j],__list=cand[__slot];let __m=0,__mg=null;
-          for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(!usedGroups.has(__c._group)){__m=__c.rating;__mg=__c._group;break;}}
+          const __slot=order[__j],__list=cand[__slot];let __m=0;
+          for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(!usedGroups.has(__c._group)){__m=__c.rating;break;}}
           __dacV.push(__m);
-          if(__mg!==null){const __a=__firstHit.get(__mg);if(__a)__a.push(__j);else __firstHit.set(__mg,[__j]);}
-        }
-        for(const [__g,__arr] of __firstHit){
-          if(__arr.length<2)continue;
-          let __w=__arr[0];for(const __j of __arr)if(__dacV[__j]>__dacV[__w])__w=__j;
-          for(const __j of __arr){
-            if(__j===__w)continue;
-            const __list=cand[order[__j]];let __m=0;
-            for(let __i=0;__i<__list.length;__i++){const __c=__list[__i];if(__c._group===__g)continue;if(!usedGroups.has(__c._group)){__m=__c.rating;break;}}
-            __dacV[__j]=__m;
-          }
         }
         const __d=Math.floor(futRatingRaw(__dacV));
         if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=best:__u<best)return;}
+        // v16.16.0 H2-node: only pay for the assignment-DP bound when the cheap __d above didn't
+        // already prune. Taking min(__d,__h2) is sound regardless of whether __h2 actually
+        // dominates __d in general -- both are independently valid upper bounds on the same
+        // quantity, so their minimum is too, and using the smaller one can only prune more.
+        {const __h2=h2NodeBound(k,order,cand,usedGroups,pick);
+         if(__h2!==null&&__h2<__d&&__h2<RC){
+           const __u2=ub-RC+__h2;if(ST?__u2<=best:__u2<best)return;
+         }}
         // v16.14.0 UB-A (parent-side candidate rating threshold): reuse the vector just built.
         // For a candidate c at this slot, a sound envelope of its child's bound is
         // (ub-RC) + floor(futRatingRaw(vector with position k := c.rating)) -- the child's
