@@ -55,7 +55,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.11</title>
+<title>Draft Solver v17.8.13</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -4246,7 +4246,21 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        brute-force oracle on the checked subset. VERDICT recorded in section V: fix is real and
        worth keeping, but does not clear section T's bar for re-enabling h2NodeBound -- stays
        disabled. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.11</span></h1>
+  <!-- v17.8.12 -- UI LABEL ONLY. Added "(does not work with parallel search)" to the Search
+       diversity header label: the parallel workers path partitions root candidates and each worker
+       runs plain divstatic (the worker blob hardcodes diversitySeed=undefined), so a diversity plan
+       is silently ignored whenever parallel search is on. The two are mutually-exclusive strategies;
+       the label now says so. No behavioral change. -->
+  <!-- v17.8.13 -- UI: helper-row chemistry badge now shows every axis that applies to the card's
+       type, replacing the outdated Premier-League carve-out (which hid a normal's league because
+       every normal used to be Prem). Per type: normal -> league, nation, club; icon -> nation, icon
+       count; hero -> nation, league, hero count. "icon count" / "hero count" are the card's own-type
+       stack (how many icons / heroes are committed on the board), added to slotPureCounts as a new
+       `typ` field (additive; icon/hero only, null otherwise). Display-only: chemCountBadge now reads
+       slotPureCounts directly instead of _shownCounts, so _shownCounts and _dimFreshness -- which
+       drive the all-fresh bonus / all-none penalty SCORING -- are left byte-for-byte unchanged. No
+       solver, bound, or valuation math touched. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.13</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -4449,7 +4463,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <p class="tiny" style="margin:4px 0 0">Only search for squads reaching this final score (incl. manager +2). 0 = off.</p>
       </div>
       <div style="margin-top:14px">
-        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Search diversity &mdash; <span id="divPctLabel" style="color:var(--ink);font-weight:800">100%</span> divstatic</label>
+        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Search diversity &mdash; <span id="divPctLabel" style="color:var(--ink);font-weight:800">100%</span> divstatic <span style="text-transform:none;letter-spacing:0;color:var(--warn);font-weight:600">(does not work with parallel search)</span></label>
         <input type="range" id="divPctSlider" min="0" max="100" step="5" value="100" style="width:100%;margin:0 0 2px;accent-color:var(--cyan)" oninput="_updDivPctLbl()" onchange="saveAdvSettings();_solveCache=null;">
         <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:10px"><span>0% (all shuffle)</span><span>50 / 50</span><span>100% (all divstatic)</span></div>
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Shuffle passes (0&ndash;256)</label>
@@ -11398,7 +11412,7 @@ function rankAndVerdict(list,isCap){
 // league to clash on (nation only); heroes have no club (nation+league); normals have all three.
 function slotPureCounts(c,excludeSlotId){
   const lgKey=leagueOf(c);
-  let nat=0,lg=0,clb=0;
+  let nat=0,lg=0,clb=0,typ=0;
   (board||[]).forEach(sl=>{
     if(sl.id===excludeSlotId||sl.busted)return;
     const scs=slotCards(sl.id);
@@ -11406,8 +11420,9 @@ function slotPureCounts(c,excludeSlotId){
     if(scs.some(x=>x.nation===c.nation))nat++;
     if(c.type!=='icon'&&scs.some(x=>leagueOf(x)===lgKey))lg++;
     if(c.type==='normal'&&scs.some(x=>x.type==='normal'&&x.club===c.club))clb++;
+    if((c.type==='icon'||c.type==='hero')&&scs.some(x=>x.type===c.type))typ++; // v17.8.13: icon/hero own-type stack count (display only)
   });
-  return{nat:nat+1,lg:c.type==='icon'?null:lg+1,clb:c.type==='normal'?clb+1:null};
+  return{nat:nat+1,lg:c.type==='icon'?null:lg+1,clb:c.type==='normal'?clb+1:null,typ:(c.type==='icon'||c.type==='hero')?typ+1:null};
 }
 function _ordinal(n){const v=n%100;if(v>=11&&v<=13)return n+'th';switch(n%10){case 1:return n+'st';case 2:return n+'nd';case 3:return n+'rd';default:return n+'th';}}
 function _shownCounts(c,excludeSlotId){
@@ -11432,10 +11447,29 @@ function _dimFreshness(pc){
   return{dims,fresh,stale};
 }
 function chemCountBadge(c,excludeSlotId){
-  const pc=_shownCounts(c,excludeSlotId);
-  const bits=[_ordinal(pc.nat)+' '+c.nation];
-  if(pc.lg!=null)bits.push(_ordinal(pc.lg)+' '+c.league.replace('England ',''));
-  if(pc.clb!=null)bits.push(_ordinal(pc.clb)+' '+c.club);
+  // v17.8.13: display all chemistry axes that actually apply to the card's type, dropping the old
+  // Premier-League-normal carve-out that hid a normal's league. Per type:
+  //   normal -> league, nation, club   (its three real chem dimensions)
+  //   icon   -> nation, icon count     (icons have no league/club; their own stack is the icon count)
+  //   hero   -> nation, league, hero count
+  // Display only \u2014 slotPureCounts adds the type count additively; _shownCounts / _dimFreshness
+  // (which drive the all-fresh/all-none scoring) are deliberately left untouched.
+  const pc=slotPureCounts(c,excludeSlotId);
+  const bits=[];
+  if(c.type==='normal'){
+    if(pc.lg!=null)bits.push(_ordinal(pc.lg)+' '+c.league.replace('England ',''));
+    bits.push(_ordinal(pc.nat)+' '+c.nation);
+    if(pc.clb!=null)bits.push(_ordinal(pc.clb)+' '+c.club);
+  }else if(c.type==='icon'){
+    bits.push(_ordinal(pc.nat)+' '+c.nation);
+    if(pc.typ!=null)bits.push(_ordinal(pc.typ)+' Icon');
+  }else if(c.type==='hero'){
+    bits.push(_ordinal(pc.nat)+' '+c.nation);
+    if(pc.lg!=null)bits.push(_ordinal(pc.lg)+' '+c.league.replace('England ',''));
+    if(pc.typ!=null)bits.push(_ordinal(pc.typ)+' Hero');
+  }else{
+    bits.push(_ordinal(pc.nat)+' '+c.nation);
+  }
   return bits.join(' \u00b7 ');
 }
 // isCap: the captain slot is the very first pick, so every count is trivially "1st" on every
