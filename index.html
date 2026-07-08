@@ -109,7 +109,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.27</title>
+<title>Draft Solver v17.8.28</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -4512,7 +4512,20 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        type-as-given), and dropped the long-dead pre-v16.0 "exact-duplicate skip" rule. (3) Repointed
        the index's "DB card entry" line at the FAST PATH. No card data, solver, bound, UI, or weight
        changed. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.27</span></h1>
+  <!-- v17.8.28 -- FIX: three bugs where `copies` and `primary` were silently dropped on import or
+       edit. (1) IMPORT copies: the #dbFile handler rebuilt each record field-by-field but never read
+       p.copies, so round-tripping an exported DB reset every card to 1 copy. Now reads and clamps
+       (max 99); on a duplicate-key collision the merge keeps whichever side has the higher count.
+       (2) IMPORT primary: same handler never read p.primary, losing every card's designated primary
+       on import. Now reads, normPos()-canonicalises, and validates against the card's own pos array
+       (falls back to pos[0] if the stored primary isn't in the card's positions). On a collision the
+       merge keeps the existing record's primary if still valid in the unioned pos set, else falls
+       back to the incoming primary, then pos[0]. (3) EDIT FORM copies: the dbe-* inline edit form
+       had no Copies field, so saving any edit silently wiped the card's copy count. Added a Copies
+       number input (min 1, max 99, pre-filled from p.copies) in a flex row beside the Primary
+       position dropdown, matching the add-card form layout. saveDBEdit() now reads #dbe-copies and
+       writes it onto the updated entry the same way addToDB() already did. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.28</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -5850,15 +5863,23 @@ $('#dbFile').addEventListener('change',e=>{
     const before=playerDB.length;
     arr.forEach(p=>{
       if(!p||!p.name)return;
+      const cpIn=parseInt(p.copies,10);
+      const posArr=(p.pos||[]).map(normPos);
+      const prIn=p.primary?normPos(p.primary):null;
       const rec={name:p.name,rating:parseInt(p.rating)||0,type:(p.type||'normal'),
         nation:canonNation(p.nation||''),league:canonLeague(p.league),club:canonClub(p.club||null),
-        pos:(p.pos||[]).map(normPos)};
+        pos:posArr,primary:(prIn&&posArr.includes(prIn))?prIn:(posArr[0]||null),
+        copies:(cpIn&&cpIn>1)?Math.min(99,cpIn):undefined};
       const key=keyOf(rec);
       if(merged[key]){
-        // true duplicate (identical on every field including nation) - keep the canonical rec, union the positions
+        // true duplicate (identical on every field including nation) - keep the canonical rec, union the positions,
+        // keep whichever side recorded more copies (never silently lose copies you already had on file),
+        // and keep whichever primary is still valid against the unioned positions (prefer the existing one).
         const m=merged[key];
         const pos=Array.from(new Set([...(m.pos||[]),...rec.pos]));
-        merged[key]={...rec,pos};
+        const cp=Math.max(m.copies||1,rec.copies||1);
+        const primary=(m.primary&&pos.includes(m.primary))?m.primary:((rec.primary&&pos.includes(rec.primary))?rec.primary:(pos[0]||null));
+        merged[key]={...rec,pos,primary,copies:cp>1?cp:undefined};
       } else merged[key]=rec;
     });
     playerDB=Object.values(merged).filter(p=>p.name);rebuildRarity();
@@ -5981,8 +6002,12 @@ function openDBEdit(i,rowEl){
     <select id="dbe-club" style="font-size:13px">${clubsForLeague(leagueVal).map(c=>'<option'+(clubVal===c?' selected':'')+'>'+c+'</option>').join('')}</select></div>
     <label style="font-size:11px;color:var(--mut);display:block;margin-bottom:3px">Positions</label>
     <div style="margin-bottom:8px;line-height:1.8">${posChks}</div>
-    <label style="font-size:11px;color:var(--mut);display:block;margin-bottom:3px">Primary position <span style="color:var(--mut)">&mdash; options are limited to positions ticked above</span></label>
-    <select id="dbe-primary" style="font-size:13px;margin-bottom:8px"></select>
+    <div class="row" style="gap:8px;align-items:flex-end;margin-bottom:8px">
+      <div style="flex:2"><label style="font-size:11px;color:var(--mut);display:block;margin-bottom:3px">Primary position <span style="color:var(--mut)">&mdash; options are limited to positions ticked above</span></label>
+      <select id="dbe-primary" style="font-size:13px"></select></div>
+      <div style="flex:1"><label style="font-size:11px;color:var(--mut);display:block;margin-bottom:3px">Copies <span style="color:var(--mut)">&mdash; identical prints</span></label>
+      <input id="dbe-copies" type="number" value="${p.copies&&p.copies>1?p.copies:1}" inputmode="numeric" min="1" autocomplete="off" style="font-size:13px"></div>
+    </div>
     <div class="row" style="gap:6px">
       <button class="btn sm" style="flex:2" onclick="saveDBEdit(${i})">Save changes</button>
       <button class="btn gho sm" style="flex:1" onclick="cancelDBEdit()">Cancel</button>
@@ -6053,7 +6078,9 @@ function saveDBEdit(i){
     if(!LEAGUE_NAMES.includes(league)){err.textContent='Pick a valid league from the list.';return;}
     if(t==='normal')club=div.querySelector('#dbe-club').value;
   }
-  playerDB[i]={name,rating,type:t,nation,league,club,pos:pos.map(normPos),primary};
+  const cpIn=div.querySelector('#dbe-copies')?parseInt(div.querySelector('#dbe-copies').value,10):1;
+  const copies=(cpIn&&cpIn>1)?Math.min(99,cpIn):undefined;
+  playerDB[i]={name,rating,type:t,nation,league,club,pos:pos.map(normPos),primary,copies};
   rebuildRarity();
   setDBStatus(playerDB.length+' cards in the database.','var(--good)');_dbSave();
   div.remove();
