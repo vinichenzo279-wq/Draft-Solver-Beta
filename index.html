@@ -4570,9 +4570,18 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        impossible to set permanently in the DB source itself: it had to be re-entered by hand via the
        add/edit-card forms every session. Added copies:p.copies to loadDefaultDB()'s mapping, matching
        the other two paths. DEFAULT_DB itself is untouched -- no card currently has a copies field --
-       this only fixes the load path so one can now be added and will stick.
-       v17.8.31 Humanly done, possibly inconsistant or bugged. Adding a card to DB will no longer dedupe if primary position is not the same, if it is the same it will add a copy. Added Db entries also.
-       v17.8.32 Formation weight now considers both primary pos if a player has different positions, as a player being ranked high who has diff primary pos cards can go in either formation. KNOWN LIMITATION, same name players get deduped, but its very unlikely two same name players both have top rated cards. Potential fix would be to add a extra slot in the json that tracks by number 1 2 3 to seperate them, but this would be a difficult thing to add to UI. This is for now considered not worth the effort. Will be revisited later-->
+       this only fixes the load path so one can now be added and will stick. -->
+  <!-- v17.8.31 -- DB CHANGE (human-authored): adding a card to
+       the DB no longer dedupes it against an existing entry if the new card's primary position
+       differs from that entry's; if the primary position matches, it now adds a copy instead.
+       Also added DB entries. -->
+  <!-- v17.8.32 -- FORMATION WEIGHT (human-authored): now considers both primary positions when a
+       player has cards with different primary positions, since a highly-ranked player whose cards
+       have different primary positions can strengthen either formation. KNOWN LIMITATION:
+       same-name players still get deduped, but it's very unlikely two same-name players both hold
+       top-rated cards. A possible fix would be adding an extra slot to the JSON, numbered 1/2/3,
+       to separate them, but that would be difficult to add to the UI and is not considered worth
+       the effort for now. May be revisited later. -->
   <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.32</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
