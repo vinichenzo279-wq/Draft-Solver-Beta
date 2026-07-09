@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.31</title>
+<title>Draft Solver v17.8.32</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -4571,8 +4571,9 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        add/edit-card forms every session. Added copies:p.copies to loadDefaultDB()'s mapping, matching
        the other two paths. DEFAULT_DB itself is untouched -- no card currently has a copies field --
        this only fixes the load path so one can now be added and will stick.
-       v17.8.31 Humanly done, possibly inconsistant or bugged. Adding a card to DB will no longer dedupe if primary position is the same, if it is it will add a copy-->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.31</span></h1>
+       v17.8.31 Humanly done, possibly inconsistant or bugged. Adding a card to DB will no longer dedupe if primary position is not the same, if it is the same it will add a copy. Added Db entries also.
+       v17.8.32 Formation weight now considers both primary pos if a player has different positions, as a player being ranked high who has diff primary pos cards can go in either formation -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.32</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -11356,10 +11357,17 @@ function _buildGoldPool(){
     const src=playerDB.length?playerDB:DEFAULT_DB;
     const names=new Set(src.map(c=>c.name)), withPr=new Set(src.filter(c=>c.primary).map(c=>c.name));
     if(names.size>0&&withPr.size/names.size>=0.6){
-      const byPerson={};
-      for(const c of src){if(!c.primary)continue;const prev=byPerson[c.name];if(!prev||c.rating>prev.rating)byPerson[c.name]=c;}
-      const pool=[];let gid=1;
-      for(const k in byPerson){const c=byPerson[k];
+      const byPersonPrimary={};
+for(const c of src){
+  if(!c.primary)continue;
+  const pr=normPos(c.primary);
+  if(!pr)continue;
+  const key=(c.name||'').trim().toLowerCase()+'|'+pr;
+  const prev=byPersonPrimary[key];
+  if(!prev||c.rating>prev.rating)byPersonPrimary[key]=c;
+}
+const pool=[];let gid=1;
+for(const k in byPersonPrimary){const c=byPersonPrimary[k];
         pool.push({id:gid++,label:c.name,name:c.name,rating:c.rating,type:c.type||'normal',
           nation:c.nation||'',league:leagueOf(c),club:c.club||'',pos:[normPos(c.primary)]});}
       if(pool.length>=30)return pool; // sanity floor: don't let a tiny primary-tagged subset masquerade as the whole pool
