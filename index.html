@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.36</title>
+<title>Draft Solver v17.8.37</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2805,7 +2805,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          W. Full-solver soundness re-run against the live harness (contrast with V).
          X. Final tiered soundness testing results/conclusion.
          Y. Maximum-size 23x5 / 115-player full-search result and what it proves.
-         Z. Deferred deep-search resume/stop/partial-result ideas, including a clean design sketch.
+         Z. Deferred deep-search resume/stop/partial-result and deadweight-advice ideas, including a clean design sketch.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -4235,14 +4235,20 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   -->
 
   <!-- FOR FUTURE MAINTAINERS —
-       Z. DEFERRED DEEP-SEARCH RESUME / STOP / PARTIAL-RESULT IDEAS (added v17.8.36,
-          documentation only — DO NOT IMPLEMENT YET). Potential items to review later:
+       Z. DEFERRED DEEP-SEARCH RESUME / STOP / PARTIAL-RESULT / DEADWEIGHT-ADVICE IDEAS
+          (added v17.8.36; expanded v17.8.37, documentation only — DO NOT IMPLEMENT YET).
+          Potential items to review later:
             1. Make each 3x escalation continue from the exact frontier where the preceding search
                stopped, instead of beginning a fresh traversal. Reusing the previous best score as
                a seed is useful pruning, but it is not true continuation.
             2. Add a Stop control for long serial/deep searches, not only the parallel-worker path.
             3. When a parallel search is stopped, still render the best complete XI found so far,
                including work from workers that were still running at the moment Stop was pressed.
+            4. Upgrade the 50+ card deadweight warning so it can identify likely deadweight options
+               and advise which specific cards to remove, instead of only reporting the board size.
+               Possible evidence includes options whose evaluations are consistently dominated because
+               they repeatedly create chemistry clashes, and cards that never appear in any best or
+               top-scoring XI observed during the solve. This is advisory only and is also deferred.
 
           CURRENT STATUS / DEFERRAL: previous attempts at these ideas repeatedly achieved one part
           only by breaking something more important — correctness, cap accounting, result rendering,
@@ -4270,6 +4276,12 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
             - For parallel continuation, checkpoint every root partition separately and preserve
               exact per-worker/global node accounting. A shared incumbent may safely improve pruning,
               but every resumed frontier node must still re-check its bound against that incumbent.
+            - Build deadweight advice as a separate, explainable post-solve analysis rather than part
+              of pruning. Track option-level participation in complete best/tied XIs and aggregate the
+              evaluation/clash reasons that repeatedly suppress each option. Suggestions should carry
+              confidence labels: strong only after an exhaustive, tie-complete search; heuristic after
+              a capped, skip-ties, diversity, stopped, or partial parallel run. Suggest removals only —
+              never remove automatically — and keep the analysis option-level inside each hold.
 
           WHY THE OBVIOUS VERSIONS USUALLY FAIL:
             - solveBest is currently a synchronous recursive DFS. Its real continuation point lives
@@ -4292,6 +4304,12 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
               pruning timing, tie collection, diversity behavior, and parallel budget semantics.
               That is why a clean iterative/chunked solver core plus regression and soundness tests
               should come before any user-facing resume/stop feature.
+            - "Never appeared in a top squad" is not proof of deadweight when a search was capped,
+              stopped, run with skip-ties/diversity, or merged from incomplete workers; an unvisited
+              equal or better branch may still need that card. Likewise, helper evaluations and clash
+              labels are context-dependent: removing another option or changing the XI can reverse
+              them. The current solver does not retain complete per-card participation/proof metadata,
+              so a naive suggestion list can confidently recommend removing a useful card.
   -->
 
   <!-- left in section C's place above). Superseded by section H; kept here only for the rare case
@@ -4679,7 +4697,12 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        and the reasons previous approaches break more important behavior. Also moved only the capped-
        search message's "going much deeper may not be worthwhile" threshold from >30M to >100M; the
        actual 30M long-search confirmation gates and all search logic remain unchanged. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.36</span></h1>
+  <!-- v17.8.37 -- DOCUMENTATION ONLY, no solver/UI behavior changed. Expanded section Z with the
+       deferred idea for the 50+ card deadweight warning to identify likely deadweight and suggest
+       specific removals using repeated-clash/evaluation evidence and participation in top-scoring XIs.
+       Added a cautious post-solve design and documented why capped, skip-ties, diversity, stopped, or
+       partial-worker searches make naive "never selected" advice unreliable. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.37</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
