@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.64</title>
+<title>Draft Solver v17.8.65</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2805,7 +2805,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          W. Full-solver soundness re-run against the live harness (contrast with V).
          X. Final tiered soundness testing results/conclusion.
          Y. Maximum-size 23x5 / 115-player full-search result and what it proves.
-         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 REJECTED PERMANENTLY v17.8.57 — bounded benefit, unbounded silent-false-proof risk; item 4's chemistry-clash evidence still deferred; item 7 ADDED v17.8.59, DEFERRED, then ATTEMPTED v17.8.61 — sub-idea (a) found infeasible (a busy worker can't receive inbound messages mid-DFS), (b) shared-atomic-incumbent and (c) bound-sorted root partitioning IMPLEMENTED, fuzz-verified off-tree but not yet the full 12-regime harness; item 8 ADDED v17.8.64, DEFERRED — completeOOP's in-position sub-solve still has no Worker/Stop, unlike the main solve and bench/manager pass) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
+         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 REJECTED PERMANENTLY v17.8.57 — bounded benefit, unbounded silent-false-proof risk; item 4's chemistry-clash evidence still deferred; item 7 ADDED v17.8.59, DEFERRED, then ATTEMPTED v17.8.61 — sub-idea (a) found infeasible (a busy worker can't receive inbound messages mid-DFS), (b) shared-atomic-incumbent and (c) bound-sorted root partitioning IMPLEMENTED, fuzz-verified off-tree but not yet the full 12-regime harness; item 8 ADDED v17.8.64, IMPLEMENTED v17.8.65 — completeOOP's in-position sub-solve now runs in its own Worker with the shared Stop button and live progress, sync path kept as fallback; item 9 ADDED v17.8.65 — closing catalogue of parallel/diversity interaction ideas considered and REJECTED or deferred (diversity on multi-worker, diversity on one-worker, cross-product root splits, dynamic work-queue), with failure modes) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -4257,10 +4257,13 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           (b) SHARED ATOMIC INCUMBENT was implemented as its corrected realization, plus (c)
           BOUND-SORTED ROOT PARTITIONING; both fuzz-verified off-tree against an independent brute
           force but NOT yet run through the full 12-regime harness per F.2/Q.2. Item 8 ADDED
-          v17.8.64 as a DEFERRED backlog item -- completeOOP's in-position sub-solve is still a
-          synchronous main-thread solveWithDiversity() call with no Worker and no Stop button,
-          unlike the main solve (items 2/3) and the bench/manager pass (item 6); see the item for
-          the proposed approach, not yet attempted.)
+          v17.8.64 as a DEFERRED backlog item, then IMPLEMENTED v17.8.65 exactly per its own sketch --
+          completeOOP's in-position sub-solve now runs in a dedicated Worker (_buildOopWorkerBlob /
+          _oopRun / _stopOopRun) with the shared Stop button and live progress, keeping the old
+          synchronous call as the no-Worker/failure fallback; see the item. Item 9 ADDED v17.8.65 --
+          a closing catalogue of the remaining parallel/diversity interaction ideas that were
+          CONSIDERED AND REJECTED (or consciously deferred), with the failure modes, so they are not
+          re-derived from scratch.)
           Potential items to review later:
             1. Make each 3x escalation continue from the exact frontier where the preceding search
                stopped, instead of beginning a fresh traversal. Reusing the previous best score as
@@ -4510,33 +4513,110 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                their own pending-harness status. Do not treat this as fully proven until that harness
                runs clean.
 
-            8. (added v17.8.64, DEFERRED -- not attempted) MAKE THE EMERGENCY-FILL (completeOOP)
+            8. (added v17.8.64, DEFERRED -- IMPLEMENTED v17.8.65) MAKE THE EMERGENCY-FILL (completeOOP)
                IN-POSITION SUB-SOLVE STOP-ABLE, THE SAME WAY ITEM 6 DID FOR BENCH/MANAGER.
                completeOOP() (the "no legal full XI" fallback, entered via _handleSolveResult ->
                _renderEmergencyFill -> _renderEmergencyFillInner whenever the real solve returns
-               r.error or zero bestXIs) calls solveWithDiversity() SYNCHRONOUSLY on the main thread
-               for its in-position sub-solve. It never goes through _runSolveParallel, never spawns a
-               Worker, and never shows #solverStopBtn -- so a long emergency-fill search (especially
-               the "Search to the end" button, cap=1e12) can hang with literally no way to stop it,
+               r.error or zero bestXIs) called solveWithDiversity() SYNCHRONOUSLY on the main thread
+               for its in-position sub-solve. It never went through _runSolveParallel, never spawned a
+               Worker, and never showed #solverStopBtn -- so a long emergency-fill search (especially
+               the "Search to the end" button, cap=1e12) could hang with literally no way to stop it,
                the exact class of problem items 2/3/6 already fixed for the main solve and the
-               bench/manager pass. Confirmed by inspection, not yet fixed.
-               PROPOSED APPROACH (unimplemented): completeOOP is mutually exclusive with both _parRun
-               and _benchRun for the same reason item 6's pass is -- it only ever starts after the
-               main solve has already finished or been stopped -- so the identical re-scoping applies:
-               wrap the in-position solveWithDiversity() call in its own dedicated Worker (mirroring
-               _buildBenchWorkerBlob/_analyzeTiesAsync's shape: postMessage the sub-form/cards/cap/
-               seed in, periodic onSnapshot-style progress back, a final message on completion),
-               route the shared #solverStopBtn to it the same way _stopParallelSolve already checks
-               _benchRun first (add an _oopRun check alongside it), and keep today's synchronous
-               completeOOP() as the no-Worker-support/failure fallback -- same pattern every other
-               item in this section already uses. The OOP brute-force permutation stage AFTER the
+               bench/manager pass.
+               IMPLEMENTED v17.8.65 per the approach sketched here in v17.8.64, with these specifics:
+               completeOOP is mutually exclusive with both _parRun and _benchRun for the same reason
+               item 6's pass is -- it only ever starts after the main solve has already finished or
+               been stopped -- so the identical re-scoping applied: the in-position
+               solveWithDiversity() call runs in its own dedicated Worker (_buildOopWorkerBlob,
+               mirroring _buildBenchWorkerBlob/_analyzeTiesAsync's shape: sub-form/cards/cap/seed/
+               skip-ties/diversity-plan posted in, periodic onSnapshot-style progress back with
+               CROSS-PHASE node accumulation, a final message on completion), the shared
+               #solverStopBtn routes to it via an _oopRun check in _stopParallelSolve alongside the
+               existing _benchRun one, and today's synchronous completeOOP() path is kept verbatim as
+               the no-Worker-support/failure fallback -- same pattern every other item in this
+               section already uses. Two details the original sketch didn't spell out, now load-
+               bearing: (a) the blob must serialize solveWithDiversity itself (the bench blob's
+               function list doesn't include it) -- but NOT mkPlan or any main-thread UI readers,
+               since the diversity plan is read once on the main thread and shipped as data; (b) the
+               sub-problem definition (coverable-slot sub-form, rating-desc order, probe seed) was
+               extracted into ONE builder, _oopSubTask, used by BOTH completeOOP's sync path and the
+               worker launcher, and the worker's finished (or Stop-merged partial) result is injected
+               back through completeOOP's new preSub parameter -- so tie-break, spare pool,
+               permuteOOP, and the return shape are the SAME code on both paths, no second assembler
+               to drift (section-H-style single-source discipline). Stop is terminate-based with the
+               latest snapshot kept, exactly like the main solve; a Stop before the first 500k-node
+               snapshot injects an empty capped result, which completeOOP's existing no-result branch
+               turns into the instant greedy partial. The OOP brute-force permutation stage AFTER the
                in-position solve (permuteOOP(), scoring spare-card assignments into uncoverable slots)
-               is out of scope for this item: it is already its own nodeCap-bounded loop over a
-               typically small sparePool, cheap relative to the in-position DFS, so it was left
-               synchronous the same way item 6 left its own small fixed-cost pieces alone. NOT
-               IMPLEMENTED -- deferred pending confirmation this is worth the same worker-blob/
-               message-protocol/teardown machinery item 6 already paid for once; flagged here so a
-               future pass doesn't have to re-derive the diagnosis from scratch.
+               stayed synchronous per the original scoping: it is already its own nodeCap-bounded loop
+               over a typically small sparePool, cheap relative to the in-position DFS, same way item
+               6 left its own small fixed-cost pieces alone.
+
+            9. (added v17.8.65) CLOSING CATALOGUE: PARALLEL/DIVERSITY INTERACTION IDEAS CONSIDERED
+               AND REJECTED (OR CONSCIOUSLY DEFERRED). All four below came out of the same v17.8.65
+               review that implemented item 8. None are implemented; each entry records WHY, so a
+               future pass weighing "could this be an improvement?" starts from the failure analysis
+               instead of re-deriving it. Some genuinely could be improvements in narrow conditions --
+               the rejections are about risk/benefit against this file's correctness-first bar, not
+               claims of impossibility.
+                 a. DIVERSITY PLAN ON THE MULTI-WORKER PARALLEL PATH -- REJECTED. The "(does not work
+                    with parallel search)" label is a design decision, not an omission. Each
+                    partitioned worker running its own multi-phase plan breaks three invariants at
+                    once: (1) budget semantics -- perCap=ceil(cap/W) split AGAIN into phase fractions
+                    means the divstatic guarantee ("phase 1 establishes a strong incumbent") holds
+                    per-worker-per-slice, not for the search, and the measured sweet spots (50-75%,
+                    8-16 passes) were calibrated against a WHOLE budget, so the tuning advice becomes
+                    silently wrong; (2) the nodes>=cap completeness discriminator in _finishParallel
+                    assumes each worker ran ONE search against perCap -- phase-sliced workers cap in
+                    ways that make "aggregate reached global cap" no longer mean "budget exhausted";
+                    (3) the shuffle passes' whole value is exploring DIFFERENT tree regions, but the
+                    root partition already forces each worker into a disjoint region -- shuffling
+                    WITHIN a partition re-explores a slice that is already diversity by construction,
+                    so the expected gain is much smaller than the serial measurements suggest while
+                    the semantic damage is full-price. Also note each worker already runs plain
+                    divstatic (the strongest single ordering per the v12.x data), so the parallel
+                    path is not missing the proven-best default, only the optional alternates.
+                 b. DIVERSITY PLAN ON THE ONE-WORKER SERIAL PATH (forceW===1) -- FEASIBLE, DEFERRED.
+                    This is the one combination with no semantic conflict: forceW===1 runs the exact
+                    serial tree in a single worker purely so Stop + live progress work, and a
+                    diversity plan there would be the SAME solveWithDiversity call the true serial
+                    path makes today, just off the main thread. It is deferred, not rejected: doing
+                    it means either serializing solveWithDiversity into _buildSolverWorkerBlob (a
+                    second blob now carries phase-plan semantics -- and note the OOP blob added by
+                    item 8 ALREADY does exactly this, so the pattern is proven in-file and that blob
+                    is the template to copy) or routing diversity solves through the OOP-style blob.
+                    Benefit is real but narrow: today a diversity run (shuffle passes > 0, parallel
+                    off) is the LAST main-solve configuration that still blocks the main thread with
+                    no Stop -- the _oneWorker gate in runSolve excludes it explicitly. If a user
+                    reports a hung diversity run, this is the fix, and it is now cheap; until then it
+                    stays deferred to avoid carrying two copies of solveWithDiversity's serialization
+                    surface for a path with a visible UI warning already on it.
+                 c. TWO-SLOT CROSS-PRODUCT ROOT PARTITIONING (to reach the full 64 workers) --
+                    REJECTED. Single-slot partitioning can never split wider than the largest
+                    per-slot candidate pool, and a draft has ~23-30 cards total, so 64 real
+                    partitions are STRUCTURALLY unreachable today -- the 64 ceiling on the slider is
+                    aspirational headroom, not a promise. Partitioning on (slot A candidate x slot B
+                    candidate) pairs would multiply the split width and is sound in principle (every
+                    legal XI has exactly one such pair), BUT: many pairs are jointly infeasible (same
+                    card, same hold group), producing EMPTY partitions that consume perCap budget
+                    while searching nothing -- the exact phantom-worker budget-starvation bug class
+                    v17.8.63 just eliminated, reintroduced by design; the nodes>=cap discriminator
+                    breaks the same way it did in that bug; it needs a second rootAllow threading
+                    through solveBest's signature and the worker blob (solver-touching, full
+                    12-regime harness bar per F.2/Q.2); and the wall-clock benefit is ~zero, because
+                    splits beyond navigator.hardwareConcurrency only time-slice the same cores.
+                 d. DYNAMIC WORK-QUEUE SCHEDULING (spawn ~hardwareConcurrency workers, chunk root
+                    candidates finely, feed the next chunk as each worker finishes, redistribute
+                    unspent budget) -- DEFERRED, and this is the RIGHT future shape if worker load
+                    imbalance ever measurably hurts. It solves the actual problem the "more splits"
+                    instinct approximates (one worker owning a huge subtree while siblings sit idle
+                    with spent-nothing budgets) without any of item c's soundness traps. Rejected for
+                    now because it is structurally invasive to exactly the machinery items 2/3/6/7
+                    carefully stabilized: per-worker cap accounting (perCap stops being a constant),
+                    the capped/workerCapSoft discriminators, snapshot bookkeeping (a worker's snaps
+                    span multiple chunks), and the Stop merge. Note also that item 7b's shared atomic
+                    floor + 7c's bound-sorted round-robin already claw back most of the imbalance
+                    cost cheaply -- measure against those before paying for this.
 
           CURRENT STATUS / DEFERRAL (item 1, and item 4's aggregated clash-reason evidence): previous
           attempts at these ideas repeatedly achieved one part only by breaking something more
@@ -5435,7 +5515,33 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        This also makes every partition non-empty whenever W>1, which is the precondition the
        nodes>=cap completeness check at _finishParallel already relied on but hadn't been guaranteed
        until now (see comment there). -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.64</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.65</span></h1>
+  <!-- v17.8.65 -- SECTION Z ITEM 8 IMPLEMENTED (emergency-fill Stop button) + UI copy + item 9.
+       (1) completeOOP's in-position sub-solve now runs in a dedicated Worker: _buildOopWorkerBlob
+       (serializes solveWithDiversity + its solveBest dependency chain; diversity plan and skip-ties
+       shipped as data, cross-phase node accumulation in the snapshot wrapper), _oopRun state,
+       _stopOopRun (terminate + latest snapshot kept, exactly the main solve's Stop semantics; a
+       stop before the first 500k-node snapshot injects an empty capped result, which completeOOP's
+       existing no-result branch renders as the instant greedy partial). The shared #solverStopBtn
+       routes to it via an _oopRun check in _stopParallelSolve next to the _benchRun one. The
+       sub-problem definition (coverable-slot sub-form / rating-desc order / probe seed) was
+       extracted to _oopSubTask, single-sourced between completeOOP's synchronous path and the
+       worker launcher; the worker's result (final or Stop-merged partial) is injected back through
+       completeOOP's new optional preSub parameter, so tie-break/spare-pool/permuteOOP/return-shape
+       are the same code on both paths. The pre-17.8.65 synchronous path is kept VERBATIM as the
+       no-Worker/blob-failure/worker-error fallback (also the iOS-safe path). The "cut short" box
+       now says "stopped early" (no misleading budget number) when the cut was a user Stop
+       (em.stoppedEarly). permuteOOP intentionally left synchronous per item 8's own scoping.
+       (2) Search-diversity UI copy: label now says shuffle passes must be > 0 (the %divstatic
+       slider alone has NEVER done anything -- _diversityPlan() is null at 0 passes -- this was
+       undocumented, not new), and the explainer paragraph was condensed with the same facts.
+       (3) Section Z item 9 added: closing catalogue of the parallel/diversity interaction ideas
+       reviewed this pass and REJECTED or consciously deferred (diversity on the multi-worker path,
+       diversity on the forceW===1 one-worker path, two-slot cross-product root partitioning to
+       reach 64 workers, dynamic work-queue scheduling), each with its concrete failure mode so
+       future passes don't re-derive them. No solver-core (solveBest/scoreXI/trueChem) logic was
+       touched; the worker blob serializes the page's live function sources, so section H's
+       copies-in-sync rule is not implicated. -->
   <!-- v17.8.64 -- DOCUMENTATION ONLY, no logic/UI change. Added item 8 to section Z of the FOR
        FUTURE MAINTAINERS block (backlog, DEFERRED): completeOOP's in-position sub-solve
        (solveWithDiversity, called synchronously from _renderEmergencyFillInner) has no Worker and
@@ -5646,12 +5752,12 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <p class="tiny" style="margin:4px 0 0">Only search for squads reaching this final score (incl. manager +2). 0 = off.</p>
       </div>
       <div style="margin-top:14px">
-        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Search diversity &mdash; <span id="divPctLabel" style="color:var(--ink);font-weight:800">100%</span> divstatic <span style="text-transform:none;letter-spacing:0;color:var(--warn);font-weight:600">(does not work with parallel search)</span></label>
+        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Search diversity &mdash; <span id="divPctLabel" style="color:var(--ink);font-weight:800">100%</span> divstatic <span style="text-transform:none;letter-spacing:0;color:var(--warn);font-weight:600">(needs shuffle passes &gt; 0 &mdash; does not work with parallel search)</span></label>
         <input type="range" id="divPctSlider" min="0" max="100" step="5" value="100" style="width:100%;margin:0 0 2px;accent-color:var(--cyan)" oninput="_updDivPctLbl()" onchange="saveAdvSettings();_solveCache=null;">
         <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:10px"><span>0% (all shuffle)</span><span>50 / 50</span><span>100% (all divstatic)</span></div>
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Shuffle passes (0&ndash;256)</label>
         <input type="number" id="shuffleCount" min="0" max="256" value="0" inputmode="numeric" style="width:100%" onblur="_clampShuffleCount(this);saveAdvSettings();_solveCache=null;">
-        <p class="tiny" style="margin:4px 0 0">Splits the <b>same</b> node cap into phases: a <b>%divstatic</b> share first (best-first, establishes a strong incumbent), then that many even, independently-seeded <b>shuffle</b> passes exploring different regions of the tree &mdash; keeping whichever phase scored highest. Any phase that finishes its whole tree still returns the proven optimum. Note: this can occasionally score <i>below</i> 0 shuffle passes at the same budget &mdash; shrinking %divstatic isn't free, since divstatic itself sometimes still needs its later budget to improve, not just to prove it's already optimal. Tested sweet spot: <b>50&ndash;75% divstatic with 8&ndash;16 shuffle passes</b>; low %divstatic (&le;25%) tested as a net loss regardless of pass count, and gains from more passes taper off past ~16&ndash;24.</p>
+        <p class="tiny" style="margin:4px 0 0">Splits the <b>same</b> node cap into a <b>%divstatic</b> phase (best-first) followed by that many independently-seeded <b>shuffle</b> passes, keeping the best result found. A phase that finishes its whole tree still returns the proven optimum. Can occasionally score <i>below</i> 0 passes at the same budget. Tested sweet spot: <b>50&ndash;75% divstatic with 8&ndash;16 passes</b>; &le;25% divstatic tested as a net loss, and gains taper off past ~16&ndash;24 passes. With <b>0 shuffle passes both controls do nothing</b> (plain divstatic solve).</p>
       </div>
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Bench analysis depth</label>
@@ -8459,6 +8565,7 @@ function _mergeWorkerResults(list){
 }
 function _stopParallelSolve(){
   if(_benchRun){_stopBenchRun();return;} // v17.8.51: the one Stop button is shared — during the worker-backed bench/manager pass it stops THAT (never live at the same time as a main-solve run)
+  if(_oopRun){_stopOopRun();return;} // v17.8.65 (section Z item 8): same sharing rule for the worker-backed emergency-fill sub-solve (never live at the same time as either of the above)
   const run=_parRun; if(!run||run.stopped)return;
   run.stopped=true;
   // v17.8.41 (section Z item 3): merge finished worker results WITH the latest periodic snapshot
@@ -8676,20 +8783,41 @@ function greedyPartial(form){
 // DO have eligible cards (using the real DFS solver), then drop the best remaining cards
 // OUT OF POSITION into any slots still empty. This means a single bust = a free slot and the
 // solver still finds the best legal arrangement before falling back.
-function completeOOP(form,nodeCap,ratingCeil){
+// v17.8.65 (section Z item 8): the in-position sub-solve's inputs (sub-form of coverable slots,
+// rating-desc card order, probe seed) extracted into ONE builder used by BOTH completeOOP's
+// synchronous path and _renderEmergencyFill's worker launcher — a single source so the worker can
+// never solve a different sub-problem than the sync path would have (same drift discipline as
+// section H's solver-copy rule). noProbe skips the probe-floor pre-solve when the caller already
+// has a finished sub-result to inject (the probe only exists to seed a solve that isn't happening).
+function _oopSubTask(form,cap,RC,noProbe){
+  const slots=form.slots;
+  const cand=slots.map(s=>cards.filter(c=>c.pos.includes(s)));
+  const coverableIdx=slots.map((_,i)=>cand[i].length>0?i:-1).filter(i=>i>=0);
+  if(!coverableIdx.length)return null; // every slot uncoverable — nothing for the real solver to scope to
+  const subForm={name:form.name,slots:coverableIdx.map(i=>slots[i])};
+  const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
+  const seed=(!noProbe&&cap>2000000)?_probeFloor(subForm,sortedCards,RC):null;
+  return {subForm,sortedCards,seed,coverableIdx};
+}
+function completeOOP(form,nodeCap,ratingCeil,preSub){
   const cap=nodeCap||getNodeCap(); // same 5M-default / x3-escalation budget as the main solver
   const RC=ratingCeil!==undefined?ratingCeil:getRatingCeil(); // same Rating Ceiling as the main solver
   const slots=form.slots;
   const groupOf=c=>c.hold||('C'+c.id);
-  const cand=slots.map(s=>cards.filter(c=>c.pos.includes(s)));
-
-  const coverableIdx=slots.map((_,i)=>cand[i].length>0?i:-1).filter(i=>i>=0);
 
   const pick=new Array(slots.length).fill(null);
   const oop=new Array(slots.length).fill(false);
-  let subCapped=false,subForm=null;
+  let subCapped=false,subStopped=false,subForm=null;
 
-  if(coverableIdx.length>0){
+  // v17.8.65 (section Z item 8): preSub, when present, is {r} — a FINISHED solveWithDiversity-shaped
+  // result for the exact sub-problem _oopSubTask defines, computed in _renderEmergencyFill's
+  // dedicated Worker (or a Stop-merged partial snapshot from it, marked capped+stoppedEarly).
+  // Injecting it here means the whole rest of this function — tie-break, spare pool, permuteOOP,
+  // return shape — runs IDENTICALLY for the worker path and the synchronous path; only WHERE the
+  // in-position DFS ran differs. No preSub (worker unavailable/failed, or any legacy caller) is
+  // byte-identical to the pre-17.8.65 synchronous behavior.
+  const task=_oopSubTask(form,cap,RC,!!(preSub&&preSub.r));
+  if(task){
     // Build a sub-form with only the coverable slots and run the real solver on it.
     // v13.3: this now goes through the SAME machinery a clean main solve gets -- rating-desc card
     // order, an admissible probe-floor seed, the Search-diversity plan, and Skip ties -- via
@@ -8698,11 +8826,10 @@ function completeOOP(form,nodeCap,ratingCeil){
     // the in-position portion gets the same speed/quality within the same node cap that a clean
     // draft's solve would. Target score is intentionally NOT threaded through here -- it's defined
     // against a full 11-man final score and has no coherent meaning against a sub-form missing slots.
-    subForm={name:form.name,slots:coverableIdx.map(i=>slots[i])};
-    const sortedCards=cards.slice().sort((a,b)=>helpValue(b)-helpValue(a));
-    const seed=(cap>2000000)?_probeFloor(subForm,sortedCards,RC):null;
-    const r=solveWithDiversity(subForm,sortedCards,cap,RC,seed?seed.seedBest:undefined,seed?seed.seedXIs:undefined,_skipTies(),_diversityPlan());
-    subCapped=!!r.capped;
+    subForm=task.subForm;
+    const r=(preSub&&preSub.r)?preSub.r
+      :solveWithDiversity(subForm,task.sortedCards,cap,RC,task.seed?task.seed.seedBest:undefined,task.seed?task.seed.seedXIs:undefined,_skipTies(),_diversityPlan());
+    subCapped=!!r.capped;subStopped=!!r.stoppedEarly;
     if(r.bestXIs&&r.bestXIs.length){
       // v13.3: if the sub-solve found several tied-optimal in-position arrangements, break the tie
       // the SAME way a clean solve does -- Bench mode feeding true +2/+1 Manager depth analysis
@@ -8710,11 +8837,11 @@ function completeOOP(form,nodeCap,ratingCeil){
       // depth is off -- instead of always taking bestXIs[0], which was an arbitrary pick among
       // position-equivalent ties.
       const bestXI=_pickTieWinner(r.bestXIs,subForm).xi;
-      coverableIdx.forEach((slotI,k)=>{pick[slotI]=bestXI[k];});
+      task.coverableIdx.forEach((slotI,k)=>{pick[slotI]=bestXI[k];});
     } else {
       // Fallback: greedy partial for the coverable slots
       const part=greedyPartial(form);
-      coverableIdx.forEach(i=>{if(part.pick[i])pick[i]=part.pick[i];});
+      task.coverableIdx.forEach(i=>{if(part.pick[i])pick[i]=part.pick[i];});
     }
   }
 
@@ -8767,7 +8894,7 @@ function completeOOP(form,nodeCap,ratingCeil){
     finalSc=scoreXI(pick); finalChem=trueChem(pick);
   }
   const full11=finalPick.every(Boolean);
-  return {slots,pick:finalPick,oop:finalOop,full11,sc:finalSc,chem:finalChem,oopCount:oopSlotIdx.length,capped:subCapped||permCapped,cap,subForm};
+  return {slots,pick:finalPick,oop:finalOop,full11,sc:finalSc,chem:finalChem,oopCount:oopSlotIdx.length,capped:subCapped||permCapped,stoppedEarly:subStopped,cap,subForm};
 }
 // v13.3: winner-selection slice of _analyzeTies (see main solve, further down), factored out so
 // completeOOP's sub-solve can break ties among optimal in-position XIs the same way a clean solve
@@ -8809,8 +8936,46 @@ function _pickTieWinner(bestXIs,form){
 }
 // Renders the emergency-fill (OOP) result for a given node cap. Pulled out of _handleSolveResult so
 // the "Keep searching" button can re-run completeOOP at 3x the cap without duplicating the markup.
-// Public entry point: shows the "searching, don't touch anything" overlay and lets it paint before
-// the synchronous completeOOP work runs, same as runSolve/_begin does for the main solver.
+// v17.8.65 (section Z item 8, IMPLEMENTED): the expensive in-position sub-solve now runs in its own
+// dedicated Worker (mirroring _analyzeTiesAsync/_buildBenchWorkerBlob's shape) so the shared
+// #solverStopBtn works here too — previously a long emergency-fill search (especially "Search to
+// the end", cap=1e12) was a synchronous main-thread solveWithDiversity() with literally no way to
+// stop it, the exact class of problem items 2/3/6 already fixed for the main solve and the
+// bench/manager pass. The worker computes ONLY the in-position sub-solve (the expensive DFS);
+// everything after — _pickTieWinner tie-break, spare pool, permuteOOP, rendering — stays on the
+// main thread inside completeOOP exactly as before, fed via completeOOP's preSub injection point,
+// so the worker path and the sync path share every line of post-solve logic (no second assembler
+// to drift). permuteOOP stays synchronous per item 8's own scoping: it's a nodeCap-bounded loop
+// over a typically small sparePool, cheap relative to the in-position DFS. The synchronous path is
+// kept verbatim as the no-Worker-support / blob-failure / worker-error fallback — same pattern as
+// every other worker-backed pass in this file (and the iOS-safe path).
+function _buildOopWorkerBlob(){
+  // Same serialize-by-toString discipline as _buildSolverWorkerBlob/_buildBenchWorkerBlob: every
+  // function solveWithDiversity reaches must be in this array or it won't exist in the worker's
+  // scope (solveWithDiversity itself only calls solveBest; the diversity plan arrives as DATA in
+  // d.plan, so mkPlan is NOT needed here — do not "helpfully" add main-thread UI readers like
+  // _diversityPlan/_skipTies, they're read once on the main thread and shipped in the payload).
+  // solveBest is wrapped to inject the existing onSnapshot param (same shape the bench blob uses):
+  // every 500k nodes the current phase's monotonic incumbent snapshot is forwarded as a progress
+  // message, with __acc adding the nodes of already-FINISHED phases so the count shown (and any
+  // Stop-merged partial) is the cross-phase total, not just the current phase's. Each snapshot is
+  // marked capped:true because a snapshot is by definition an unfinished search — _stopOopRun feeds
+  // the latest one straight into completeOOP's preSub as a capped partial, exactly like the main
+  // solve's terminate-with-snapshots Stop. Snapshots are monotonic ACROSS phases too: each phase's
+  // solveBest is seeded with the best-so-far from the phases before it (see solveWithDiversity's
+  // loop), so a later phase's snapshot can never report a worse incumbent than an earlier one.
+  const src=[futRatingRaw,leagueOf,trueChemPerCard,trueChem,scoreXI,solveBest,solveWithDiversity].map(f=>f.toString()).join('\n')
+    +'\nvar __acc=0;'
+    +'var __sbRaw=solveBest;solveBest=function(f,c,n,rc,sb,sx,st,ds,ra,os){'
+    +'var r=__sbRaw(f,c,n,rc,sb,sx,st,ds,ra,os||function(s){s.progress=true;s.capped=true;s.nodes=__acc+(s.nodes||0);postMessage(s);});'
+    +'__acc+=r.nodes||0;return r;};'
+    +'onmessage=function(e){var d=e.data;var r;'
+    +'try{r=solveWithDiversity(d.form,d.cards,d.nodeCap,d.ratingCeil,d.seedBest,d.seedXIs,d.skipTies,d.plan);}'
+    +'catch(err){postMessage({fatal:String(err&&err.message||err)});return;}'
+    +'postMessage({final:true,best:r.best,bestXIs:(r.bestXIs||[]).map(function(x){return {xi:x.xi,sc:x.sc};}),nodes:r.nodes,capped:!!r.capped,maxRating:r.maxRating,error:r.error||null});};';
+  return URL.createObjectURL(new Blob([src],{type:'application/javascript'}));
+}
+let _oopRun=null; // active worker-backed emergency-fill sub-solve, or null. Mutually exclusive with _parRun AND _benchRun for the same lifecycle reason item 6's pass is: the emergency path only ever starts after the main solve has already finished or been stopped, and the bench/manager pass only runs on a solve that produced ties (which an emergency fill by definition did not).
 function _renderEmergencyFill(form,cap,fromEsc){
   const out=$('#solveOut');
   // fromEsc is only ever passed (as 1) by this screen's own "keep searching"/"search to the end"
@@ -8819,11 +8984,71 @@ function _renderEmergencyFill(form,cap,fromEsc){
   if(fromEsc)_recLog('emergency fill: '+_recCapTxt(cap));
   _showSolverOverlay();
   out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Solving\u2026'+(cap>10000000?' (extended search \u2014 '+Math.round(cap/1000000)+'M node cap)':'')+'</div>';
-  setTimeout(()=>{_renderEmergencyFillInner(form,cap);_hideSolverOverlay();},30);
+  const syncFallback=()=>{setTimeout(()=>{_renderEmergencyFillInner(form,cap);_hideSolverOverlay();},30);}; // the pre-17.8.65 path, verbatim
+  // Worker path. noProbe=false: the probe seed is still wanted here — it seeds the WORKER's phase 1
+  // exactly like it seeds the sync solve, and it's the same bounded, quick main-thread pre-solve the
+  // sync path always ran at this exact point anyway (noProbe=true is only for completeOOP itself
+  // when a finished preSub means no solve — and therefore no seed — is needed).
+  let task=null;
+  try{task=_oopSubTask(form,cap,getRatingCeil(),false);}catch(e){task=null;}
+  if(!task||typeof Worker==='undefined'){syncFallback();return;} // no coverable slots (sync path renders that case) or no Worker support
+  let url=null;
+  try{url=_buildOopWorkerBlob();}catch(e){url=null;}
+  if(!url){syncFallback();return;}
+  let w=null;
+  try{w=new Worker(url);}catch(e){w=null;}
+  if(!w){try{URL.revokeObjectURL(url);}catch(e){}syncFallback();return;}
+  const run={url,worker:w,snap:null,stopped:false,form,cap};
+  _oopRun=run;
+  const sb=$('#solverStopBtn');if(sb)sb.style.display='block';
+  const hint=$('#solverBadgeHint');if(hint)hint.textContent='Emergency fill\u2026 Stop keeps the best found.';
+  const teardown=()=>{try{w.terminate();}catch(e){}try{URL.revokeObjectURL(url);}catch(e){}
+    if(sb)sb.style.display='none';if(_oopRun===run)_oopRun=null;};
+  const failToSync=()=>{if(run.stopped)return;run.stopped=true;teardown();syncFallback();}; // worker failure -> clean synchronous rerun, identical result (mirrors the bench pass's fallback)
+  w.onerror=failToSync;
+  w.onmessage=function(e){
+    if(run.stopped)return;const d=e.data;
+    if(d&&d.progress){run.snap=d; // latest cross-phase monotonic snapshot — everything Stop needs
+      if(hint)hint.textContent='Emergency fill: '+(d.best>=0?('best so far '+d.best+' \u00b7 '):'')+Math.round((d.nodes||0)/1000000)+'M nodes \u2014 Stop keeps the best found.';
+      return;}
+    if(d&&d.fatal){failToSync();return;}
+    if(d&&d.final){
+      run.stopped=true;teardown();
+      if(d.error){syncFallback();return;} // e.g. no-eligible-card edge — let the sync path produce the canonical error/greedy UI (same rule _finishParallel uses)
+      _renderEmergencyFillInner(form,cap,{r:d});_hideSolverOverlay();
+    }
+  };
+  // Worker bestXIs come back as structured-clone COPIES of the card objects, same as the main
+  // parallel path's — downstream only reads plain props (id/label/rating/pos/hold/nation/club/
+  // type), never object identity, which is why _finishParallel never rehydrated either.
+  w.postMessage({form:{name:task.subForm.name,slots:task.subForm.slots.slice()},cards:task.sortedCards,nodeCap:cap,ratingCeil:getRatingCeil(),
+    seedBest:task.seed?task.seed.seedBest:undefined,seedXIs:task.seed&&task.seed.seedXIs?task.seed.seedXIs:undefined,
+    skipTies:_skipTies(),plan:_diversityPlan()});
 }
-function _renderEmergencyFillInner(form,cap){
+// v17.8.65 (section Z item 8): Stop for the worker-backed emergency-fill sub-solve. Terminate-based
+// with the latest published snapshot kept, exactly like the main solve's Stop — the snapshot IS a
+// valid (capped, stoppedEarly) sub-result, so it feeds completeOOP's preSub and the normal render
+// runs on the best-so-far in-position arrangement. Stopped before the first snapshot (<500k nodes):
+// an empty capped result is injected instead, which completeOOP's own existing no-result branch
+// turns into the greedy partial fill — still instant, still the canonical renderer.
+function _stopOopRun(){
+  const run=_oopRun;if(!run||run.stopped)return;
+  run.stopped=true;
+  try{run.worker&&run.worker.terminate();}catch(e){}
+  try{URL.revokeObjectURL(run.url);}catch(e){}
+  const sb=$('#solverStopBtn');if(sb)sb.style.display='none';
+  _oopRun=null;
+  const s=run.snap;
+  _recLog&&_recLog('emergency fill stopped by user \u2014 '+(s?Math.round((s.nodes||0)/1000000)+'M nodes explored, best in-position arrangement so far kept':'stopped before the first progress snapshot, greedy arrangement shown'));
+  const r=s&&s.best>=0&&s.bestXIs&&s.bestXIs.length
+    ?{best:s.best,bestXIs:s.bestXIs,nodes:s.nodes||0,capped:true,stoppedEarly:true}
+    :{best:-1,bestXIs:[],nodes:s?(s.nodes||0):0,capped:true,stoppedEarly:true};
+  _renderEmergencyFillInner(run.form,run.cap,{r});
+  _hideSolverOverlay();
+}
+function _renderEmergencyFillInner(form,cap,preSub){
   const out=$('#solveOut');
-  const em=completeOOP(form,cap);
+  const em=completeOOP(form,cap,undefined,preSub);
   // completeOOP hands back pick[]/oop[] in whatever order its two-stage solve happened to land them
   // in -- same "arbitrary permutation among position-equivalent cards" issue _minSwapLayout exists to
   // fix for clean solves, except previously this screen never ran that pass at all, so an emergency
@@ -8846,7 +9071,7 @@ function _renderEmergencyFillInner(form,cap){
   const head='<div class="note" style="border-color:var(--bad)"><b>No legal full XI</b> \u2014 some positions have no eligible card, so they\u2019re filled <b>out of position at 0 chem</b> as emergency placeholders. '+
     (em.full11?'All 11 slots are covered, but ':'Only '+em.pick.filter(Boolean).length+'/11 could be filled even out of position \u2014 ')+
     'check your busts: a card you binned may legally cover an unfilled slot for far more chem.</div>'+
-    (em.capped?'<div class="note" style="border-color:var(--warn)">\u26a0 This emergency fill was cut short at the '+(em.cap/1000000)+'M search budget \u2014 a better arrangement may exist deeper.'
+    (em.capped?'<div class="note" style="border-color:var(--warn)">\u26a0 '+(em.stoppedEarly?'This emergency fill was stopped early \u2014 it shows the best arrangement found so far; a better one may exist deeper.':'This emergency fill was cut short at the '+(em.cap/1000000)+'M search budget \u2014 a better arrangement may exist deeper.')
       +'<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">'
       +'<button class="btn sm" onclick="_renderEmergencyFill(FORMS.find(f=>f.name===chosenForm),'+(em.cap*3)+',1)">Keep searching ('+(em.cap*3/1000000)+'M)</button>'
       +'<button class="btn sec sm" onclick="_renderEmergencyFill(FORMS.find(f=>f.name===chosenForm),1e12,1)">Search to the end</button></div></div>':'');
