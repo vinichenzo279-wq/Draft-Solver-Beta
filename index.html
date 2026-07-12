@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.37</title>
+<title>Draft Solver v17.8.40</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2805,7 +2805,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          W. Full-solver soundness re-run against the live harness (contrast with V).
          X. Final tiered soundness testing results/conclusion.
          Y. Maximum-size 23x5 / 115-player full-search result and what it proves.
-         Z. Deferred deep-search resume/stop/partial-result and deadweight-advice ideas, including a clean design sketch.
+         Z. Deferred deep-search resume/stop/partial-result ideas (still deferred) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40), including a clean design sketch for the rest.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -4236,26 +4236,45 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 
   <!-- FOR FUTURE MAINTAINERS —
        Z. DEFERRED DEEP-SEARCH RESUME / STOP / PARTIAL-RESULT / DEADWEIGHT-ADVICE IDEAS
-          (added v17.8.36; expanded v17.8.37, documentation only — DO NOT IMPLEMENT YET).
+          (added v17.8.36; expanded v17.8.37; item 4's participation-based half IMPLEMENTED v17.8.38
+          as its own panel, then FIXED v17.8.39 (.label vs .name, triedIds vs participatedIds), then
+          SIMPLIFIED v17.8.40 (panel removed, folded one short clause into the existing 50+ card
+          warning instead — see _poolSizeWarning()). Items 1-3 and item 4's chemistry-clash evidence
+          are still DO NOT IMPLEMENT YET / deferred, for the reasons below.)
           Potential items to review later:
             1. Make each 3x escalation continue from the exact frontier where the preceding search
                stopped, instead of beginning a fresh traversal. Reusing the previous best score as
-               a seed is useful pruning, but it is not true continuation.
+               a seed is useful pruning, but it is not true continuation. STILL DEFERRED.
             2. Add a Stop control for long serial/deep searches, not only the parallel-worker path.
+               STILL DEFERRED.
             3. When a parallel search is stopped, still render the best complete XI found so far,
                including work from workers that were still running at the moment Stop was pressed.
+               STILL DEFERRED.
             4. Upgrade the 50+ card deadweight warning so it can identify likely deadweight options
                and advise which specific cards to remove, instead of only reporting the board size.
                Possible evidence includes options whose evaluations are consistently dominated because
-               they repeatedly create chemistry clashes, and cards that never appear in any best or
-               top-scoring XI observed during the solve. This is advisory only and is also deferred.
+               they repeatedly create chemistry clashes (STILL DEFERRED — not attempted), and cards
+               that never appear in any best or top-scoring XI observed during the solve. IMPLEMENTED
+               as triedIds-minus-participatedIds (genuinely explored during the solve but never
+               winning/tying — plain "never seen" was indistinguishable from "never reached by a
+               capped search", so raw non-participation alone isn't used). As of v17.8.40 this is a
+               single short clause appended directly to _poolSizeWarning()'s existing "N cards on the
+               board" sentence (named cards + rating, capped list length, one-line caveat) — no
+               separate panel, no confidence-label paragraph. This is advisory only, matching the
+               design sketch below; nothing removes a card automatically.
 
-          CURRENT STATUS / DEFERRAL: previous attempts at these ideas repeatedly achieved one part
-          only by breaking something more important — correctness, cap accounting, result rendering,
-          escalation behavior, worker teardown, or the normal solve/tie/manager pipeline. They are
-          intentionally deferred as too risky and structurally invasive for now. Do not bolt them
-          onto the existing callbacks or add a cosmetic Stop button without first refactoring the
-          search architecture and re-running the full soundness harness.
+          CURRENT STATUS / DEFERRAL (items 1-3, and item 4's chemistry-clash evidence): previous
+          attempts at these ideas repeatedly achieved one part only by breaking something more
+          important — correctness, cap accounting, result rendering, escalation behavior, worker
+          teardown, or the normal solve/tie/manager pipeline. They are intentionally deferred as too
+          risky and structurally invasive for now. Do not bolt them onto the existing callbacks or add
+          a cosmetic Stop button without first refactoring the search architecture and re-running the
+          full soundness harness. Item 4's participation-based half was judged safe to implement ahead
+          of the rest because it is PURE ADDITIVE BOOKKEEPING at leaf nodes already being visited (no
+          change to pruning/traversal/return values) and is rendered as a separate, clearly-labelled,
+          suggest-only panel — it does not touch the resume/stop/partial-result machinery that made
+          items 1-3 risky, and does not touch scoring/chemistry, so it doesn't inherit item 4's other,
+          still-deferred half's risk either.
 
           CLEAN THEORY FOR A FUTURE IMPLEMENTATION:
             - Represent a solve as an explicit resumable session rather than a recursive call that
@@ -4702,7 +4721,58 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        specific removals using repeated-clash/evaluation evidence and participation in top-scoring XIs.
        Added a cautious post-solve design and documented why capped, skip-ties, diversity, stopped, or
        partial-worker searches make naive "never selected" advice unreliable. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.37</span></h1>
+  <!-- v17.8.38 -- IMPLEMENTED the first slice of section Z idea 4 (upgraded deadweight advice),
+       kept deliberately narrow per its own "confidence labels" and "suggest only" rules: added
+       participatedIds tracking (every card id seen in a complete XI that was, at the time it was
+       scored, best-or-tied-best) as pure additive bookkeeping in solveBest's existing leaf branches
+       -- pruning, traversal, and the returned score/XIs are byte-identical to before. Threaded the
+       same field through solveWithDiversity (union across phases), _finishParallel and
+       _stopParallelSolve (union across workers/whatever reported), and the worker's own postMessage
+       payload. Added _deadweightAdvice(), rendered as a new panel at the end of the results view
+       (applyTie/renderSummary) only when the board has 50+ cards: lists cards that never reached a
+       best/tied XI this solve, labelled "proven" only when the search finished its whole tree with
+       ties collected (not capped/skip-ties/stopped/soft-capped, and any diversity phase that
+       completed), otherwise labelled "heuristic" and framed as a hint, not proof. Suggestion only --
+       nothing is removed automatically. Did NOT implement section Z idea 4's other evidence source
+       (repeated chemistry-clash/evaluation dominance) or any of ideas 1-3 (resume/stop/partial-
+       result) -- those remain deferred exactly as section Z describes, and this entry should NOT be
+       read as clearing them for future implementation without the same scrutiny. -->
+  <!-- v17.8.39 -- FIX: three user-reported problems with v17.8.38's deadweight advisory, verified
+       fixed against the actual repro (115-card board, 3M-node capped solve, skip-ties on):
+       (1) POSITION: the panel was the LAST thing on the results screen, below Starting XI/Pick-per-
+       hold/Bench, where it went unseen. Moved renderSummary's call to right after the top summary
+       block, before Starting XI. (2) "undefined" NAMES: _deadweightAdvice read c.name, but board
+       cards (built by addPlayerToSlot) only ever carry .label, never .name -- switched to c.label
+       (cardMeta()-only fallback if blank). (3) TOO AGGRESSIVE / "just low-rated cards": on a capped,
+       best-first search almost every low-rated card is simply never reached, so "never seen in a
+       winning XI" was mostly indistinguishable from "search never got that far" -- exactly the
+       failure mode section Z's own CLEAN THEORY note warned about. Added triedIds: every card id
+       actually committed into a branch dfs() recursed into (pick[slotIdx]=c site), regardless of
+       whether that branch finished or won -- same pure-bookkeeping guarantee as participatedIds, and
+       threaded through the same four call sites (solveBest, solveWithDiversity, _finishParallel,
+       _stopParallelSolve, plus the worker postMessage payload). The suggestion list is now
+       triedIds-minus-participatedIds (genuinely exercised, still never won) instead of the full
+       untried remainder; untried cards are now called out separately as "no evidence either way".
+       On the reported repro this should shrink the list from "101 of 115" to whatever the search
+       actually exercised and rejected -- a much smaller, more defensible number. Still does not
+       implement section Z idea 4's chemistry-clash-dominance evidence, or items 1-3; still
+       suggestion-only, nothing removed automatically. -->
+  <!-- v17.8.40 -- UI SIMPLIFICATION (direct user feedback on v17.8.39): the deadweight advisory was
+       still wrong in presentation even after the v17.8.39 data fix -- a whole separate panel with a
+       confidence-label paragraph and an "untried" callout was more than needed, and it didn't even
+       appear on the same screen as the existing "N cards on the board" nudge the user actually
+       wanted it merged into. REMOVED _deadweightAdvice() and its standalone panel entirely. Folded
+       the exact same evidence (triedIds-minus-participatedIds, unchanged from v17.8.39) into
+       _poolSizeWarning() itself, which now optionally takes the solve result `r`: with no r (the
+       pre-solve helper-panel call site) it's the original plain sentence; with r, it appends ONE
+       short clause naming the specific suspect cards (rating shown, no per-card meta line, capped at
+       15 names + a "+N more" tail) and a one-line caveat that a deep enough search could still prove
+       one wrong. No confidence-label essay, no separate "untried" paragraph, no panel border/header.
+       Threaded r into the one place this warning already renders post-solve: _cappedWarnHTML (now
+       takes r) via applyTie's call. Dropped the untried-count callout from v17.8.39 entirely rather
+       than trying to fit it in -- it was explanatory detail the request specifically said wasn't
+       needed. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.40</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -7000,7 +7070,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   // candidates, so the union of the workers' subtrees is exactly the full serial tree (every legal
   // XI has exactly one card in the root slot). Undefined -> byte-identical behavior to before.
   if(rootAllow){const _ri=order[0];cand[_ri]=cand[_ri].filter(c=>rootAllow.has(c.id));
-    if(cand[_ri].length===0)return {best:(typeof seedBest==="number"&&seedBest>=0)?seedBest:-1,bestXIs:(seedXIs&&seedXIs.length)?seedXIs.slice():[],nodes:0,capped:false,slots,maxRating:-1,rcUsed:RC};}
+    if(cand[_ri].length===0)return {best:(typeof seedBest==="number"&&seedBest>=0)?seedBest:-1,bestXIs:(seedXIs&&seedXIs.length)?seedXIs.slice():[],nodes:0,capped:false,slots,maxRating:-1,rcUsed:RC,participatedIds:(seedXIs&&seedXIs.length)?Array.from(new Set(seedXIs.flatMap(x=>x.xi.map(c=>c.id)))):[],triedIds:(seedXIs&&seedXIs.length)?Array.from(new Set(seedXIs.flatMap(x=>x.xi.map(c=>c.id)))):[]};}
   // v6 UB precompute — per remaining slot, the OLD bound assumed a flat "+2" for anything
   // that wasn't the one reserved "first icon"/"first hero" slot. That's safe (never an
   // underestimate) but loose whenever a slot's candidate pool is icon-only or hero-only —
@@ -7075,6 +7145,28 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   // compare per leaf — sc.rating is already computed for the score, so this adds no measurable cost.
   let maxRating=-1;
   if(bestXIs.length)for(const b of bestXIs){const rr=b.sc&&b.sc.rating;if(typeof rr==='number'&&rr>maxRating)maxRating=rr;}
+  // v17.8.38 (section Z idea 4, first slice only — see FOR FUTURE MAINTAINERS): every card id that
+  // has appeared in ANY complete XI which was, at the moment it was scored, the best or tied-best
+  // seen so far. This is pure bookkeeping at the existing leaf branches (same two branches that
+  // already update bestXIs) — it does not change what gets pruned, traversed, or returned as the
+  // winning score/XIs, so a completed search still returns the exact same optimum as before. Used
+  // ONLY by the post-solve deadweight advisory folded into _poolSizeWarning() to suggest, never auto-remove,
+  // cards that never showed up in a top-scoring squad. Seeded from any incoming seedXIs so a
+  // probe-seeded or escalated (x3 / search-to-the-end) run doesn't lose credit for cards the earlier
+  // pass already proved relevant.
+  const partSeen=new Set();
+  if(bestXIs.length)for(const b of bestXIs)for(const c of b.xi)partSeen.add(c.id);
+  // v17.8.39 fix (feedback on v17.8.38): partSeen alone made the deadweight advisory equivalent to
+  // "never seen" == "low-rated card the best-first order/node-cap never reached" on any capped run,
+  // which is most of them — not real evidence of weakness. triedSeen instead tracks every card id
+  // that was actually COMMITTED into a branch the search recursed into (see the pick[slotIdx]=c site
+  // in dfs below), regardless of whether that branch completed or won. A card in triedSeen but not
+  // partSeen was genuinely exercised and still never came out on top; a card in neither was simply
+  // never reached and gets excluded from the suggestion list entirely instead of being lumped in.
+  // Same pure-bookkeeping guarantee as partSeen: adding to a Set at a site that already runs (right
+  // next to the existing usedGroups.add) changes no pruning/traversal/return-value behavior.
+  const triedSeen=new Set();
+  if(bestXIs.length)for(const b of bestXIs)for(const c of b.xi)triedSeen.add(c.id);
   let nodes=0;const CAP=nodeCap||3000000;let capped=false;
   const usedGroups=new Set(),pick=new Array(slots.length).fill(null);
   // v5.5 #1: incremental diversity state — add on descent, delete on backtrack; eliminates
@@ -7218,10 +7310,10 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
     if(k===order.length){
       const xi=pick.slice(),sc=scoreXI(xi);
       if(sc.rating>maxRating)maxRating=sc.rating;   // cheap: sc.rating already computed for the score
-      if(sc.total>best){best=sc.total;const key=xi.map(c=>c.id).sort().join(',');bestXIs=[{xi,sc,foundAt:nodes,key}]}
+      if(sc.total>best){best=sc.total;const key=xi.map(c=>c.id).sort().join(',');bestXIs=[{xi,sc,foundAt:nodes,key}];for(const c of xi)partSeen.add(c.id);}
       else if(!ST && sc.total===best){
         const key=xi.map(c=>c.id).sort().join(',');
-        if(!bestXIs.some(b=>(b.key||(b.key=b.xi.map(c=>c.id).sort().join(',')))===key))bestXIs.push({xi,sc,foundAt:nodes,key});
+        if(!bestXIs.some(b=>(b.key||(b.key=b.xi.map(c=>c.id).sort().join(',')))===key)){bestXIs.push({xi,sc,foundAt:nodes,key});for(const c of xi)partSeen.add(c.id);}
       }
       return;
     }
@@ -7395,7 +7487,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       if(c.rating>__symCeil)continue; // v16.20.0 UB-SYM: canonical-order break — a later same-class slot may not out-rate an earlier one (redundant permutation, safe to skip)
       const g=c._group;
       if(usedGroups.has(g))continue;
-      usedGroups.add(g);pick[slotIdx]=c;
+      usedGroups.add(g);pick[slotIdx]=c;triedSeen.add(c.id); // v17.8.39: this card was genuinely tried in an explored branch, not just skipped by ordering/cap
       // Incremental updates (O(1) each)
       const addNat=seenNat.has(c.nation)?0:(seenNat.add(c.nation),1);
       const addLg =seenLg.has(c._lg)   ?0:(seenLg.add(c._lg),1);
@@ -7430,7 +7522,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   for(let __j=order.length-1;__j>=0;__j--)__normTail[__j]=__normTail[__j+1]+(cand[order[__j]].some(c=>c.type==='normal')?1:0);
   let __RMIN=Infinity,__RMAX=-Infinity;for(const c of cards){if(c.rating<__RMIN)__RMIN=c.rating;if(c.rating>__RMAX)__RMAX=c.rating;}
   dfs(0);
-  return {best,bestXIs,nodes,capped,slots,maxRating,rcUsed:RC};
+  return {best,bestXIs,nodes,capped,slots,maxRating,rcUsed:RC,participatedIds:Array.from(partSeen),triedIds:Array.from(triedSeen)};
 }
 
 /* ==================== v14.0 BETA — PARALLEL SEARCH (150M+ drafts only) ==================== */
@@ -7465,7 +7557,7 @@ function _buildSolverWorkerBlob(){
     +'\nonmessage=function(e){const d=e.data;'
     +'const allow=d.rootAllowIds?new Set(d.rootAllowIds):undefined;'
     +'const r=solveBest(d.form,d.cards,d.nodeCap,d.ratingCeil,d.seedBest,d.seedXIs,d.skipTies,undefined,allow);'
-    +'postMessage({best:r.best,bestXIs:(r.bestXIs||[]).map(x=>({xi:x.xi,sc:x.sc})),nodes:r.nodes,capped:!!r.capped,maxRating:r.maxRating,error:r.error||null});};';
+    +'postMessage({best:r.best,bestXIs:(r.bestXIs||[]).map(x=>({xi:x.xi,sc:x.sc})),nodes:r.nodes,capped:!!r.capped,maxRating:r.maxRating,participatedIds:r.participatedIds||[],triedIds:r.triedIds||[],error:r.error||null});};';
   return URL.createObjectURL(new Blob([src],{type:'application/javascript'}));
 }
 let _parRun=null; // current parallel run's stoppable state, or null when none is active
@@ -7529,17 +7621,23 @@ function _stopParallelSolve(){
   const out=$('#solveOut');
   const got=partial.filter(Boolean);
   let best=-1,bestXIs=[];
-  for(const r of got){ if(r.best>best){best=r.best;bestXIs=r.bestXIs.slice();} }
+  const partSeen=new Set(); // v17.8.38 (section Z idea 4): only whatever workers had reported so far
+  const triedSeen=new Set(); // v17.8.39
+  for(const r of got){ if(r.participatedIds)for(const id of r.participatedIds)partSeen.add(id); if(r.triedIds)for(const id of r.triedIds)triedSeen.add(id); if(r.best>best){best=r.best;bestXIs=r.bestXIs.slice();} }
   if(best<0){ if(out)out.innerHTML='<div class="note" style="color:var(--mut)">Stopped \u2014 no result yet.</div>'; _clearSolve(); refreshLog(); return; }
   if(out)out.innerHTML='<div class="note" style="color:var(--warn)">\u25a0 Stopped early \u2014 best found so far: <b>'+best+'</b> ('+got.length+'/'+partial.length+' workers reported). Not proven optimal.</div>';
-  window._solveCtx={r:{best,bestXIs,capped:true,stoppedEarly:true},form:FORMS.find(f=>f.name===chosenForm)};
+  window._solveCtx={r:{best,bestXIs,capped:true,stoppedEarly:true,participatedIds:Array.from(partSeen),triedIds:Array.from(triedSeen)},form:FORMS.find(f=>f.name===chosenForm)};
   _recLog&&_recLog('parallel search stopped by user \u2014 best so far '+best);
   refreshLog();
 }
 function _finishParallel(results,form,sortedCards,cap,ratingCeil,t0,out,W,perCap){
   if(results.some(r=>r&&r.error)){_runSolveInner(cap,ratingCeil,false);return;} // e.g. no-eligible-card edge: let the serial path produce the canonical error UI
   let best=-1,bestXIs=[],nodes=0,anyWorkerCapped=false,maxRating=-1;
+  const partSeen=new Set(); // v17.8.38 (section Z idea 4): union of every worker's participatedIds
+  const triedSeen=new Set(); // v17.8.39: union of every worker's triedIds
   for(const r of results){ if(!r)continue; nodes+=r.nodes; if(r.capped)anyWorkerCapped=true; if(r.maxRating>maxRating)maxRating=r.maxRating;
+    if(r.participatedIds)for(const id of r.participatedIds)partSeen.add(id);
+    if(r.triedIds)for(const id of r.triedIds)triedSeen.add(id);
     if(r.best>best){best=r.best;bestXIs=r.bestXIs.slice();}
     else if(r.best===best&&r.best>=0){
       const keys=new Set(bestXIs.map(x=>x.key||(x.key=x.xi.map(c=>c.id).sort().join(','))));
@@ -7560,7 +7658,7 @@ function _finishParallel(results,form,sortedCards,cap,ratingCeil,t0,out,W,perCap
   // capped is (correctly) false -- but the result still isn't PROVEN optimal (a starved worker's
   // subtree was cut). Flag that soft case so applyTie can show a milder, non-escalation warning.
   const workerCapSoft=anyWorkerCapped&&!capped;
-  const r={best,bestXIs,nodes,capped,workerCapSoft,slots:form.slots,maxRating,rcUsed:ratingCeil,parallel:{workers:W,perWorkerCap:perCap}};
+  const r={best,bestXIs,nodes,capped,workerCapSoft,slots:form.slots,maxRating,rcUsed:ratingCeil,parallel:{workers:W,perWorkerCap:perCap},participatedIds:Array.from(partSeen),triedIds:Array.from(triedSeen)};
   if(_skipTies()&&r.bestXIs&&r.bestXIs.length>1)r.bestXIs=[r.bestXIs[0]];
   r.ubRating=maxPossibleRating(sortedCards,form);
   const ms=Math.round(performance.now()-t0);
@@ -7614,6 +7712,15 @@ function solveWithDiversity(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies,
   for(let i=0;i<cards.length;i++)baseSeed=(baseSeed^(((cards[i].rating|0)+1)*(i+1)*2246822519))>>>0;
   let best=(seedBest!==undefined?seedBest:-1),bestXIs=(seedXIs?seedXIs.slice():[]);
   let totalNodes=0,anyCapped=false,merged=null,shufIdx=0;
+  // v17.8.38 (section Z idea 4): union participatedIds across every phase, same way totalNodes
+  // accumulates — a card only needs ONE phase (divstatic or any shuffle) to show up in a top-scoring
+  // XI to count as "seen". Seeded from any incoming seedXIs for the same reason solveBest seeds it.
+  const partSeen=new Set();
+  if(seedXIs&&seedXIs.length)for(const x of seedXIs)for(const c of x.xi)partSeen.add(c.id);
+  // v17.8.39: same union treatment for triedIds — a card only needs to have been committed into an
+  // explored branch in ANY phase to count as "genuinely tried" overall.
+  const triedSeen=new Set();
+  if(seedXIs&&seedXIs.length)for(const x of seedXIs)for(const c of x.xi)triedSeen.add(c.id);
   const phaseLog=[];
   const _nShuf=plan.filter(ph=>ph.shuffle).length;
   const _divPh=plan.find(ph=>!ph.shuffle);
@@ -7627,6 +7734,7 @@ function solveWithDiversity(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies,
                       skipTies, divSeed);
     if(r.error)return r; // slot-with-no-card etc. — surface immediately, same as a plain solve
     totalNodes+=r.nodes;
+    if(r.participatedIds)for(const id of r.participatedIds)partSeen.add(id);
     phaseLog.push({phase:p+1,kind:ph.shuffle?'shuffle':'divstatic',budget,nodes:r.nodes,best:r.best,capped:r.capped});
     if(r.best>best){ best=r.best; bestXIs=r.bestXIs.slice(); merged=r; }
     else if(r.best===best){
@@ -7648,12 +7756,12 @@ function solveWithDiversity(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies,
     }
     if(merged===null&&r.best>=0){merged=r;} // first phase that achieved a real score anchors the result object
     if(!r.capped){ anyCapped=false; // a phase finished its whole tree -> proven optimum for the draft, stop
-      return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:false,rcUsed:merged.rcUsed,maxRating:merged.maxRating,slots:merged.slots,diversity:{label,phases:phaseLog,provenComplete:true}});
+      return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:false,rcUsed:merged.rcUsed,maxRating:merged.maxRating,slots:merged.slots,participatedIds:Array.from(partSeen),triedIds:Array.from(triedSeen),diversity:{label,phases:phaseLog,provenComplete:true}});
     }
     anyCapped=true;
   }
   if(!merged)return solveBest(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies); // no phase scored (all infeasible) — fall back
-  return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:anyCapped,diversity:{label,phases:phaseLog,provenComplete:false}});
+  return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:anyCapped,participatedIds:Array.from(partSeen),triedIds:Array.from(triedSeen),diversity:{label,phases:phaseLog,provenComplete:false}});
 }
 
 function greedyPartial(form){
@@ -9343,7 +9451,7 @@ function maxPossibleRating(pool,form){
   }
   return ''; // rc > ub and the search completed uncapped: provably optimal, nothing to flag
 }
-function _cappedWarnHTML(cap){
+function _cappedWarnHTML(cap,r){
   const nextCap=cap*3;
   const note=nextCap>100000000?'Going much deeper may take very long and may not be worthwhile.':'Jumping to '+(nextCap/1000000)+'M has improved results in practice.';
   return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Search capped at '+(cap/1000000)+'M nodes</b> \u2014 this is the best found so far. '+note
@@ -9351,7 +9459,7 @@ function _cappedWarnHTML(cap){
     +'<button class="btn sm" onclick="runSolve('+nextCap+')">Keep searching ('+(nextCap/1000000)+'M)</button>'
     +'<button class="btn sec sm" onclick="runSolve(1e12,true)">Search to the end</button>'
     +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept this result</button>'
-    +'</div>'+_poolSizeWarning()+'</div>';
+    +'</div>'+_poolSizeWarning(r)+'</div>';
 }
 // v17.6.7: milder sibling of _cappedWarnHTML for the parallel soft-cap case -- at least one worker
 // exhausted its share of the budget while the aggregate stayed under the global cap. The result is
@@ -9387,7 +9495,7 @@ function applyTie(idx){
     if(ctx.mgrCapped||ctx.mgrTiesAborted)so.insertAdjacentHTML('afterbegin',_miniCapWarn('mgr',ctx.mgrCap||_mgrCap,ctx.analyses&&ctx.analyses[idx]?ctx.analyses[idx].exact:null,null,null,null,null,null,null,{passNodes:ctx.mgrPassNodes,tiesTotal:ctx.tiesTotal,tiesAborted:ctx.mgrTiesAborted,aborted:!!ctx.mgrTiesAborted,exactTotal:(ctx.analyses||[]).reduce((t,a)=>t+((a&&a.exact)?Number(a.exact):0),0),exactTies:(ctx.analyses||[]).filter(a=>a&&a.exact).length,tieCapped:!!(ctx.analyses&&ctx.analyses[idx]&&ctx.analyses[idx].capped),tieAborted:!!(ctx.analyses&&ctx.analyses[idx]&&ctx.analyses[idx].aborted),tieNodes:(ctx.analyses&&ctx.analyses[idx])?ctx.analyses[idx].nodes:null}));
     if(ctx.benchCapped||ctx.benchAborted){const _bd=ctx.benchData&&ctx.benchData[idx];so.insertAdjacentHTML('afterbegin',_miniCapWarn('bench',ctx.benchCap||_benchCap,_bd?_bd.combos:null,_bd?_bd.nodes:null,_bd?_bd.combosChecked:null,_bd?_bd.mode:null,_bd?_bd.unitsChecked:null,_bd?_bd.unitsTotal:null,_bd?_bd.proofCeil:null,{passNodes:ctx.benchPassNodes,tiesTotal:ctx.tiesTotal,tiesCapped:ctx.tiesCapped,tiesAborted:ctx.tiesAborted,aborted:ctx.benchAborted,estPass:_benchPassEstimate(ctx),tieCapped:!!(_bd&&_bd.capped),tieAborted:!!(_bd&&_bd.aborted)}));}
   }}
-  if(ctx.r&&ctx.r.capped){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_cappedWarnHTML(ctx.cap||getNodeCap()));}
+  if(ctx.r&&ctx.r.capped){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_cappedWarnHTML(ctx.cap||getNodeCap(),ctx.r));}
   else if(ctx.r&&ctx.r.workerCapSoft){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_workerCapSoftWarnHTML(ctx.cap||getNodeCap()));} // v17.6.7: parallel finished under the global cap but a worker was starved -> milder, non-escalation warning
   // RC completeness caveat sits on TOP of the whole stack: it's the one warning that says the OPTIMUM
   // itself may be wrong (missed via unsound pruning), not just "search truncated" or "bench not deep".
@@ -9938,8 +10046,30 @@ function _pickPanelSuffixes(picks,holdGroups){
 // Flags an oversized total card pool: past a point, extra low-value cards mostly just add
 // combinations for the DFS solver to chew through without any real shot at the XI. 50 is a
 // heuristic trigger point, not a hard cap — nothing stops the solve, it's just a nudge.
-function _poolSizeWarning(){
-  return cards.length>50?'<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 '+cards.length+' cards on the board \u2014 consider removing deadweight (options with no realistic shot at the XI) so the end-solve stays fast.</div>':'';
+// v17.8.38/39/40 (FOR FUTURE MAINTAINERS section Z, idea 4 — participation half only; chemistry-
+// clash-dominance evidence and items 1-3 remain deferred). v17.8.38 first added a specific-card
+// suggestion as its own separate panel at the bottom of the results view; v17.8.39 fixed it to use
+// .label (not the nonexistent .name) and to require a card was actually triedIds-tried, not just
+// never seen; v17.8.40 (this version, per direct feedback) dropped the separate panel/paragraph
+// entirely and folds the same triedIds-minus-participatedIds evidence into THIS existing warning
+// instead — one line, named cards, no confidence essay. Optional `r` (a solve result carrying
+// participatedIds/triedIds) upgrades the generic sentence into a specific one; omit r (as the
+// helper-panel call site does, pre-solve) and it falls back to the plain generic warning.
+function _poolSizeWarning(r){
+  if(cards.length<=50)return '';
+  let extra='';
+  if(r&&r.participatedIds&&r.triedIds){
+    const won=new Set(r.participatedIds),tried=new Set(r.triedIds);
+    const suspect=cards.filter(c=>tried.has(c.id)&&!won.has(c.id)).sort((a,b)=>a.rating-b.rating);
+    if(suspect.length){
+      const SHOW=15;
+      const nm=c=>esc(c.label||cardMeta(c))+' ('+c.rating+')';
+      extra=' These are not expected to make the final XI and can likely be removed for a faster solve: '
+        +suspect.slice(0,SHOW).map(nm).join(', ')+(suspect.length>SHOW?', +'+(suspect.length-SHOW)+' more':'')
+        +'. (A deep enough search could still prove one of these wrong, but it\u2019s unlikely.)';
+    }
+  }
+  return '<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 '+cards.length+' cards on the board \u2014 consider removing deadweight (options with no realistic shot at the XI) so the end-solve stays fast.'+extra+'</div>';
 }
 // v17.6.1: fixed -- iterate board slots via slotState/slotCards (cards[] has no .held property).
 // v17.6.2: fixed -- was including the slot currently being judged/edited in its own mismatch
