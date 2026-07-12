@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.50</title>
+<title>Draft Solver v17.8.51</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2805,7 +2805,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          W. Full-solver soundness re-run against the live harness (contrast with V).
          X. Final tiered soundness testing results/conclusion.
          Y. Maximum-size 23x5 / 115-player full-search result and what it proves.
-         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 added v17.8.50 — give the bench/manager pass its own Worker + running count + always-on Stop, deferred; item 1 + item 4's chemistry-clash evidence still deferred) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40), including a clean design sketch for the rest.
+         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 + item 4's chemistry-clash evidence still deferred) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40), including a clean design sketch for the rest.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -4244,10 +4244,11 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           "does nothing" bug was root-caused and FIXED in v17.8.45 (item 5 — it was the
           _swallowIfBusy input guard eating the click, not bench/manager or the node cap; the
           v17.8.43/44 _stopSupported() gate that misdiagnosis produced has been deleted). Item 6
-          ADDED v17.8.50 (DEFERRED, not attempted) — give the bench/manager pass its own Worker-backed
-          running node count and always-on Stop button, the same treatment item 2/3 gave the main
-          solve. Item 1, item 4's chemistry-clash evidence, and item 6 are still DO NOT IMPLEMENT YET
-          / deferred, for the reasons below.)
+          ADDED v17.8.50 (as DEFERRED), then IMPLEMENTED v17.8.51 — the bench/manager pass now runs
+          inside its own Worker with a running node count and an always-available Stop button, the
+          same treatment items 2/3 gave the main solve; see the item itself for why the v17.8.50
+          deferral rationale turned out to be overstated. Item 1 and item 4's chemistry-clash
+          evidence are still DO NOT IMPLEMENT YET / deferred, for the reasons below.)
           Potential items to review later:
             1. Make each 3x escalation continue from the exact frontier where the preceding search
                stopped, instead of beginning a fresh traversal. Reusing the previous best score as
@@ -4322,27 +4323,50 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                wrong; the second actively made things worse. When a UI control "does nothing", check
                whether something is eating the event before theorising about what the handler does.
 
-            6. (added v17.8.50 — DEFERRED, not attempted) Move the bench/manager pass itself into a
-               Worker (or bounded cooperative main-thread chunks), the same way v17.8.41 moved the
-               main solve, so it gets the same running node-count UI and an ALWAYS-available Stop
-               button instead of today's fundamentally different shape: computeBenchPicks /
-               analyzeManagerDepth run as a single synchronous main-thread pass with no live progress
-               display and no Stop control at all — only the periodic 10M-node confirm() prompt
-               (re-arming every +10M as of v17.8.48, now reporting the actual threshold reached as of
-               v17.8.49) as an after-the-fact circuit breaker, which blocks the thread with a native
-               dialog rather than rendering a Stop button the user can hit whenever they like.
-               WHY DEFERRED: this is structurally the same "run it as a resumable session, not a
-               recursive call that owns the JS call stack" refactor item 1 above needs for the main
-               solve — computeBenchPicks/analyzeManagerDepth would need to publish periodic progress
-               snapshots and be interruptible mid-pass across MANY per-tie sub-solves (not one DFS),
-               and the 10M-prompt's re-arming escalation logic (v17.8.48) plus its now-accurate
-               "stopped at NM" wording (v17.8.49) would need to be re-expressed as pass-level UI state
-               instead of confirm() dialogs. Do not bolt a Worker onto computeBenchPicks/
-               analyzeManagerDepth piecemeal — that is exactly the kind of "one part only, breaking
-               something more important" attempt the CURRENT STATUS paragraph below warns against for
-               item 1. Revisit only alongside item 1's chunked solver core.
+            6. (added v17.8.50 as DEFERRED; IMPLEMENTED v17.8.51) Move the bench/manager pass itself
+               into a Worker, the same way v17.8.41 moved the main solve, so it gets the same running
+               node-count UI and an ALWAYS-available Stop button instead of its old shape (a single
+               synchronous main-thread pass whose only circuit breaker was the periodic 10M-node
+               confirm() prompt).
+               HOW IT SHIPPED (v17.8.51): the ENTIRE pass — _analyzeTies' tie loops calling
+               computeBenchPicks/analyzeManagerDepth — now runs verbatim inside ONE dedicated worker
+               (_buildBenchWorkerBlob, same serialize-by-toString discipline and same
+               every-helper-must-be-listed trap as _buildSolverWorkerBlob). The confirm() prompts are
+               shimmed into throttled progress postMessages (the live counter + Stop button REPLACE
+               the confirm() circuit breaker on this path — the per-tie _benchCap/_mgrCap budgets
+               still bind, so the pass always terminates on its own); a new _tieHook publishes each
+               FINISHED tie's deep result to the main thread the moment it completes; and inside the
+               worker solveBest is wrapped to inject the existing onSnapshot param, so 500k+-node
+               sub-solves (slow-mode combos, big manager solves) report in-flight nodes too. Stop is
+               terminate-based exactly like the main solve's: because every finished tie already
+               shipped via _tieHook, terminate() loses only the tie in flight, and the stop handler
+               (_stopBenchRun) rebuilds the pass ON THE MAIN THREAD through the one canonical
+               _analyzeTies aggregation — finished ties reused verbatim via opts.doneBench/doneMgr,
+               unfinished ties falling to the same instant aborted stubs a 10M-prompt cancel always
+               produced, node meters seeded so pass totals stay truthful (opts.benchStopNodes/
+               mgrStopNodes), and a stoppedPass flag driving accurate "you pressed Stop during the
+               bench/manager pass" wording in _miniCapWarn. All three _analyzeTies call sites
+               (_handleSolveResult x2, _reanalyze's keep-searching escalations) go through the new
+               _analyzeTiesAsync, which also owns the fallbacks: a stopped main solve and vfast+
+               depth-0 stay instant/synchronous, and Worker unavailability, blob/spawn failure, or a
+               mid-pass worker error all fall back to the old synchronous path with its overlay and
+               confirm() prompts fully intact (which also keeps the iOS standalone's behavior
+               unchanged — no Workers there, so it takes the fallback automatically).
+               STILL SYNCHRONOUS BY DESIGN (unchanged, possible follow-ups): _pickTieWinner, the
+               emergency-fill renderer's single-tie bench call, pickMgr, and _reanalyzeTie's per-tie
+               reruns — each pre-confirms the prompts and is governed by its own cap system; they
+               were out of scope here exactly as they were for v15.1.3's parallelism review.
+               WHY THE v17.8.50 DEFERRAL WAS OVERSTATED (lesson worth keeping): it claimed this needs
+               item 1's resumable/chunked solver core. That is true only for true RESUME or a
+               cooperative stop HANDSHAKE. For a live counter + terminate-based Stop, the pass's
+               many-small-sub-solves shape is an ADVANTAGE over the main solve's single DFS, not an
+               obstacle: the worker returns to top-level JS between sub-solves, so it has natural,
+               safe points to postMessage progress and per-tie results from — no interruptibility,
+               no frontier serialization, no re-expression of escalation state required. The same
+               re-scoping that made items 2+3 implementable in v17.8.41 (publish-then-terminate,
+               reuse the canonical aggregation path, no second assembler) applied here directly.
 
-          CURRENT STATUS / DEFERRAL (item 1, item 4's chemistry-clash evidence, and item 6): previous
+          CURRENT STATUS / DEFERRAL (item 1 and item 4's chemistry-clash evidence): previous
           attempts at these ideas repeatedly achieved one part only by breaking something more
           important — correctness, cap accounting, result rendering, escalation behavior, worker
           teardown, or the normal solve/tie/manager pipeline. They are intentionally deferred as too
@@ -4351,8 +4375,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           re-scoped to what the existing architecture can do soundly: snapshots are send-only
           (posting from inside a synchronous DFS works; receiving does not), Stop remains
           terminate-based, and the merged partial reuses the canonical capped-result path — no
-          resume, no cooperative handshake, no second renderer. Item 4's participation-based half
-          was judged safe earlier for the same reason: PURE ADDITIVE BOOKKEEPING at sites already
+          resume, no cooperative handshake, no second renderer. Item 6 followed the identical
+          re-scoping in v17.8.51 (publish per-tie results, terminate on Stop, reassemble through the
+          one canonical _analyzeTies aggregation) — see the item itself. Item 4's participation-based
+          half was judged safe earlier for the same reason: PURE ADDITIVE BOOKKEEPING at sites already
           being visited (no change to pruning/traversal/return values). Item 1 still requires the
           iterative/chunked solver core plus the full soundness harness before any attempt.
 
@@ -5001,7 +5027,37 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        resumable-session refactor item 1 is waiting on, just applied to computeBenchPicks/
        analyzeManagerDepth's many small per-tie sub-solves instead of one DFS. Also updated section
        Z's header summary and the top-of-file section INDEX one-liner to reference item 6. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.50</span></h1>
+  <!-- v17.8.51 -- SECTION Z ITEM 6 IMPLEMENTED: the post-solve bench/manager pass now runs inside
+       its own Worker with a live running node count and an always-available Stop button, replacing
+       the periodic 10M-node confirm() prompts on that path (the per-tie _benchCap/_mgrCap budgets
+       and their keep-searching escalations are unchanged and still bind). The v17.8.50 deferral
+       claimed this needed item 1's chunked solver core -- that's only true for true RESUME; for a
+       counter + terminate-based Stop, the pass's many-small-sub-solves shape provides natural
+       postMessage points, so the same publish-then-terminate re-scoping that shipped items 2+3 in
+       v17.8.41 applied directly. Pieces: _buildBenchWorkerBlob (serializes the 16-function closure
+       incl. computeBenchPicks/analyzeManagerDepth/_analyzeTies verbatim; DOM helpers + prompts
+       shimmed; solveBest wrapped to inject onSnapshot for in-flight counts on 500k+ sub-solves);
+       _tieHook (new, null on main thread) publishes each finished tie's deep result immediately, so
+       Stop loses only the tie in flight; _analyzeTiesAsync is the one async entry point used by all
+       three _analyzeTies call sites (_handleSolveResult x2, _reanalyze), with instant paths kept
+       synchronous (stopped main solve, vfast+depth-0) and full synchronous fallback (old overlay +
+       prompts) on Worker unavailability/spawn failure/mid-pass worker error -- which also leaves the
+       iOS standalone's behavior untouched; _stopBenchRun reassembles a stopped pass on the main
+       thread through the one canonical _analyzeTies aggregation (finished ties reused verbatim via
+       new opts.doneBench/doneMgr, unfinished ties -> the same instant aborted stubs a prompt cancel
+       produced, node meters seeded via opts.benchStopNodes/mgrStopNodes so pass totals stay
+       truthful); the shared Stop button routes to it via a guard at the top of _stopParallelSolve
+       (a bench run and a main-solve run are never live simultaneously). New stoppedPass flag
+       threaded through the return/ctx/_miniCapWarn for accurate "you pressed Stop during the
+       bench/manager pass" wording (third variant alongside v17.8.46's stoppedMain and v17.8.49's
+       abortAtM). _pickTieWinner, the emergency-fill bench call, pickMgr, and _reanalyzeTie stay
+       synchronous by design (own caps, prompts pre-confirmed) -- possible follow-ups, out of scope.
+       Verified in a Node harness: worker source composes and runs end-to-end (medium/vfast/slow,
+       only:'mgr' escalation with prevBenchData reuse, and Stop-reassembly with done-tie reuse +
+       aborted stubs + seeded meters). Also updated the computeBenchPicks header note, the
+       _showBenchMgrOverlay comment (now the sync fallback's UI only), section Z (item 6 body,
+       header, CURRENT STATUS) and the section INDEX one-liner. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.51</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -7898,6 +7954,7 @@ function _mergeWorkerResults(list){
   return {best,bestXIs,nodes,anyCapped,maxRating,partSeen,triedSeen};
 }
 function _stopParallelSolve(){
+  if(_benchRun){_stopBenchRun();return;} // v17.8.51: the one Stop button is shared — during the worker-backed bench/manager pass it stops THAT (never live at the same time as a main-solve run)
   const run=_parRun; if(!run||run.stopped)return;
   run.stopped=true;
   // v17.8.41 (section Z item 3): merge finished worker results WITH the latest periodic snapshot
@@ -8415,6 +8472,11 @@ function _showSolverOverlay(){
 function _benchMgrWillBlock(tiesCount){
   return !!tiesCount&&!(_benchMode()==='vfast'&&_mgrDepthCount(tiesCount)===0);
 }
+// v17.8.51 (section Z item 6): this Stop-less "Analysing bench and manager…" overlay is now the
+// SYNCHRONOUS FALLBACK's UI only (Workers unavailable, blob/spawn failure, or a mid-pass worker
+// error). The normal path is _analyzeTiesAsync's worker-backed run, which shows the regular overlay
+// WITH the Stop button and a live node counter instead — the freeze this overlay was built to make
+// visible no longer happens there, because the pass is off the main thread.
 function _showBenchMgrOverlay(){
   const sb=$('#solverStopBtn');if(sb)sb.style.display='none'; // this phase can't be stopped — don't show a button that does nothing
   _showSolverOverlay();
@@ -8839,14 +8901,21 @@ function _analyzeTies(r,form,opts){
     // so there's nothing to report as skipped in that case. Only real (non-vfast) bench modes can
     // actually be interrupted by a stop.
     _benchNodeAcc=0;_benchPromptAt=10000000;_benchAbort=!!opts.stopped&&mode!=='vfast';_benchAbortAtM=null;
+    // v17.8.51 (section Z item 6): Stop was pressed on the worker-backed pass. Ties the worker already
+    // finished arrive via opts.doneBench (kept verbatim); the rest fall to instant aborted stubs, exactly
+    // like a 10M-prompt cancel used to produce. benchStopNodes seeds the pass meter so benchPassNodes
+    // reports the real work done in the worker (the stubs themselves add ~0).
+    if(opts.benchStopAtM!=null){_benchAbort=mode!=='vfast';_benchAbortAtM=_benchAbort?opts.benchStopAtM:null;_benchPromptAt=Infinity;}
+    if(opts.benchStopNodes)_benchNodeAcc=opts.benchStopNodes;
     benchData=r.bestXIs.map(()=>null);benchCapped=false;
     const order=r.bestXIs.map((t,i)=>i).sort((a,b)=>cleans[b]-cleans[a]);
     const _sig=b=>(b&&b.bench)?b.bench.map(x=>x.c.id).join(','):'';
     _benchTieTotal=order.length;
-    order.forEach((i,_oi)=>{_benchTieIdx=_oi+1;const bd=computeBenchPicks(r.bestXIs[i],form,mode);
+    order.forEach((i,_oi)=>{_benchTieIdx=_oi+1;const bd=(opts.doneBench&&opts.doneBench[i])||computeBenchPicks(r.bestXIs[i],form,mode); // v17.8.51: reuse worker-finished ties on a Stop
       const prev=opts.prevBenchData&&opts.prevBenchData[i];
       if(!prev||_sig(prev)!==_sig(bd))benchChanged.add(i);   // this tie's picks changed vs the previous pass
-      benchData[i]=bd;if(bd.capped)benchCapped=true;});
+      benchData[i]=bd;if(bd.capped)benchCapped=true;
+      if(_tieHook)_tieHook('bench',i,bd);});                 // v17.8.51: worker publishes each finished tie so a Stop keeps it
   }else{
     benchData=opts.prevBenchData;benchCapped=!!opts.prevBenchCapped;
   }
@@ -8864,12 +8933,16 @@ function _analyzeTies(r,form,opts){
     if(doMgr){
       analyses=r.bestXIs.map(()=>null);
       _mgrNodeAcc=0;_mgrPromptAt=10000000;_mgrAbort=!!opts.stopped;_mgrAbortAtM=null;_mgrTieIdx=0;_mgrTieTotal=depthIdx.length; // v17.8.42: opts.stopped -> aborted stubs, see the doBench comment above
-      depthIdx.forEach(i=>{_mgrTieIdx++;const an=analyzeManagerDepth(r.bestXIs[i],form,benchData[i].bench.map(b=>b.c));analyses[i]=an;if(an.capped)mgrCapped=true;});
+      if(opts.mgrStopAtM!=null){_mgrAbort=true;_mgrAbortAtM=opts.mgrStopAtM;_mgrPromptAt=Infinity;} // v17.8.51: Stop on the worker-backed pass — same reuse-or-stub shape as doBench above
+      if(opts.mgrStopNodes)_mgrNodeAcc=opts.mgrStopNodes;
+      depthIdx.forEach(i=>{_mgrTieIdx++;const an=(opts.doneMgr&&opts.doneMgr[i])||analyzeManagerDepth(r.bestXIs[i],form,benchData[i].bench.map(b=>b.c));analyses[i]=an;if(an.capped)mgrCapped=true;if(_tieHook)_tieHook('mgr',i,an);});
     }else{
       analyses=(opts.prevAnalyses||r.bestXIs.map(()=>null)).slice();
       const _redo=depthIdx.filter(i=>(benchChanged.has(i)||!analyses[i])&&benchData[i]);
       _mgrNodeAcc=0;_mgrPromptAt=10000000;_mgrAbort=!!opts.stopped;_mgrAbortAtM=null;_mgrTieIdx=0;_mgrTieTotal=_redo.length; // v17.8.42: opts.stopped -> aborted stubs, see the doBench comment above
-      _redo.forEach(i=>{_mgrTieIdx++;const an=analyzeManagerDepth(r.bestXIs[i],form,benchData[i].bench.map(b=>b.c));analyses[i]=an;});
+      if(opts.mgrStopAtM!=null){_mgrAbort=true;_mgrAbortAtM=opts.mgrStopAtM;_mgrPromptAt=Infinity;} // v17.8.51: Stop on the worker-backed pass
+      if(opts.mgrStopNodes)_mgrNodeAcc=opts.mgrStopNodes;
+      _redo.forEach(i=>{_mgrTieIdx++;const an=(opts.doneMgr&&opts.doneMgr[i])||analyzeManagerDepth(r.bestXIs[i],form,benchData[i].bench.map(b=>b.c));analyses[i]=an;if(_tieHook)_tieHook('mgr',i,an);});
       mgrCapped=analyses.some(a=>a&&a.capped);
     }
     let best=null;
@@ -8895,7 +8968,119 @@ function _analyzeTies(r,form,opts){
   return {analyses,benchData,benchCapped,benchAborted,tiesCapped,tiesAborted,tiesTotal:r.bestXIs.length,
     benchPassNodes:_benchNodeAcc,mgrPassNodes:_mgrNodeAcc,mgrTiesAborted,mgrCapped,bi,benchCap:_benchCap,mgrCap:_mgrCap,
     benchAbortAtM:_benchAbortAtM,mgrAbortAtM:_mgrAbortAtM, // v17.8.49: the actual M-multiple the user cancelled at (30, 40...), not always 10 — see _miniCapWarn
+    stoppedPass:!!opts.stoppedPass, // v17.8.51: the bench/manager pass's OWN Stop button (worker path) was the reason for the aborts — different message again, see _miniCapWarn
     stoppedMain:!!opts.stopped}; // v17.8.46: was the main solve's Stop button the reason this pass came back aborted, rather than the bench/manager 10M prompt? Different message — see _miniCapWarn.
+}
+// v17.8.51 (section Z item 6): the WHOLE bench/manager pass can now run inside ONE dedicated Worker,
+// giving it the same running node count + always-available Stop button the main solve got in v17.8.41.
+// Same serialize-by-toString discipline as _buildSolverWorkerBlob (and the same trap — see its
+// trueChemPerCard comment: every helper any serialized function calls MUST be in this array or it
+// won't exist in the worker's scope). The DOM-reading helpers (_benchMode/_benchObjEV/getRatingCeil/
+// _mgrDepthCount) and the confirm()-based 10M prompts are NOT serialized — workers have no DOM and no
+// confirm() — they're re-declared below as shims over values captured on the main thread at spawn
+// time, and the prompts become throttled progress postMessages instead (the counter + Stop button
+// REPLACE the confirm() circuit breaker on this path; the per-tie _benchCap/_mgrCap budgets still
+// bind inside the loops exactly as before, so the worker pass always terminates on its own).
+// postMessage from inside the synchronous loops/DFS works fine (v17.8.41's proven asymmetry): Stop
+// stays terminate-based, and because _tieHook has already shipped every FINISHED tie's deep result
+// to the main thread, terminating mid-pass loses only the tie in flight — which comes back as the
+// same instant aborted stub a 10M-prompt cancel always produced. Structured clone handles the Sets
+// inside each tie's sc (nationSet/leagueSet/clubSet) and the BigInt combos/proofCeil fields.
+function _buildBenchWorkerBlob(){
+  const src=[futRatingRaw,leagueOf,trueChemPerCard,trueChem,scoreXI,solveBest,_lexGt,insWhy,mgrGain,cleanMgrCount,exactFillCount,_benchProofCeil,_isPivotLeague,computeBenchPicks,analyzeManagerDepth,_analyzeTies].map(f=>f.toString()).join('\n')
+    +'\nvar cards,board,MANAGER_DB,PIVOT_KIND,PIVOT_KEY;'
+    +'var _benchCap=3000000,_mgrCap=3000000;'
+    +'var _benchNodeAcc=0,_benchPromptAt=Infinity,_benchAbort=false,_benchAbortAtM=null,_benchTotalCombos=null,_benchTieIdx=0,_benchTieTotal=0;'
+    +'var _mgrNodeAcc=0,_mgrPromptAt=Infinity,_mgrAbort=false,_mgrAbortAtM=null,_mgrTieIdx=0,_mgrTieTotal=0;'
+    +'var _tieHook=null,__mode="vfast",__ev=false,__rc=99,__depthN=0,__inflight=0,__phase="bench",__lastPost=0;'
+    +'function _benchMode(){return __mode;}'
+    +'function _benchObjEV(){return __ev;}'
+    +'function getRatingCeil(){return __rc;}'
+    +'function _mgrDepthCount(){return __depthN;}'
+    // Progress shims. Throttled by nodes so the fast/medium 30k-slice cadence (one _maybeSlowPrompt
+    // call per sub-solve) doesn't flood the channel; force-posted on phase entry so tie i/N stays live.
+    +'function __post(force){var n=_benchNodeAcc+_mgrNodeAcc+__inflight;if(!force&&n-__lastPost<250000)return;__lastPost=n;postMessage({progress:true,bench:_benchNodeAcc,mgr:_mgrNodeAcc,inflight:__inflight,phase:__phase,tieIdx:__phase==="mgr"?_mgrTieIdx:_benchTieIdx,tieTotal:__phase==="mgr"?_mgrTieTotal:_benchTieTotal});}'
+    +'function _maybeSlowPrompt(){__phase="bench";__inflight=0;__post();}'
+    +'function _maybeMgrPrompt(){__phase="mgr";__inflight=0;__post(true);}'
+    +'function _recLog(){}'
+    // Wrap solveBest so every bench/manager sub-solve that runs long enough (500k+ nodes: slow-mode
+    // combos, big _mgrCap manager solves) publishes IN-FLIGHT node counts via the existing onSnapshot
+    // hook — the 30k heuristic slices never reach the threshold and cost one falsy check per node.
+    +'var __sbRaw=solveBest;solveBest=function(f,c,n,rc,sb,sx,st,ds,ra,os){return __sbRaw(f,c,n,rc,sb,sx,st,ds,ra,os||function(s){__inflight=s.nodes||0;__post();});};'
+    +'onmessage=function(e){var d=e.data;'
+    +'cards=d.cards;board=d.board;MANAGER_DB=d.managerDB;PIVOT_KIND=d.pivotKind;PIVOT_KEY=d.pivotKey;'
+    +'_benchCap=d.benchCap;_mgrCap=d.mgrCap;__mode=d.mode;__ev=d.ev;__rc=d.ratingCeil;__depthN=d.depthN;'
+    +'_tieHook=function(kind,i,data){postMessage({tieDone:kind,i:i,data:data});};'
+    +'var A;try{A=_analyzeTies({bestXIs:d.ties},d.form,d.opts||{});}catch(err){postMessage({fatal:String(err&&err.message||err)});return;}'
+    +'postMessage({final:A});};';
+  return URL.createObjectURL(new Blob([src],{type:'application/javascript'}));
+}
+let _benchRun=null; // active worker-backed bench/manager pass, or null (never live at the same time as _parRun — the main solve has already finished/stopped before this pass starts)
+// v17.8.51: the one async entry point around _analyzeTies. Every caller passes a continuation that
+// receives the SAME A object _analyzeTies returns — worker path, synchronous fallback, and the
+// instant paths all feed the identical shape, so nothing downstream changes.
+function _analyzeTiesAsync(r,form,opts,done){
+  opts=opts||{};
+  // Instant paths stay synchronous: a stopped main solve already returns instant aborted stubs
+  // (v17.8.42), and vfast+depth-0 does no solving at all — nothing to count, nothing to stop.
+  if(opts.stopped||!_benchMgrWillBlock(r.bestXIs.length)){done(_analyzeTies(r,form,opts));return;}
+  const syncFallback=()=>{ // no Worker support / blob or spawn failure -> the old synchronous path, 10M prompts and all (also the iOS-safe path)
+    _showBenchMgrOverlay();setTimeout(()=>{const A=_analyzeTies(r,form,opts);_hideSolverOverlay();done(A);},30);};
+  let url=null;
+  try{url=_buildBenchWorkerBlob();}catch(e){url=null;}
+  if(!url||typeof Worker==='undefined'){syncFallback();return;}
+  let w=null;
+  try{w=new Worker(url);}catch(e){w=null;}
+  if(!w){try{URL.revokeObjectURL(url);}catch(e){}syncFallback();return;}
+  const run={url,worker:w,doneBench:{},doneMgr:{},bench:0,mgr:0,inflight:0,phase:'bench',tieIdx:0,tieTotal:r.bestXIs.length,stopped:false,r,form,opts,done};
+  _benchRun=run;
+  _showSolverOverlay();
+  const sb=$('#solverStopBtn');if(sb)sb.style.display='block';
+  const hint=$('#solverBadgeHint');if(hint)hint.textContent='Analysing bench and manager\u2026 Stop keeps what\u2019s finished.';
+  const teardown=()=>{try{w.terminate();}catch(e){}try{URL.revokeObjectURL(url);}catch(e){}
+    if(sb)sb.style.display='none';if(_benchRun===run)_benchRun=null;};
+  const failToSync=()=>{if(run.stopped)return;run.stopped=true;teardown();_hideSolverOverlay();syncFallback();}; // worker failure -> clean synchronous rerun, identical result (mirrors the main solve's serial fallback)
+  w.onerror=failToSync;
+  w.onmessage=function(e){
+    if(run.stopped)return;const d=e.data;
+    if(d&&d.progress){
+      run.bench=d.bench;run.mgr=d.mgr;run.inflight=d.inflight||0;run.phase=d.phase;run.tieIdx=d.tieIdx;run.tieTotal=d.tieTotal;
+      if(hint){const tot=Math.round((d.bench+d.mgr+run.inflight)/1000000);
+        hint.textContent=(d.phase==='mgr'?'Manager checks':'Bench search')+': '+tot+'M nodes \u00b7 tie '+d.tieIdx+'/'+d.tieTotal+' \u2014 Stop keeps what\u2019s finished.';}
+      return;}
+    if(d&&d.tieDone){(d.tieDone==='bench'?run.doneBench:run.doneMgr)[d.i]=d.data;return;}
+    if(d&&d.fatal){failToSync();return;}
+    if(d&&d.final){run.stopped=true;teardown();_hideSolverOverlay();done(d.final);}
+  };
+  w.postMessage({ties:r.bestXIs,form:{name:form.name,slots:form.slots.slice()},opts:opts,
+    cards:cards,board:board?board.map(s=>({id:s.id})):null, // computeBenchPicks only reads board for hold ordering (findIndex on s.id) — ship ids only
+    managerDB:MANAGER_DB,pivotKind:PIVOT_KIND,pivotKey:PIVOT_KEY,
+    benchCap:_benchCap,mgrCap:_mgrCap,mode:_benchMode(),ev:_benchObjEV(),ratingCeil:getRatingCeil(),depthN:_mgrDepthCount(r.bestXIs.length)});
+}
+// v17.8.51: Stop for the worker-backed bench/manager pass. Terminate-based, like the main solve's —
+// but here NOTHING meaningful is in flight to lose: every finished tie's deep result already arrived
+// via _tieHook, so the stop rebuilds the pass ON THE MAIN THREAD through the one canonical
+// _analyzeTies aggregation (winner ladder, capped/aborted counts, return shape — single source, no
+// second assembler to drift), with finished ties reused verbatim (opts.doneBench/doneMgr) and every
+// unfinished tie falling to the same instant aborted stub a 10M-prompt cancel always produced.
+function _stopBenchRun(){
+  const run=_benchRun;if(!run||run.stopped)return;
+  run.stopped=true;
+  try{run.worker&&run.worker.terminate();}catch(e){}
+  try{URL.revokeObjectURL(run.url);}catch(e){}
+  const sb=$('#solverStopBtn');if(sb)sb.style.display='none';
+  _benchRun=null;_hideSolverOverlay();
+  const benchDoneCt=Object.keys(run.doneBench).length;
+  const o=Object.assign({},run.opts,{doneBench:run.doneBench,doneMgr:run.doneMgr,stoppedPass:true,
+    // Only mark the bench side stopped if it was actually cut short — a Stop during the manager phase
+    // leaves a COMPLETE bench pass (every tie in doneBench), which must not render as aborted.
+    benchStopAtM:(run.opts.only==='mgr'||benchDoneCt>=run.r.bestXIs.length)?null:Math.max(1,Math.round((run.bench+(run.phase==='bench'?run.inflight:0))/1000000)),
+    benchStopNodes:run.bench,
+    mgrStopAtM:Math.max(1,Math.round((run.mgr+(run.phase==='mgr'?run.inflight:0))/1000000)),
+    mgrStopNodes:run.mgr});
+  const A=_analyzeTies(run.r,run.form,o);
+  _recLog('bench/manager pass stopped by user \u2014 '+Math.round((run.bench+run.mgr+run.inflight)/1000000)+'M nodes searched, finished ties kept');
+  run.done(A);
 }
 function _handleSolveResult(r,cap,form,ms,out){
   if(r.error&&!/no eligible card/.test(r.error)){out.innerHTML='<div class="note" style="border-color:var(--bad)">'+r.error+'</div>';return}
@@ -8925,29 +9110,24 @@ function _handleSolveResult(r,cap,form,ms,out){
     // over a phase it can't affect. v17.8.46: must setTimeout the actual pass AFTER showing the overlay
     // (not run it in the same tick) or the browser never gets a paint frame to draw the overlay before
     // the freeze starts — see _benchMgrWillBlock's comment.
-    const _willBlock=!r.stoppedEarly&&_benchMgrWillBlock(r.bestXIs.length);
-    const _run=()=>{
-      const A=_analyzeTies(r,form,r.stoppedEarly?{stopped:true}:undefined);
-      if(_willBlock)_hideSolverOverlay();
-      window._solveCtx={ties:r.bestXIs,form,r,ms,cur:A.bi,cap,analyses:A.analyses,benchData:A.benchData,benchCapped:A.benchCapped,benchAborted:A.benchAborted,tiesCapped:A.tiesCapped,tiesAborted:A.tiesAborted,tiesTotal:A.tiesTotal,benchPassNodes:A.benchPassNodes,mgrCapped:A.mgrCapped,mgrPassNodes:A.mgrPassNodes,mgrTiesAborted:A.mgrTiesAborted,benchCap:A.benchCap,mgrCap:A.mgrCap,winnerIdx:A.bi,stoppedMain:A.stoppedMain,benchAbortAtM:A.benchAbortAtM,mgrAbortAtM:A.mgrAbortAtM};
+    // v17.8.51 (section Z item 6): the pass now goes through _analyzeTiesAsync — worker-backed with a
+    // live node counter and always-available Stop when it would block; instant/sync when it wouldn't
+    // (stopped main solve, vfast+depth-0) or when Workers are unavailable (old overlay + prompts path).
+    _analyzeTiesAsync(r,form,r.stoppedEarly?{stopped:true}:undefined,A=>{
+      window._solveCtx={ties:r.bestXIs,form,r,ms,cur:A.bi,cap,analyses:A.analyses,benchData:A.benchData,benchCapped:A.benchCapped,benchAborted:A.benchAborted,tiesCapped:A.tiesCapped,tiesAborted:A.tiesAborted,tiesTotal:A.tiesTotal,benchPassNodes:A.benchPassNodes,mgrCapped:A.mgrCapped,mgrPassNodes:A.mgrPassNodes,mgrTiesAborted:A.mgrTiesAborted,benchCap:A.benchCap,mgrCap:A.mgrCap,winnerIdx:A.bi,stoppedMain:A.stoppedMain,stoppedPass:A.stoppedPass,benchAbortAtM:A.benchAbortAtM,mgrAbortAtM:A.mgrAbortAtM};
       $('#mgrPanel').style.display='block';
       applyTie(A.bi);
-    };
-    if(_willBlock){_showBenchMgrOverlay();setTimeout(_run,30);}else{_run();}
+    });
     return;
   }
   // tiebreak: among equal-score squads, pick the one with the highest true +2 count
   // (clean + reachable with subs). Secondary: optimal-bench expected manager gain across
   // the full DB. Tertiary: +1 count.
-  const _willBlock2=_benchMgrWillBlock(r.bestXIs.length);
-  const _run2=()=>{
-    const A=_analyzeTies(r,form);
-    if(_willBlock2)_hideSolverOverlay();
-    window._solveCtx={ties:r.bestXIs,form,r,ms,cur:A.bi,cap,analyses:A.analyses,benchData:A.benchData,benchCapped:A.benchCapped,benchAborted:A.benchAborted,tiesCapped:A.tiesCapped,tiesAborted:A.tiesAborted,tiesTotal:A.tiesTotal,benchPassNodes:A.benchPassNodes,mgrCapped:A.mgrCapped,mgrPassNodes:A.mgrPassNodes,mgrTiesAborted:A.mgrTiesAborted,benchCap:A.benchCap,mgrCap:A.mgrCap,winnerIdx:A.bi,stoppedMain:A.stoppedMain,benchAbortAtM:A.benchAbortAtM,mgrAbortAtM:A.mgrAbortAtM};
+  _analyzeTiesAsync(r,form,undefined,A=>{
+    window._solveCtx={ties:r.bestXIs,form,r,ms,cur:A.bi,cap,analyses:A.analyses,benchData:A.benchData,benchCapped:A.benchCapped,benchAborted:A.benchAborted,tiesCapped:A.tiesCapped,tiesAborted:A.tiesAborted,tiesTotal:A.tiesTotal,benchPassNodes:A.benchPassNodes,mgrCapped:A.mgrCapped,mgrPassNodes:A.mgrPassNodes,mgrTiesAborted:A.mgrTiesAborted,benchCap:A.benchCap,mgrCap:A.mgrCap,winnerIdx:A.bi,stoppedMain:A.stoppedMain,stoppedPass:A.stoppedPass,benchAbortAtM:A.benchAbortAtM,mgrAbortAtM:A.mgrAbortAtM};
     $('#mgrPanel').style.display='block';
     applyTie(A.bi);
-  };
-  if(_willBlock2){_showBenchMgrOverlay();setTimeout(_run2,30);}else{_run2();}
+  });
 }
 // Re-picks the winning tie using the exact same tiebreak _analyzeTies uses (true +2 count -> true +1
 // count -> exact rating -> clean +2), but scoped to whatever's currently in ctx.analyses. Needed because
@@ -8972,15 +9152,16 @@ function _reanalyze(which,cap){
   const _run=()=>{
     _recLog((which==='bench'?'bench pass':'manager pass')+': '+_recCapTxt(cap)); // logged inside _run so a cancelled 150M forever-warning records nothing
     if(which==='bench')_benchCap=cap;else _mgrCap=cap;
-    const A=_analyzeTies({bestXIs:ctx.ties},ctx.form,{
+    _analyzeTiesAsync({bestXIs:ctx.ties},ctx.form,{ // v17.8.51: escalations get the worker-backed counter + Stop too
       only:which,
       prevBenchData:ctx.benchData,prevBenchCapped:ctx.benchCapped,
       prevAnalyses:ctx.analyses,prevMgrCapped:ctx.mgrCapped
-    });
-    ctx.analyses=A.analyses;ctx.benchData=A.benchData;ctx.benchCapped=A.benchCapped;ctx.benchAborted=A.benchAborted;ctx.tiesCapped=A.tiesCapped;ctx.tiesAborted=A.tiesAborted;ctx.tiesTotal=A.tiesTotal;ctx.benchPassNodes=A.benchPassNodes;ctx.mgrCapped=A.mgrCapped;ctx.mgrPassNodes=A.mgrPassNodes;ctx.mgrTiesAborted=A.mgrTiesAborted;ctx.benchCap=A.benchCap;ctx.mgrCap=A.mgrCap;ctx.benchAbortAtM=A.benchAbortAtM;ctx.mgrAbortAtM=A.mgrAbortAtM;
+    },A=>{
+    ctx.analyses=A.analyses;ctx.benchData=A.benchData;ctx.benchCapped=A.benchCapped;ctx.benchAborted=A.benchAborted;ctx.tiesCapped=A.tiesCapped;ctx.tiesAborted=A.tiesAborted;ctx.tiesTotal=A.tiesTotal;ctx.benchPassNodes=A.benchPassNodes;ctx.mgrCapped=A.mgrCapped;ctx.mgrPassNodes=A.mgrPassNodes;ctx.mgrTiesAborted=A.mgrTiesAborted;ctx.benchCap=A.benchCap;ctx.mgrCap=A.mgrCap;ctx.benchAbortAtM=A.benchAbortAtM;ctx.mgrAbortAtM=A.mgrAbortAtM;ctx.stoppedMain=A.stoppedMain;ctx.stoppedPass=A.stoppedPass;
     ctx.winnerIdx=_recomputeWinnerIdx(ctx.ties,ctx.analyses); // the escalated analyses may have changed which tie actually wins
     if(ctx.winnerIdx!==ctx.cur)ctx.cur=ctx.winnerIdx; // this is a global (all-ties) escalation, not a single-tie one: follow the new winner
     _hideSolverOverlay();applyTie(ctx.cur);
+    });
   };
   if(cap>30000000){                                        // deep/forever: same count-warning as the main solve, but against THIS search's own count
     // Use bench's own ESTIMATED TOTAL NODE count (same math as the progress text) or managers' own
@@ -9202,7 +9383,7 @@ function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,
     // don't claim the 10M prompt fired unless it actually did. A.stoppedMain means the abort was
     // seeded from the main solve's Stop button (see _analyzeTies' opts.stopped), which skips the
     // bench/manager pass entirely and never reaches the 10M check at all.
-    head=A.aborted?(A.stoppedMain?'\u26a0 Bench search skipped \u2014 you stopped the main solve before it ran':'\u26a0 Bench search stopped early \u2014 you chose Stop at the '+(A.abortAtM||10)+'M check'):'\u26a0 Bench search capped \u2014 per-tie budget is '+(cap/1000000)+'M nodes';
+    head=A.aborted?(A.stoppedMain?'\u26a0 Bench search skipped \u2014 you stopped the main solve before it ran':(A.stoppedPass?'\u26a0 Bench search stopped early \u2014 you pressed Stop during the bench/manager pass':'\u26a0 Bench search stopped early \u2014 you chose Stop at the '+(A.abortAtM||10)+'M check')):'\u26a0 Bench search capped \u2014 per-tie budget is '+(cap/1000000)+'M nodes';
     const lines=[];
     if(A.passNodes){let pl='<b>Pass</b> \u2014 '+_fmtCount(A.passNodes)+' nodes across '+(A.tiesTotal||'?')+' tie'+((A.tiesTotal||0)===1?'':'s');
       if(A.tiesCapped)pl+=' \u00b7 '+A.tiesCapped+' hit the per-tie budget';
@@ -9215,7 +9396,7 @@ function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,
   }else{
     const A=agg||{};
     // v17.8.46: same fix as the bench box above — only claim the 10M prompt fired when it did.
-    head=A.aborted?(A.stoppedMain?'\u26a0 Manager checks skipped \u2014 you stopped the main solve before they ran':'\u26a0 Manager checks stopped early \u2014 you chose Stop at the '+(A.abortAtM||10)+'M check'):'\u26a0 Manager-awareness search capped \u2014 per-tie budget is '+(cap/1000000)+'M nodes';
+    head=A.aborted?(A.stoppedMain?'\u26a0 Manager checks skipped \u2014 you stopped the main solve before they ran':(A.stoppedPass?'\u26a0 Manager checks stopped early \u2014 you pressed Stop during the bench/manager pass':'\u26a0 Manager checks stopped early \u2014 you chose Stop at the '+(A.abortAtM||10)+'M check')):'\u26a0 Manager-awareness search capped \u2014 per-tie budget is '+(cap/1000000)+'M nodes';
     const lines=[];
     if(A.passNodes){let pl='<b>Pass</b> \u2014 '+_fmtCount(A.passNodes)+' nodes across '+(A.tiesTotal||'?')+' tie'+((A.tiesTotal||0)===1?'':'s');
       if(A.tiesAborted)pl+=' \u00b7 '+A.tiesAborted+' skipped after the stop';
@@ -9893,8 +10074,8 @@ function applyTie(idx){
   // actual pipeline (bench re-analysis is only meaningful once the XI is fixed; manager re-analysis
   // is only meaningful once the bench is fixed) — so mgr goes in first, main solve goes in last.
   {const so=$('#solveOut');if(so){
-    if(ctx.mgrCapped||ctx.mgrTiesAborted)so.insertAdjacentHTML('afterbegin',_miniCapWarn('mgr',ctx.mgrCap||_mgrCap,ctx.analyses&&ctx.analyses[idx]?ctx.analyses[idx].exact:null,null,null,null,null,null,null,{passNodes:ctx.mgrPassNodes,tiesTotal:ctx.tiesTotal,tiesAborted:ctx.mgrTiesAborted,aborted:!!ctx.mgrTiesAborted,stoppedMain:ctx.stoppedMain,abortAtM:ctx.mgrAbortAtM,exactTotal:(ctx.analyses||[]).reduce((t,a)=>t+((a&&a.exact)?Number(a.exact):0),0),exactTies:(ctx.analyses||[]).filter(a=>a&&a.exact).length,tieCapped:!!(ctx.analyses&&ctx.analyses[idx]&&ctx.analyses[idx].capped),tieAborted:!!(ctx.analyses&&ctx.analyses[idx]&&ctx.analyses[idx].aborted),tieNodes:(ctx.analyses&&ctx.analyses[idx])?ctx.analyses[idx].nodes:null}));
-    if(ctx.benchCapped||ctx.benchAborted){const _bd=ctx.benchData&&ctx.benchData[idx];so.insertAdjacentHTML('afterbegin',_miniCapWarn('bench',ctx.benchCap||_benchCap,_bd?_bd.combos:null,_bd?_bd.nodes:null,_bd?_bd.combosChecked:null,_bd?_bd.mode:null,_bd?_bd.unitsChecked:null,_bd?_bd.unitsTotal:null,_bd?_bd.proofCeil:null,{passNodes:ctx.benchPassNodes,tiesTotal:ctx.tiesTotal,tiesCapped:ctx.tiesCapped,tiesAborted:ctx.tiesAborted,aborted:ctx.benchAborted,stoppedMain:ctx.stoppedMain,abortAtM:ctx.benchAbortAtM,estPass:_benchPassEstimate(ctx),tieCapped:!!(_bd&&_bd.capped),tieAborted:!!(_bd&&_bd.aborted)}));}
+    if(ctx.mgrCapped||ctx.mgrTiesAborted)so.insertAdjacentHTML('afterbegin',_miniCapWarn('mgr',ctx.mgrCap||_mgrCap,ctx.analyses&&ctx.analyses[idx]?ctx.analyses[idx].exact:null,null,null,null,null,null,null,{passNodes:ctx.mgrPassNodes,tiesTotal:ctx.tiesTotal,tiesAborted:ctx.mgrTiesAborted,aborted:!!ctx.mgrTiesAborted,stoppedMain:ctx.stoppedMain,stoppedPass:ctx.stoppedPass,abortAtM:ctx.mgrAbortAtM,exactTotal:(ctx.analyses||[]).reduce((t,a)=>t+((a&&a.exact)?Number(a.exact):0),0),exactTies:(ctx.analyses||[]).filter(a=>a&&a.exact).length,tieCapped:!!(ctx.analyses&&ctx.analyses[idx]&&ctx.analyses[idx].capped),tieAborted:!!(ctx.analyses&&ctx.analyses[idx]&&ctx.analyses[idx].aborted),tieNodes:(ctx.analyses&&ctx.analyses[idx])?ctx.analyses[idx].nodes:null}));
+    if(ctx.benchCapped||ctx.benchAborted){const _bd=ctx.benchData&&ctx.benchData[idx];so.insertAdjacentHTML('afterbegin',_miniCapWarn('bench',ctx.benchCap||_benchCap,_bd?_bd.combos:null,_bd?_bd.nodes:null,_bd?_bd.combosChecked:null,_bd?_bd.mode:null,_bd?_bd.unitsChecked:null,_bd?_bd.unitsTotal:null,_bd?_bd.proofCeil:null,{passNodes:ctx.benchPassNodes,tiesTotal:ctx.tiesTotal,tiesCapped:ctx.tiesCapped,tiesAborted:ctx.tiesAborted,aborted:ctx.benchAborted,stoppedMain:ctx.stoppedMain,stoppedPass:ctx.stoppedPass,abortAtM:ctx.benchAbortAtM,estPass:_benchPassEstimate(ctx),tieCapped:!!(_bd&&_bd.capped),tieAborted:!!(_bd&&_bd.aborted)}));}
   }}
   if(ctx.r&&ctx.r.capped){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_cappedWarnHTML(ctx.cap||getNodeCap(),ctx.r));}
   else if(ctx.r&&ctx.r.workerCapSoft){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_workerCapSoftWarnHTML(ctx.cap||getNodeCap()));} // v17.6.7: parallel finished under the global cap but a worker was starved -> milder, non-escalation warning
@@ -9926,6 +10107,7 @@ function switchTie(d){const ctx=window._solveCtx;if(ctx)applyTie(ctx.cur+d);}
 // threshold to Infinity instead of true — same effect (never prompts), just expressed as "no finite
 // threshold will ever be reached" rather than a separate boolean.
 let _benchNodeAcc=0,_benchPromptAt=10000000,_benchAbort=false,_benchAbortAtM=null,_benchTotalCombos=null,_benchTieIdx=0,_benchTieTotal=0;
+let _tieHook=null; // v17.8.51 (section Z item 6): optional per-tie completion hook inside _analyzeTies' loops. Always null on the main thread; the bench/manager worker (see _buildBenchWorkerBlob) sets it to a postMessage forwarder so every finished tie's deep result is already on the main thread when Stop terminates the worker — same "publish so terminate loses nothing" idea as the main solve's onSnapshot.
 let _mgrNodeAcc=0,_mgrPromptAt=10000000,_mgrAbort=false,_mgrAbortAtM=null,_mgrTieIdx=0,_mgrTieTotal=0; // manager pass meter — same currency+prompt system as the bench pass, because with all ties analysed at medium/slow, N ties x the per-tie cap has exactly the same blow-up shape the bench had // bench-only node budget guard (10M prompt below); manager checks are entirely separate and never touch this
 function _benchMode(){const el=$('#benchMode');return el&&el.value?el.value:'vfast';}
 // v15.0: bench objective toggle. OFF (default) = pure "+2 gamble" — maximise the deduped count of
@@ -9987,6 +10169,19 @@ function computeBenchPicks(tie,form,mode){
   // refactor with real bug surface, not a contained change. Decided against it: a per-tie bench or
   // manager search that's already deep enough to want 150M+ nodes is reaching the point of
   // excessiveness for what a tiebreaker or an OOP squad's insurance picks actually need.
+  // v17.8.51 (section Z item 6) UPDATE: the v15.1.3 verdict above is still true of THIS function's
+  // internals — it remains a synchronous single-threaded pass, and it still never touches
+  // _runSolveParallel or partitions its own work across workers. What changed is one level up: the
+  // WHOLE post-solve bench/manager pass (_analyzeTies' loops calling this + analyzeManagerDepth) may
+  // now itself be hosted inside ONE dedicated worker via _analyzeTiesAsync/_buildBenchWorkerBlob, in
+  // which case this exact function body runs there verbatim (serialized by toString), the confirm()
+  // prompts are shimmed into progress postMessages, and Stop is the always-on button on the main
+  // thread. The synchronous main-thread path below (prompts and all) remains fully live: it is the
+  // fallback for worker failure/unavailability, and still the ONLY path for _pickTieWinner, the
+  // emergency-fill renderer, pickMgr, and _reanalyzeTie's per-tie reruns. Any edit here must
+  // therefore stay worker-safe: no DOM reads (the _benchMode/_benchObjEV/getRatingCeil/
+  // _mgrDepthCount shims cover the existing ones), no new global helpers without adding them to
+  // _buildBenchWorkerBlob's serialization list (the trueChemPerCard lesson).
   mode=mode||_benchMode();
   const _entryAborted=_benchAbort;   // tie analysed after a user stop -> mark it, don't call it capped
   const _fnNodeStart=_benchNodeAcc;  // actual nodes searched during THIS call (each combo triggers its own solveBest(), so combo-count alone understates the real work)
