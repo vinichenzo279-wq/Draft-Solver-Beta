@@ -2805,7 +2805,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          W. Full-solver soundness re-run against the live harness (contrast with V).
          X. Final tiered soundness testing results/conclusion.
          Y. Maximum-size 23x5 / 115-player full-search result and what it proves.
-         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 REJECTED PERMANENTLY v17.8.57 — bounded benefit, unbounded silent-false-proof risk; item 4's chemistry-clash evidence still deferred; item 7 ADDED v17.8.59, DEFERRED — worker-path node-count-vs-serial ideas) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
+         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 REJECTED PERMANENTLY v17.8.57 — bounded benefit, unbounded silent-false-proof risk; item 4's chemistry-clash evidence still deferred; item 7 ADDED v17.8.59, DEFERRED, then ATTEMPTED v17.8.61 — sub-idea (a) found infeasible (a busy worker can't receive inbound messages mid-DFS), (b) shared-atomic-incumbent and (c) bound-sorted root partitioning IMPLEMENTED, fuzz-verified off-tree but not yet the full 12-regime harness) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -4251,9 +4251,12 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           eval-under-85 + nothing-fresh-or-off-pivot rule (see the item; the aggregated clash-reason
           machinery the sketch imagines stays deferred). Item 1 was reconsidered and REJECTED,
           PERMANENTLY, in v17.8.57 — not deferred, not "not yet": see the item for the full
-          cost-benefit writeup. Item 7 ADDED v17.8.59 — a DEFERRED backlog item, not implemented —
-          recording follow-up ideas for the worker-path node-count observation written up in that
-          version's changelog entry.)
+          cost-benefit writeup. Item 7 ADDED v17.8.59 as a DEFERRED backlog item, then ATTEMPTED
+          v17.8.61 — see the item for the full writeup, but in short: sub-idea (a) turned out to be
+          infeasible on investigation (a worker mid-DFS cannot receive an inbound postMessage), so
+          (b) SHARED ATOMIC INCUMBENT was implemented as its corrected realization, plus (c)
+          BOUND-SORTED ROOT PARTITIONING; both fuzz-verified off-tree against an independent brute
+          force but NOT yet run through the full 12-regime harness per F.2/Q.2.)
           Potential items to review later:
             1. Make each 3x escalation continue from the exact frontier where the preceding search
                stopped, instead of beginning a fresh traversal. Reusing the previous best score as
@@ -4434,7 +4437,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                re-scoping that made items 2+3 implementable in v17.8.41 (publish-then-terminate,
                reuse the canonical aggregation path, no second assembler) applied here directly.
 
-            7. (added v17.8.59, DEFERRED -- not attempted) REDUCE THE WORKER-PATH NODE-COUNT PENALTY
+            7. (added v17.8.59, DEFERRED -- ATTEMPTED v17.8.61, see status below) REDUCE THE
+               WORKER-PATH NODE-COUNT PENALTY
                documented in the v17.8.59 changelog entry: workers share ONE incumbent, at spawn only
                (v14.0), then prune independently against their own locally-found bests for the rest
                of the run, so the aggregate node count runs higher than a single serial DFS over the
@@ -4465,6 +4469,42 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                the root-slot partition, per v14.0) -- they would only reduce total node count and,
                with it, wall-clock time further. Recorded for later review; not implemented, not
                scheduled.
+               STATUS (v17.8.61): ATTEMPTED. (a) TURNED OUT TO BE INFEASIBLE, not just unimplemented
+               -- this file's own v17.8.41 comment on _buildSolverWorkerBlob already documents that a
+               stop message can never be RECEIVED by a worker mid-DFS (no event-loop turn happens
+               until the synchronous call stack unwinds), and that limit applies identically to ANY
+               main->worker message, including a postMessage incumbent floor: it would only ever be
+               delivered after the search that needed it had already finished. (b) and (c) were
+               IMPLEMENTED instead, since neither has that problem -- (b) reads/writes shared memory
+               directly (no message delivery involved, so it works correctly from deep inside a
+               synchronous dfs() call), and (c) is a one-time sort before any worker spawns, not a
+               mid-search signal at all. solveBest gained an 11th param, sharedFloor (an optional
+               Int32Array view onto a SharedArrayBuffer); every dfs() node folds it into the existing
+               best-vs-ub prune comparisons via _cmpBest=max(best,floor). SOUNDNESS: this changes
+               ONLY which branches get pruned, never what a worker records as ITS OWN best/bestXIs --
+               that still only ever happens at the leaf against the real local `best` (see the
+               sc.total>best check), so a worker can never report finding something it didn't. floor
+               is always either -1 (unbound) or a score SOME worker actually achieved with a real
+               completed XI, so the true global optimum can never be trapped below it, and the
+               existing non-strict ST/non-ST comparison semantics are preserved exactly (a branch
+               whose bound EQUALS the floor is not pruned), so a local completion that TIES the
+               external floor is still found and correctly promoted to that worker's own result --
+               ties are not silently dropped. _runSolveParallel creates the shared buffer only when
+               W>1 and a crossOriginIsolated + SharedArrayBuffer feature-detect passes; when it
+               doesn't (this app cannot guarantee it's served under the required COOP/COEP headers),
+               sharedFloor stays undefined everywhere and behavior is byte-identical to before this
+               version -- same "additive, near-zero-cost-when-off" shape onSnapshot already uses.
+               VERIFIED off-tree: a solveBest-vs-independent-brute-force fuzz run (367 random small
+               drafts, an odometer enumerator sharing no traversal code with the solver) found 0
+               mismatches on the sharedFloor-absent baseline and 0 mismatches across 734 two-"worker"
+               runs sharing one real Int32Array floor and merged exactly like _mergeWorkerResults --
+               including tie sets, not just the winning score. An adversarially-high floor (above any
+               achievable score) was also checked: it safely returns best:-1 rather than fabricating
+               a result. NOT YET run through the full off-tree twelve-regime harness + fingerprint
+               fixtures this file's own F.2/Q.2 discipline calls for before a solver-touching change
+               is treated as release-final -- flagged here the same way h2NodeBound/UB-R2 above flag
+               their own pending-harness status. Do not treat this as fully proven until that harness
+               runs clean.
 
           CURRENT STATUS / DEFERRAL (item 1, and item 4's aggregated clash-reason evidence): previous
           attempts at these ideas repeatedly achieved one part only by breaking something more
@@ -5307,7 +5347,47 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        lines themselves were cut. SAFE-REMOVAL: no other logic touched; every commented block is
        left intact (not deleted) in case some path's Stop coverage ever regresses and this needs to
        come back. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.60</span></h1>
+  <!-- v17.8.61 -- SECTION Z ITEM 7 ATTEMPTED. Idea (a) as originally sketched (postMessage a
+       running cross-worker max back down into busy workers) turned out to be a dead end on
+       investigation, not merely unimplemented: a worker mid-DFS cannot receive an inbound message
+       until its current synchronous call stack unwinds (this file's own v17.8.41 comment on
+       _buildSolverWorkerBlob already said as much for the Stop message — the same limit applies to
+       ANY main->worker message, so a postMessage floor would only ever arrive after the search that
+       needed it had already finished). Implemented the corrected realization instead: idea (b),
+       SHARED ATOMIC INCUMBENT, which sidesteps the message-delivery problem entirely because
+       Atomics.load/compareExchange are synchronous reads/writes against memory every worker already
+       has a view onto, no event-loop turn required. solveBest gained an 11th (all-existing-call-
+       sites-unaffected, one-falsy-check-when-absent) sharedFloor param; every dfs() node reads it
+       and folds it into the existing best-vs-ub prune comparisons via _cmpBest=max(best,floor) —
+       changing ONLY what gets pruned, never what a worker records as ITS OWN best/bestXIs (that
+       still only happens at the leaf against the real local `best`), and using non-strict floor
+       semantics so a local completion that TIES the external floor is still found rather than
+       silently dropped. _runSolveParallel creates one SharedArrayBuffer-backed Int32Array per
+       parallel run (W>1 only) behind a crossOriginIsolated/SharedArrayBuffer feature-detect that
+       falls back to plain undefined (today's spawn-only-seed behavior) when the browser wasn't
+       served under the required COOP/COEP headers — this app cannot guarantee it is. Also
+       implemented idea (c), BOUND-SORTED ROOT PARTITIONING: root candidates are now sorted by the
+       same cheap rating+rarity static proxy solveBest's own per-slot presort already uses before
+       the round-robin split across workers, so every worker's first share includes a strong
+       candidate instead of leaving that to arrival order — ordering-only, zero soundness impact,
+       and compounds with (b) by giving the shared floor a stronger value to publish sooner.
+       VERIFIED (off-tree, not yet the full 12-regime harness — see below): a fresh
+       solveBest-vs-independent-brute-force fuzz run, 367 random small drafts (6-11 cards, odometer
+       enumerator sharing no traversal code with the solver, same shape as this file's existing
+       harness), 0 mismatches on the sharedFloor-absent baseline (regression check) and 0 mismatches
+       across 734 two-"worker" runs (both partition orders x every seed) that shared one real
+       Int32Array floor exactly the way two parallel workers would, merged exactly like
+       _mergeWorkerResults — ties included, since the brute-force comparison checks the full winning
+       XI set, not just the score. Also checked defensively: an adversarially-high floor (above any
+       achievable score) safely returns best:-1 (nothing fabricated, no crash) rather than a false
+       result. NOT yet run through the full off-tree twelve-regime harness + fingerprint fixtures
+       this file's own F.2/Q.2 discipline calls for before a solver-touching change is treated as
+       release-final — flagging that explicitly, same as h2NodeBound/UB-R2 above. Section Z item 7
+       updated: (a) corrected/superseded by (b); (b) and (c) IMPLEMENTED as described; nothing here
+       changes the ANSWER (soundness argument above), only total node count and wall-clock time on
+       parallel runs, and only when the browser's isolation headers make SharedArrayBuffer
+       available. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.61</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -7536,7 +7616,20 @@ function scoreXI(xi){
 }
 
 /* ============================ SOLVER (DFS + bound) ============================ */
-function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diversitySeed,rootAllow,onSnapshot){
+function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diversitySeed,rootAllow,onSnapshot,sharedFloor){
+  // v17.8.61 (section Z item 7, corrected realization of idea (a) -- see FOR FUTURE MAINTAINERS):
+  // sharedFloor is an OPTIONAL Int32Array view onto a SharedArrayBuffer, present ONLY when the
+  // parallel worker path detected crossOriginIsolated + SharedArrayBuffer support (see
+  // _runSolveParallel). Plain idea (a) as originally sketched -- postMessage a running max back
+  // DOWN into a busy worker -- turned out not to work: a worker mid-DFS cannot receive an inbound
+  // message until its current synchronous call stack unwinds (this file's own v17.8.41 comment on
+  // _buildSolverWorkerBlob already says as much for the Stop message, and the same limit applies to
+  // any main->worker message). Shared memory sidesteps that entirely: Atomics.load/compareExchange
+  // are synchronous reads/writes against memory every worker already has a view onto, so they work
+  // correctly from deep inside dfs() with no event-loop turn required. Absent (feature-detect
+  // failed, or this is a non-worker/serial/bench/manager/helper call -- every one of those passes
+  // nothing) -> every read below is one falsy check, same "additive, near-zero-cost-when-off"
+  // pattern onSnapshot already uses.
   const ST=!!skipTies; // "Skip ties": prune branches that can only TIE the best (strict-improvement B&B) and stop collecting tied XIs. Provably keeps the optimal SCORE (never prunes a strictly-better branch, whose admissible bound must exceed best); only tied lineups are dropped.
   const RC=ratingCeil!==undefined?ratingCeil:99;
   const slots=form.slots;
@@ -7853,12 +7946,18 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
     let __rStar=-Infinity; // v16.14.0 UB-A: per-node minimal surviving candidate rating (set below)
     if(nodes++>CAP){capped=true;return;}
     if(capped)return;
+    const __floor=sharedFloor?Atomics.load(sharedFloor,0):-1; // v17.8.61: read every node -- a single Atomics.load is one memory read, same cost class as the existing usedGroups/seenNat checks already paid per node; falls through to -1 (never binds) at zero cost when sharedFloor is absent
     if(__snapEvery&&nodes-__snapLast>=__snapEvery){__snapLast=nodes; // v17.8.41: periodic incumbent snapshot (worker path only; see __snapEvery above)
       try{onSnapshot({best,bestXIs:bestXIs.slice(0,16).map(x=>({xi:x.xi,sc:x.sc})),nodes,maxRating,participatedIds:Array.from(partSeen),triedIds:Array.from(triedSeen)});}catch(__se){}}
     if(k===order.length){
       const xi=pick.slice(),sc=scoreXI(xi);
       if(sc.rating>maxRating)maxRating=sc.rating;   // cheap: sc.rating already computed for the score
-      if(sc.total>best){best=sc.total;const key=xi.map(c=>c.id).sort().join(',');bestXIs=[{xi,sc,foundAt:nodes,key}];for(const c of xi)partSeen.add(c.id);}
+      if(sc.total>best){best=sc.total;const key=xi.map(c=>c.id).sort().join(',');bestXIs=[{xi,sc,foundAt:nodes,key}];for(const c of xi)partSeen.add(c.id);
+        if(sharedFloor){ // v17.8.61: publish this worker's new incumbent so siblings can prune against it too -- atomic max (retry-on-race), never a plain store, so a slower worker's own genuine improvement can't clobber a faster sibling's higher one
+          let __cur=Atomics.load(sharedFloor,0);
+          while(sc.total>__cur){const __prev=Atomics.compareExchange(sharedFloor,0,__cur,sc.total);if(__prev===__cur)break;__cur=__prev;}
+        }
+      }
       else if(!ST && sc.total===best){
         const key=xi.map(c=>c.id).sort().join(',');
         if(!bestXIs.some(b=>(b.key||(b.key=b.xi.map(c=>c.id).sort().join(',')))===key)){bestXIs.push({xi,sc,foundAt:nodes,key});for(const c of xi)partSeen.add(c.id);}
@@ -7882,7 +7981,21 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
     // only bites — and only helps — when a position pool has gone icon/hero-only.
     // Verified against 20k+ randomized states + brute force: never below the true max,
     // and strictly tighter than the old bound in ~45% of those states.
-    if(best>=0){
+    if(best>=0||__floor>=0){
+      // v17.8.61 (section Z item 7b): _cmpBest is the higher of this worker's OWN genuinely-found
+      // incumbent and whatever floor a SIBLING worker has published (via sharedFloor, above). Using
+      // it here ONLY changes what gets pruned, never what gets RECORDED as this worker's own best/
+      // bestXIs (that still only ever happens at the leaf, compared against the real local `best` --
+      // see the sc.total>best check above) -- so a worker can never report finding something it
+      // didn't. SOUND regardless of __floor's exact value or timing: __floor is always either -1
+      // (unbound) or a score SOME worker actually achieved with a real completed XI, so the true
+      // global optimum can never be trapped below it; pruning a branch whose upper bound can't beat
+      // an already-achieved score can only discard work that's provably irrelevant to the final
+      // answer. Non-strict floor semantics (a branch whose bound EQUALS _cmpBest is NOT pruned,
+      // exactly like the existing best-vs-ub comparisons below) mean a local completion that TIES
+      // the external floor is still found and correctly promoted to this worker's own best/bestXIs
+      // at the leaf -- ties are not silently dropped by this change.
+      const _cmpBest=__floor>best?__floor:best;
       const premUnseen=seenLg.has('England Premier League')?0:1;
       let total0=ubSuffixBase[k];
       // v16.14.0 UB-D (dynamic diversity caps): total0 statically credits each remaining slot its
@@ -7918,7 +8031,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       const ub=RC+33
         +seenNat.size+seenLg.size+seenClub.size+partialIcon+partialHero
         +total0+bonusGain+premUnseen;
-      if(ST?ub<=best:ub<best)return;
+      if(ST?ub<=_cmpBest:ub<_cmpBest)return;
       // v16.13.3 UB-R (see FUTURE-MAINTAINERS section R): tighter admissible rating cap from THIS
       // path -- committed picks' real ratings + each remaining slot's max candidate rating (card
       // reuse/group exclusivity relaxed => never underestimates). futRatingRaw is per-component
@@ -7939,7 +8052,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       // discipline. THIS BLOCK IS SAFE TO REVERT if that harness ever turns up a mismatch: swap
       // the inner per-slot scan back to the single `__slotMaxR[order[__j]]` lookup (still computed
       // below, just unused for now, so reverting is a one-line change).
-      if(best>=0&&k>=4){
+      if(_cmpBest>=0&&k>=4){
         // v16.15.0 FIX (was "v16.14.0 UB-R4 DAC vector: UB-R2's live scan PLUS first-hit collision
         // fix"): the collision fix has been REVERTED. Targeted fuzzing built specifically for the
         // two-hold-group/two-position non-dominating shape (see FUTURE-MAINTAINERS section R,
@@ -7973,7 +8086,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
           __dacV.push(__m);
         }
         const __d=Math.floor(futRatingRaw(__dacV));
-        if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=best:__u<best)return;}
+        if(__d<RC){const __u=ub-RC+__d;if(ST?__u<=_cmpBest:__u<_cmpBest)return;}
         // v16.16.1 DISABLED (see the v16.16.1 CHANGELOG entry above the <h1> for full data): the
         // v16.16.0 H2-node call that used to sit here is turned off, not deleted -- h2NodeBound()/
         // assignMaxSumNode()/spMaxFreeBox() below are still defined but now unreachable. A real DFS
@@ -8109,7 +8222,15 @@ function _buildSolverWorkerBlob(){
     // and deliver while the worker keeps running — which is exactly why snapshots (worker -> main)
     // work here even though a stop message (main -> worker) could never be RECEIVED mid-DFS; that
     // asymmetry is the whole design: main terminates the worker but keeps its last snapshot.
-    +'const r=solveBest(d.form,d.cards,d.nodeCap,d.ratingCeil,d.seedBest,d.seedXIs,d.skipTies,undefined,allow,function(s){s.progress=true;postMessage(s);});'
+    // v17.8.61 (section Z item 7b): d.sharedFloor, when present, is a SharedArrayBuffer-backed
+    // Int32Array the main thread created and gave every worker a view onto (see _runSolveParallel).
+    // Structured-cloning a typed array VIEW onto a SharedArrayBuffer hands this worker a view onto
+    // the SAME memory, not a copy — reads/writes here are visible to every sibling worker with no
+    // postMessage round trip, which is what makes this (unlike a naive postMessage floor) actually
+    // work while a worker is mid-DFS. d.sharedFloor is undefined whenever the main thread's
+    // crossOriginIsolated/SharedArrayBuffer feature-detect failed, in which case solveBest's own
+    // sharedFloor param is simply absent and this is byte-identical to before.
+    +'const r=solveBest(d.form,d.cards,d.nodeCap,d.ratingCeil,d.seedBest,d.seedXIs,d.skipTies,undefined,allow,function(s){s.progress=true;postMessage(s);},d.sharedFloor);'
     +'postMessage({best:r.best,bestXIs:(r.bestXIs||[]).map(x=>({xi:x.xi,sc:x.sc})),nodes:r.nodes,capped:!!r.capped,maxRating:r.maxRating,participatedIds:r.participatedIds||[],triedIds:r.triedIds||[],error:r.error||null});};';
   return URL.createObjectURL(new Blob([src],{type:'application/javascript'}));
 }
@@ -8142,10 +8263,46 @@ function _runSolveParallel(cap,ratingCeil,reuseSeed,forceW){
   const candLists=form.slots.map(s=>sortedCards.filter(c=>c.pos.includes(s)));
   const order=form.slots.map((s,i)=>i).sort((a,b)=>candLists[a].length-candLists[b].length);
   const rootCands=candLists[order[0]];
+  // v17.8.61 (section Z item 7c): sort root candidates by a cheap static quality proxy (rating,
+  // nation/club rarity tie-break — the same divstatic proxy solveBest's own per-slot presort already
+  // uses) before round-robin partitioning across workers, instead of leaving them in whatever order
+  // they arrived in. ORDERING ONLY: every worker still gets the exact same root-candidate SET it
+  // would have gotten before (round-robin over a permuted list is still a partition of the same
+  // set), so this cannot change which XIs get explored or the final answer — only which worker's
+  // subtree tends to find a strong incumbent first. Round-robin over a quality-sorted list means
+  // every worker's first root candidate is drawn from the front of the list instead of wherever it
+  // happened to sit, so every worker's OWN local best converges toward the true optimum sooner —
+  // which makes that worker's own within-tree pruning bite harder sooner, and (via the item-7b
+  // shared floor above) gives the cross-worker floor a stronger value to publish sooner too.
+  {const __rn={},__rc={};
+   for(const c of rootCands){__rn[c.nation]=(__rn[c.nation]||0)+1;if(c.type==='normal')__rc[c.club]=(__rc[c.club]||0)+1;}
+   rootCands.sort((a,b)=>{
+     const ka=a.rating+0.4/(__rn[a.nation]||1)+(a.type==='normal'?0.4/(__rc[a.club]||1):0);
+     const kb=b.rating+0.4/(__rn[b.nation]||1)+(b.type==='normal'?0.4/(__rc[b.club]||1):0);
+     return kb-ka;
+   });}
   const W=(forceW===1)?1:Math.max(2,Math.min(_parWorkerCount(),rootCands.length));
   const parts=(W===1)?[null]:Array.from({length:W},()=>[]); // W===1: null = no root partition (full serial tree)
   if(W>1)rootCands.forEach((c,i)=>parts[i%W].push(c.id));
   const perCap=Math.max(1,Math.ceil(cap/W));
+  // v17.8.61 (section Z item 7b): shared cross-worker incumbent floor. ONLY created when W>1 (a
+  // single worker has no siblings to share with) and the browser both supports SharedArrayBuffer
+  // and has crossOriginIsolated===true (the COOP/COEP-gated Spectre mitigation every modern browser
+  // requires before it will even construct a SharedArrayBuffer) — this app cannot guarantee it's
+  // served under those headers, so this is a pure feature-detect-or-skip: when unavailable,
+  // _sharedFloorBuf stays null, every worker gets sharedFloor:undefined, and solveBest behaves
+  // exactly as it did before this version (today's spawn-only seed, no mid-search floor). Seeded
+  // from the same upfront _seed every worker already receives via seedBest, so the floor starts
+  // useful immediately rather than at -1.
+  let _sharedFloorBuf=null;
+  if(W>1){
+    try{
+      if(typeof SharedArrayBuffer!=='undefined'&&typeof Atomics!=='undefined'&&typeof crossOriginIsolated!=='undefined'&&crossOriginIsolated){
+        _sharedFloorBuf=new Int32Array(new SharedArrayBuffer(4));
+        Atomics.store(_sharedFloorBuf,0,(_seed&&typeof _seed.seedBest==='number')?_seed.seedBest:-1);
+      }
+    }catch(e){_sharedFloorBuf=null;}
+  }
   let url=null;
   try{url=_buildSolverWorkerBlob();}catch(e){url=null;}
   if(!url||typeof Worker==='undefined'){_runSolveInner(cap,ratingCeil,reuseSeed);return;} // no worker support -> serial fallback, identical result
@@ -8179,7 +8336,7 @@ function _runSolveParallel(cap,ratingCeil,reuseSeed,forceW){
     };
     w.postMessage({form:{name:form.name,slots:form.slots.slice()},cards:sortedCards,nodeCap:perCap,
       ratingCeil:ratingCeil,seedBest:_seed?_seed.seedBest:undefined,seedXIs:_seed&&_seed.seedXIs?_seed.seedXIs:undefined,
-      skipTies:_skipTies(),rootAllowIds:ids});
+      skipTies:_skipTies(),rootAllowIds:ids,sharedFloor:_sharedFloorBuf||undefined});
     return w;
   });
   if(run.workers.some(w=>!w)){ if(!run.failed&&!run.stopped){run.failed=true;teardown();_runSolveInner(cap,ratingCeil,reuseSeed);} }
