@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.52</title>
+<title>Draft Solver v17.8.56</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2805,7 +2805,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          W. Full-solver soundness re-run against the live harness (contrast with V).
          X. Final tiered soundness testing results/conclusion.
          Y. Maximum-size 23x5 / 115-player full-search result and what it proves.
-         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 + item 4's chemistry-clash evidence still deferred) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40), including a clean design sketch for the rest.
+         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 + item 4's chemistry-clash evidence still deferred) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -4247,8 +4247,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           ADDED v17.8.50 (as DEFERRED), then IMPLEMENTED v17.8.51 — the bench/manager pass now runs
           inside its own Worker with a running node count and an always-available Stop button, the
           same treatment items 2/3 gave the main solve; see the item itself for why the v17.8.50
-          deferral rationale turned out to be overstated. Item 1 and item 4's chemistry-clash
-          evidence are still DO NOT IMPLEMENT YET / deferred, for the reasons below.)
+          deferral rationale turned out to be overstated. Item 4's evaluation/clash half IMPLEMENTED v17.8.53 as a flat
+          eval-under-85 + nothing-fresh-or-off-pivot rule (see the item; the aggregated clash-reason
+          machinery the sketch imagines stays deferred). Item 1 is still DO NOT IMPLEMENT YET /
+          deferred, for the reasons below.)
           Potential items to review later:
             1. Make each 3x escalation continue from the exact frontier where the preceding search
                stopped, instead of beginning a fresh traversal. Reusing the previous best score as
@@ -4288,6 +4290,41 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                board" sentence (named cards + rating, capped list length, one-line caveat) — no
                separate panel, no confidence-label paragraph. This is advisory only, matching the
                design sketch below; nothing removes a card automatically.
+               THE EVALUATION/CLASH HALF IS NOW IMPLEMENTED TOO (v17.8.53) — but NOT as the
+               "aggregate the clash reasons that repeatedly suppress each option" machinery the
+               design sketch below imagines, which is what was deferred and stays deferred. Instead
+               it's one flat, stateless rule (_trueDeadweight), on the observation that the helper
+               eval ALREADY encodes "low-rated and/or clashing" — no new evidence needed, so no new
+               way to be wrong: a card is likely deadweight when its eval is under DW_EVAL_MAX (85 —
+               the same number the helper's rank rows show, since rankAndVerdict's r.v IS
+               helpValue(c), and the same key the solver's card order uses) AND it either adds no
+               fresh nation/league/club at all (slot-level, so a hold carrying two matches counts
+               once) or is a normal outside the pivot (freshness is EXPECTED of an off-pivot card,
+               so it doesn't redeem a sub-85 eval; icons/heroes can't be "on" a league pivot by
+               construction, so they qualify only via the nothing-new branch). Still gated behind the
+               same 50+ card board, still one clause in the same warning, still advisory. Two
+               deliberate properties: it needs no solve, so it also fires at PICK TIME in the helper
+               (the participation clause above can't — it needs a search's triedIds/participatedIds);
+               and after a solve, anything in participatedIds is dropped from the list regardless of
+               eval, so the rule can never contradict the search's own evidence. Evals are computed
+               in the solver's context (forceSquad on, no override, no judged-slot exclusion) and
+               restored, so the list is board-wide and doesn't shift depending on which slot is open.
+               CALIBRATED RANKING ONLY (v17.8.54): the 85 is a threshold on the eval SCALE, which only
+               the DB-calibrated no-hold scorer makes stable and comparable. Under the manual
+               HW/SHAPE weights the numbers are entirely different (on the DEFAULTS essentially every
+               card sits below 85), and since those weights are user-tunable no single constant can
+               cover the combinations — so when calibration is off the clause is omitted outright
+               rather than guessed at or rescaled (rescaling to the observed spread would invent
+               deadweight on a board where every card is fine). The participation clause is scale-free
+               and stays live under manual weights.
+               NOBODY-QUALIFIES FALLBACK (v17.8.55): on a 50+ board where no card meets the bar, the
+               warning names the single weakest option (lowest eval) instead of telling you to remove
+               deadweight while naming none. It is explicitly NOT labelled deadweight — that card
+               failed the test — just "the weakest option, if you want a cut at all"; one card, never
+               a list. Same calibration gate and participation valve as the main rule.
+               WHY NOT MORE: the "consistently dominated / repeatedly creates clashes" evidence still
+               requires per-card participation and clash-reason metadata the solver doesn't retain,
+               and the WHY-THE-OBVIOUS-VERSIONS-FAIL note below still applies to it in full.
             5. (added v17.8.43; ROOT-CAUSED AND FIXED v17.8.45 — kept here as a worked example of a
                misdiagnosis, and of why "which setting is on" is often the wrong axis to look at.)
                SYMPTOM AS FIRST REPORTED: the Stop button does nothing when bench mode is above Very
@@ -4372,7 +4409,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                re-scoping that made items 2+3 implementable in v17.8.41 (publish-then-terminate,
                reuse the canonical aggregation path, no second assembler) applied here directly.
 
-          CURRENT STATUS / DEFERRAL (item 1 and item 4's chemistry-clash evidence): previous
+          CURRENT STATUS / DEFERRAL (item 1, and item 4's aggregated clash-reason evidence): previous
           attempts at these ideas repeatedly achieved one part only by breaking something more
           important — correctness, cap accounting, result rendering, escalation behavior, worker
           teardown, or the normal solve/tie/manager pipeline. They are intentionally deferred as too
@@ -5089,7 +5126,67 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        end-to-end incl. bench tieDone publish + final shape; stage 8: stop-during-manager stub
        assembly). Also updated section Z item 6's still-synchronous list and the computeBenchPicks
        header note. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.52</span></h1>
+  <!-- v17.8.53 -- SECTION Z ITEM 4's EVALUATION/CLASH HALF IMPLEMENTED: the 50+ card deadweight
+       warning can now name likely-deadweight cards from the helper eval alone, with no search
+       evidence required -- so unlike the v17.8.38/40 participation clause (which needs a solve's
+       triedIds/participatedIds) it also fires at PICK TIME in the helper panel. New _trueDeadweight():
+       a card is flagged when its eval is under DW_EVAL_MAX (85 -- the SAME number the helper's rank
+       rows show, since rankAndVerdict's r.v IS helpValue(c), and the same key the solver's card order
+       is built from, so the advice can never disagree with what's on screen) AND it either (a) adds
+       no fresh nation/league/club at all (slot-level via slotPureCounts, so a hold carrying two
+       matches counts once, and per card type -- icons have no league/club, heroes no club), or (b) is
+       a NORMAL outside the pivot (fresh chemistry is expected of an off-pivot card, so it can't
+       redeem a sub-85 eval; icons/heroes are never on a league pivot by construction, so they qualify
+       only via branch (a)). Evals are computed in the SOLVER's context (forceSquad on, no squad
+       override, no judged-slot exclusion) and restored in a finally, so the list is board-wide and
+       doesn't shift depending on which slot happens to be open in the helper. Safety valve: after a
+       solve, anything in participatedIds is dropped from the list regardless of eval -- the rule must
+       never contradict the search's own evidence -- and the participation clause now skips any card
+       the eval rule already named, so the two never duplicate. Same 50+ card gate, same single
+       warning, still ADVISORY ONLY (suggests, never removes). NOT implemented and still deferred: the
+       "aggregate the clash reasons that repeatedly suppress each option" machinery in section Z's
+       design sketch -- that needs per-card clash/participation metadata the solver doesn't retain;
+       this ships the simple, stateless rule instead, on the observation that the eval already encodes
+       "low-rated and/or clashing". Section Z item 4, its header summary, CURRENT STATUS and the
+       index one-liner updated accordingly. -->
+  <!-- v17.8.54 -- BUGFIX to v17.8.53's deadweight rule: it is now CALIBRATED-RANKING ONLY
+       (_trueDeadweight hard-returns [] unless _calActive()). DW_EVAL_MAX=85 is a threshold on the
+       eval SCALE, and only the DB-calibrated no-hold scorer produces a stable, comparable one. Under
+       the manual HW/SHAPE stack the numbers are completely different -- on the DEFAULT manual weights
+       essentially every card scores below 85, so v17.8.53 would have flagged the whole board as
+       deadweight -- and because those weights are freely user-tunable there is no set of combinations
+       a single constant could be calibrated against. So with calibration off we don't guess and we
+       don't rescale: the clause is simply omitted and _poolSizeWarning falls back to its board-size
+       sentence plus the participation clause, which is scale-free (it reads the search's own
+       triedIds/participatedIds, never the eval) and therefore stays live under manual weights.
+       Recorded in place: do NOT "fix" this later by scaling the threshold to the observed eval range
+       -- on a board where every card is genuinely useful that would invent deadweight out of the
+       spread alone. Section Z item 4 updated with the same caveat. -->
+  <!-- v17.8.55 -- FILLS THE "NOBODY QUALIFIES" HOLE in the 50+ card deadweight warning. Previously
+       (and before v17.8.53 too) a big board where no card met the deadweight bar still rendered the
+       bare "N cards on the board -- consider removing deadweight" sentence with nothing named: not
+       nonsense, but advice with nothing to act on. Now _weakestCard() names the single lowest-eval
+       option as a starting point, and ONLY when neither the eval rule nor the participation clause
+       named anything (if either did, there's already something to act on). Deliberately NOT called
+       deadweight -- by construction this card FAILED the deadweight test (it's above DW_EVAL_MAX, or
+       it's adding something fresh from an on-pivot slot) -- so the wording makes the weaker,
+       always-true claim instead ("nothing here meets the deadweight bar, so there's no obvious cut;
+       if you want one anyway, X is the weakest option -- otherwise leave the pool alone and expect a
+       slower solve"), and it is exactly ONE card, never a list, so it can't read as a purge order.
+       Same calibration gate as _trueDeadweight (the eval scale is only comparable under a valid
+       calibration -- see v17.8.54; under manual weights this fallback is omitted along with the rest)
+       and the same participation safety valve (never name a card the search actually fielded).
+       Section Z item 4 updated. -->
+  <!-- v17.8.56 -- The 50+ card warning now says WHICH SLOT each named card is in ("ST2", "Bench 5",
+       "Captain") alongside its rating and eval, so a card it calls out can actually be found without
+       hunting the board. New _slotLbl(c) reads the board slot's OWN label via slotById (buildBoard's
+       tot>1 ? pos+n : pos naming, plus 'Bench n', plus the synthetic 'CAP' slot) rather than
+       re-deriving it, so it always matches what the Cards tab displays; falls back to the raw slot id
+       and then to nothing, so a card with a missing/odd slot degrades quietly instead of printing
+       "undefined". Applied to all three named-card lists in _poolSizeWarning: the eval-based
+       deadweight list (v17.8.53), the participation-based list (v17.8.38/40), and the weakest-card
+       fallback (v17.8.55). Display only -- no rule, threshold, or gate changed. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.56</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -10766,19 +10863,129 @@ function _pickPanelSuffixes(picks,holdGroups){
 // instead — one line, named cards, no confidence essay. Optional `r` (a solve result carrying
 // participatedIds/triedIds) upgrades the generic sentence into a specific one; omit r (as the
 // helper-panel call site does, pre-solve) and it falls back to the plain generic warning.
+// v17.8.53 (section Z item 4, the "identify actual deadweight" half): a deliberately SIMPLE,
+// consistent, explainable rule -- no search evidence required, so unlike the participation-based
+// clause below it works at PICK TIME in the helper too, not only after a solve.
+// A card is called true deadweight when ALL of:
+//   (a) its helper eval is below DW_EVAL_MAX (85). This is the SAME number the helper's rank rows
+//       display (rankAndVerdict's r.v IS helpValue(c)) and the same key the solver's card order is
+//       built from, so the advice can never disagree with what's on screen. A sub-85 eval already
+//       means the card is some mix of low-rated and clashing -- the score has done that work.
+//   AND (b) either:
+//       - it brings NOTHING NEW: every dimension it could add (nation / league / club, per its card
+//         type -- icons have no league or club to clash on, heroes no club) is already covered by
+//         another SLOT on the board. Low value AND zero fresh chemistry means there is nothing it
+//         can contribute that something else isn't already contributing.
+//       - OR it's a normal sitting OUTSIDE the pivot: fresh nation/league/club is EXPECTED of an
+//         off-pivot card (that's most of what it's for), so freshness alone doesn't redeem it --
+//         if it's still under 85 WITH that head start, the freshness isn't buying enough. Scoped to
+//         normals like _pivotMismatchWarning/_topEvalPivotWarning: icons/heroes are never "on" a
+//         league pivot by construction, so this test would flag every one of them; they can only
+//         qualify via the nothing-new branch above.
+// Evals are computed in the SOLVER's context (forceSquad on, no squad override, no judged-slot
+// exclusion) and restored after, so the list is board-wide and identical whichever panel asks --
+// it must not change depending on which slot happens to be open in the helper.
+// ADVISORY ONLY: suggestions, never automatic removal (section Z's standing rule for this item).
+// v17.8.53: CALIBRATED RANKING ONLY. DW_EVAL_MAX is a threshold on the eval SCALE, and only the
+// DB-calibrated no-hold scorer (_calActive) produces a stable, comparable one -- the manual HW/SHAPE
+// stack is a pile of user-adjustable weights whose output can sit anywhere (on the DEFAULT manual
+// weights essentially EVERY card scores below 85, so the rule would flag the entire board), and
+// since the weights are freely tunable there is no combination we could sensibly calibrate a
+// constant against. So when calibration is off we don't guess and we don't rescale: the whole
+// deadweight clause is simply omitted, and _poolSizeWarning falls back to its board-size sentence
+// plus the participation clause (which is scale-free -- it reads the search's own triedIds/
+// participatedIds, not the eval -- and therefore stays live under manual weights). Do NOT "fix" this
+// by scaling the threshold to the observed eval range: on a board where every card is genuinely
+// useful that would invent deadweight out of the spread alone.
+const DW_EVAL_MAX=85;
+function _trueDeadweight(){
+  if(!board||!cards.length||!_calActive())return [];
+  const savedForce=_forceSquad,savedOv=_squadOverride,savedEx=_judgeExclude;
+  _forceSquad=true;_squadOverride=null;_judgeExclude=null;
+  let out=[];
+  try{
+    out=cards.map(c=>({c,v:helpValue(c)})).filter(d=>{
+      if(!(d.v<DW_EVAL_MAX))return false;
+      const pc=slotPureCounts(d.c,d.c.slot);                 // slot-level counts INCLUDING this card's own slot (hence the +1s), so >1 on a dimension means some OTHER slot already covers it
+      const fresh=(pc.nat===1)||(pc.lg!==null&&pc.lg===1)||(pc.clb!==null&&pc.clb===1);
+      const offPivot=(d.c.type==='normal'&&!!PIVOT_KEY&&!_pivotMatches(d.c));
+      return !fresh||offPivot;
+    });
+  }finally{
+    _forceSquad=savedForce;_squadOverride=savedOv;_judgeExclude=savedEx; // never leave the judging globals altered -- the helper reads them right after this
+  }
+  return out.sort((a,b)=>a.v-b.v);                           // worst first
+}
+// v17.8.55: the "nobody qualifies" fallback for _poolSizeWarning. With a 50+ card board the warning
+// tells you to remove deadweight; if the rule names nobody, that advice has nothing to act on, so
+// name the single WEAKEST option instead (lowest eval on the board) as a starting point.
+// Deliberately NOT called deadweight: by construction this card FAILED the deadweight test (it's
+// either above 85, or it's adding something fresh from an on-pivot slot), so the claim is only the
+// weaker, always-true one -- "if you're going to cut one, this is the least valuable" -- and it's
+// exactly one card, never a list, so it can't read as a purge order. Same calibration gate as
+// _trueDeadweight (eval scale is only comparable there) and the same participation safety valve
+// (never name a card the search actually fielded).
+function _weakestCard(seen){
+  if(!board||!cards.length||!_calActive())return null;
+  const savedForce=_forceSquad,savedOv=_squadOverride,savedEx=_judgeExclude;
+  _forceSquad=true;_squadOverride=null;_judgeExclude=null;
+  let best=null;
+  try{
+    cards.forEach(c=>{
+      if(seen&&seen.has(c.id))return;
+      const v=helpValue(c);
+      if(!best||v<best.v)best={c,v};
+    });
+  }finally{
+    _forceSquad=savedForce;_squadOverride=savedOv;_judgeExclude=savedEx;
+  }
+  return best;
+}
+// v17.8.56: which slot a named card is actually sitting in ("ST2", "Bench 5", "Captain"), so a card
+// called out in a 50+ board's warning can be found without hunting. Reads the board's OWN label
+// (buildBoard's tot>1 ? pos+n : pos naming, and 'Bench n') rather than re-deriving it, so it always
+// matches what the Cards tab shows. slotById covers the synthetic 'CAP' slot too. Falls back to the
+// raw slot id, then to nothing, so a card in a weird/absent slot degrades quietly instead of
+// printing "undefined".
+function _slotLbl(c){
+  const s=(c&&c.slot)?slotById(c.slot):null;
+  const l=(s&&s.label)||(c&&c.slot)||'';
+  return l?(' \u00b7 '+esc(l)):'';
+}
 function _poolSizeWarning(r){
   if(cards.length<=50)return '';
   let extra='';
+  const nm=c=>esc(c.label||cardMeta(c));
+  // v17.8.53: the confident, evidence-free half first -- same rule pre- and post-solve.
+  // One safety valve: after a solve we KNOW which cards actually appeared in a best/tied XI
+  // (participatedIds). The eval rule must never contradict the search itself, so anything that won
+  // its way into a top squad is dropped from the list no matter what its eval says.
+  const _seen=(r&&r.participatedIds)?new Set(r.participatedIds):null;
+  const dw=_trueDeadweight().filter(d=>!(_seen&&_seen.has(d.c.id)));
+  const dwIds=new Set(dw.map(d=>d.c.id));
+  if(dw.length){
+    const SHOW=15;
+    extra+=' <b>Likely deadweight</b> (eval under '+DW_EVAL_MAX+', and either adding no fresh nation/league/club or off-pivot and still weak): '
+      +dw.slice(0,SHOW).map(d=>nm(d.c)+' ('+d.c.rating+' \u00b7 eval '+d.v.toFixed(1)+_slotLbl(d.c)+')').join(', ')
+      +(dw.length>SHOW?', +'+(dw.length-SHOW)+' more':'')+'.';
+  }
   if(r&&r.participatedIds&&r.triedIds){
     const won=new Set(r.participatedIds),tried=new Set(r.triedIds);
-    const suspect=cards.filter(c=>tried.has(c.id)&&!won.has(c.id)).sort((a,b)=>a.rating-b.rating);
+    const suspect=cards.filter(c=>tried.has(c.id)&&!won.has(c.id)&&!dwIds.has(c.id)).sort((a,b)=>a.rating-b.rating); // v17.8.53: don't repeat anything the eval rule already named above
     if(suspect.length){
       const SHOW=15;
-      const nm=c=>esc(c.label||cardMeta(c))+' ('+c.rating+')';
-      extra=' These are not expected to make the final XI and can likely be removed for a faster solve: '
-        +suspect.slice(0,SHOW).map(nm).join(', ')+(suspect.length>SHOW?', +'+(suspect.length-SHOW)+' more':'')
+      const nmR=c=>nm(c)+' ('+c.rating+_slotLbl(c)+')';
+      extra+=' These are not expected to make the final XI and can likely be removed for a faster solve: '
+        +suspect.slice(0,SHOW).map(nmR).join(', ')+(suspect.length>SHOW?', +'+(suspect.length-SHOW)+' more':'')
         +'. (A deep enough search could still prove one of these wrong, but it\u2019s unlikely.)';
     }
+  }
+  // v17.8.55: nothing named by EITHER rule -> the "remove deadweight" advice has nothing to act on.
+  // Name the weakest single option so there's always a starting point, and say plainly that it
+  // didn't meet the deadweight bar (so the user knows this is a nudge, not a verdict).
+  if(!extra){
+    const w=_weakestCard(_seen);
+    if(w)extra=' Nothing here meets the deadweight bar, so there\u2019s no obvious cut \u2014 if you want one anyway, <b>'+nm(w.c)+'</b> ('+w.c.rating+' \u00b7 eval '+w.v.toFixed(1)+_slotLbl(w.c)+') is the weakest option on the board. Otherwise leave the pool as it is and just expect a slower solve.';
   }
   return '<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 '+cards.length+' cards on the board \u2014 consider removing deadweight (options with no realistic shot at the XI) so the end-solve stays fast.'+extra+'</div>';
 }
