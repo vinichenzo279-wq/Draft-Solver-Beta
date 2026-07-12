@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.58</title>
+<title>Draft Solver v17.8.59</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2805,7 +2805,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          W. Full-solver soundness re-run against the live harness (contrast with V).
          X. Final tiered soundness testing results/conclusion.
          Y. Maximum-size 23x5 / 115-player full-search result and what it proves.
-         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 REJECTED PERMANENTLY v17.8.57 — bounded benefit, unbounded silent-false-proof risk; item 4's chemistry-clash evidence still deferred) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
+         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 REJECTED PERMANENTLY v17.8.57 — bounded benefit, unbounded silent-false-proof risk; item 4's chemistry-clash evidence still deferred; item 7 ADDED v17.8.59, DEFERRED — worker-path node-count-vs-serial ideas) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -4251,7 +4251,9 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           eval-under-85 + nothing-fresh-or-off-pivot rule (see the item; the aggregated clash-reason
           machinery the sketch imagines stays deferred). Item 1 was reconsidered and REJECTED,
           PERMANENTLY, in v17.8.57 — not deferred, not "not yet": see the item for the full
-          cost-benefit writeup.)
+          cost-benefit writeup. Item 7 ADDED v17.8.59 — a DEFERRED backlog item, not implemented —
+          recording follow-up ideas for the worker-path node-count observation written up in that
+          version's changelog entry.)
           Potential items to review later:
             1. Make each 3x escalation continue from the exact frontier where the preceding search
                stopped, instead of beginning a fresh traversal. Reusing the previous best score as
@@ -4431,6 +4433,38 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                no frontier serialization, no re-expression of escalation state required. The same
                re-scoping that made items 2+3 implementable in v17.8.41 (publish-then-terminate,
                reuse the canonical aggregation path, no second assembler) applied here directly.
+
+            7. (added v17.8.59, DEFERRED -- not attempted) REDUCE THE WORKER-PATH NODE-COUNT PENALTY
+               documented in the v17.8.59 changelog entry: workers share ONE incumbent, at spawn only
+               (v14.0), then prune independently against their own locally-found bests for the rest
+               of the run, so the aggregate node count runs higher than a single serial DFS over the
+               same draft even though wall-clock time is lower. Ideas, roughly cheapest first:
+                 a. PERIODIC INCUMBENT BROADCAST. Reuse the existing onSnapshot machinery (v17.8.41)
+                    in the other direction -- each worker already posts its current best every 500k
+                    nodes for the progress badge; have the main thread take the MAX across all live
+                    snapshots and postMessage it back down to every worker as a second incumbent
+                    floor (a plain "raise seedBest if this is higher" check inside the DFS loop).
+                    Bounded message volume, same cadence already in place, no new infrastructure --
+                    but only closes the gap every 500k nodes, not immediately.
+                 b. SHARED ATOMIC INCUMBENT. Back the incumbent with a SharedArrayBuffer + Atomics
+                    (Int32Array, compare-and-swap on every local improvement) instead of postMessage
+                    round-trips, so all workers read/write ONE true global best with no serialization
+                    lag -- the tightest possible cross-worker pruning, closest to matching serial's
+                    per-node behavior. Needs cross-origin-isolation headers for SharedArrayBuffer,
+                    which this app cannot guarantee it's served under, so it would need a
+                    feature-detect with a fallback to (a) or today's spawn-only seed.
+                 c. BOUND-SORTED ROOT PARTITIONING. v14.0 splits root candidates round-robin across
+                    workers in whatever order they arrive; sorting them by static upper bound
+                    (descending) before that split would put a strong candidate in front of every
+                    worker instead of leaving it to chance, so incumbents converge toward the true
+                    optimum faster in the early, most seed-sensitive part of the run. Cheap (one
+                    sort, no runtime cost) but only a partial fix -- it narrows the early gap, it
+                    doesn't stop incumbents from re-diverging as each worker keeps searching past
+                    that point.
+               None of these would change the ANSWER (soundness is already proven unconditionally by
+               the root-slot partition, per v14.0) -- they would only reduce total node count and,
+               with it, wall-clock time further. Recorded for later review; not implemented, not
+               scheduled.
 
           CURRENT STATUS / DEFERRAL (item 1, and item 4's aggregated clash-reason evidence): previous
           attempts at these ideas repeatedly achieved one part only by breaking something more
@@ -5240,7 +5274,25 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        Matches the "(incl. manager +2)" / "up to X with a manager" convention already used elsewhere
        (the target-score field, the projected-XI note) -- bs itself is still the raw XI total, only
        the display gained the suffix. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.58</span></h1>
+  <!-- v17.8.59 -- DOCUMENTATION ONLY, no logic changed. Recorded observation: the worker path visits
+       MORE total nodes than the single-worker serial path for the same draft, despite finishing
+       faster in wall-clock time. Cause: v14.0's shared seed (see that entry) synchronizes the
+       incumbent ONCE, at spawn -- confirmed against the code, _seed is computed a single time in
+       _runSolveParallel and passed into every worker via seedBest/seedXIs at creation; onSnapshot
+       (v17.8.41) only flows worker -> main thread for the progress badge, never main -> worker or
+       worker -> worker. After that one shared floor, each worker prunes against its OWN locally
+       -discovered best for the rest of the run, not a single running global best the way one serial
+       DFS would. Because each worker's subtree improves its incumbent on its own schedule, at any
+       given moment the W workers are collectively holding W different (and mostly weaker) bounds
+       instead of the one strongest bound a serial search would already have found and be applying
+       everywhere -- so each worker prunes less aggressively than serial would over the same ground,
+       and the summed node count across workers exceeds the serial total for the same draft.
+       Wall-clock still wins because the extra nodes are spread across W cores running concurrently,
+       not serialized. NOT a bug: soundness is unaffected (v14.0 -- every legal XI still uses exactly
+       one root-slot card, so the union of the workers' subtrees is still the full serial tree); this
+       only affects how MANY nodes get visited, never which ones or the correctness of the result.
+       Section Z gets a new backlog item (7) with follow-up ideas for narrowing this gap. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.59</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
