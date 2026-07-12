@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.56</title>
+<title>Draft Solver v17.8.57</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -2805,7 +2805,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          W. Full-solver soundness re-run against the live harness (contrast with V).
          X. Final tiered soundness testing results/conclusion.
          Y. Maximum-size 23x5 / 115-player full-search result and what it proves.
-         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 + item 4's chemistry-clash evidence still deferred) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
+         Z. Deferred deep-search resume/stop/partial-result ideas (items 2+3 implemented v17.8.41 via snapshot/terminate; item 5's Stop-does-nothing bug root-caused and fixed v17.8.45 — _swallowIfBusy was eating the click; item 6 — the bench/manager pass's own Worker + running count + always-on Stop — added v17.8.50, implemented v17.8.51 via the same publish-then-terminate re-scoping; item 1 REJECTED PERMANENTLY v17.8.57 — bounded benefit, unbounded silent-false-proof risk; item 4's chemistry-clash evidence still deferred) + deadweight-advice (participation-based half implemented v17.8.38, fixed v17.8.39, folded into the existing pool-size warning v17.8.40; eval-based “true deadweight” half implemented v17.8.53 — works at pick time too), including a clean design sketch for the rest.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -4249,15 +4249,38 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           same treatment items 2/3 gave the main solve; see the item itself for why the v17.8.50
           deferral rationale turned out to be overstated. Item 4's evaluation/clash half IMPLEMENTED v17.8.53 as a flat
           eval-under-85 + nothing-fresh-or-off-pivot rule (see the item; the aggregated clash-reason
-          machinery the sketch imagines stays deferred). Item 1 is still DO NOT IMPLEMENT YET /
-          deferred, for the reasons below.)
+          machinery the sketch imagines stays deferred). Item 1 was reconsidered and REJECTED,
+          PERMANENTLY, in v17.8.57 — not deferred, not "not yet": see the item for the full
+          cost-benefit writeup.)
           Potential items to review later:
             1. Make each 3x escalation continue from the exact frontier where the preceding search
                stopped, instead of beginning a fresh traversal. Reusing the previous best score as
-               a seed is useful pruning, but it is not true continuation. STILL DEFERRED — this is
-               the one item that genuinely requires the iterative/chunked solver core from the clean
-               theory below; v17.8.41's snapshots do NOT provide a resumable frontier, only the
-               incumbent, so nothing changed here.
+               a seed is useful pruning, but it is not true continuation. v17.8.41's snapshots do NOT
+               provide a resumable frontier, only the incumbent, so nothing about that changed here.
+               REJECTED, PERMANENTLY (v17.8.57) — bounded benefit, unbounded failure mode:
+               BENEFIT IS BOUNDED AND SMALL. With 3x escalation the geometric prefix caps total
+               restart waste at ~33% of run time even in the worst case (3->9->27->81 costs ~120% of
+               a single 81-run) — that's the ceiling on what resume could ever save. Actual waste is
+               well under that ceiling, because each restart is seeded with the previous best score,
+               which prunes re-traversed "old ground" harder than the original pass pruned it; resume's
+               entire prize is shaving a fraction of that already-shrunken remainder. It also only
+               helps the narrow "didn't know how deep I needed" middle case, once per ladder, briefly
+               — anyone who knows they need depth just sets a bigger first cap, and anyone who wants
+               certainty hits "search to the end," which has zero restart waste by definition (one
+               run). COST IS LARGE. It means rewriting solveBest — the hottest, most
+               correctness-critical function in the file — from recursion into an explicit
+               serializable frontier: candidate ordering, used-hold state, chem/count accumulators,
+               tie collection and dedup across the resume boundary, skip-ties/diversity state, RC,
+               per-root-partition checkpoints with exact node accounting, hash invalidation. Then
+               re-proving byte-identical traversal against the harness, and carrying that complexity
+               in both solver copies (section H) forever after. THE DECISIVE FACTOR IS THE FAILURE
+               MODE, NOT THE COST. A resume bug doesn't crash — it silently drops a branch and then
+               reports "proven optimal." A slow capped result is merely annoying; a false proof is
+               corrupt and undetectable by the user, and this app's entire value is that its proofs
+               are trustworthy. Risking that to save a bounded slice of escalation overhead is a bad
+               trade even if the implementation went well. Net: bounded benefit (<=~33% ceiling, less
+               in practice due to seed pruning, zero for search-to-the-end users) vs. unbounded
+               failure mode (silent false proofs) — not worth re-deriving; do not implement.
             2. Add a Stop control for long serial/deep searches, not only the parallel-worker path.
                IMPLEMENTED v17.8.41: serial main solves now run in ONE worker (forceW=1 in
                _runSolveParallel, NO root partition — identical search tree and result to
@@ -5186,7 +5209,32 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        "undefined". Applied to all three named-card lists in _poolSizeWarning: the eval-based
        deadweight list (v17.8.53), the participation-based list (v17.8.38/40), and the weakest-card
        fallback (v17.8.55). Display only -- no rule, threshold, or gate changed. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.56</span></h1>
+  <!-- v17.8.57 -- DOCUMENTATION ONLY, no logic/UI/content changed. Section Z item 1 (resume/continue
+       a 3x escalation from its prior frontier instead of restarting) moves from "deferred" to
+       REJECTED, PERMANENTLY, with cost-benefit reasoning recorded so it isn't re-derived:
+       BENEFIT IS BOUNDED AND SMALL -- with 3x escalation the geometric prefix caps total restart
+       waste at ~33% of run time even in the worst case (e.g. 3->9->27->81 costs ~120% of a single
+       81-run), and actual waste is well under that ceiling because each restart is seeded with the
+       prior best score, which prunes re-traversed ground harder than the original pass pruned it;
+       resume's whole prize is shaving a fraction of that already-shrunken remainder. It also only
+       helps the narrow "didn't know how deep I needed" middle case, once per ladder, briefly --
+       users who know they need depth just set a bigger first cap, and "search to the end" users
+       already get zero restart waste (one run, by definition), so resume buys them nothing.
+       COST IS LARGE -- it means rewriting solveBest, the hottest and most correctness-critical
+       function in the file, from recursion into an explicit serializable frontier (candidate
+       ordering, used-hold state, chem/count accumulators, tie collection and dedup across the
+       resume boundary, skip-ties/diversity state, RC, per-root-partition checkpoints with exact
+       node accounting, hash invalidation), then re-proving byte-identical traversal against the
+       harness, then carrying that complexity in both solver copies (section H) forever after.
+       THE DECISIVE FACTOR IS THE FAILURE MODE, NOT THE COST -- a resume bug wouldn't crash; it
+       would silently drop a branch and still report "proven optimal." A slow capped result is
+       merely annoying; a false proof is corrupt and undetectable by the user, and this app's entire
+       value rests on its proofs being trustworthy. Trading an unbounded, silent-corruption risk for
+       a bounded, already-small efficiency gain is a bad trade regardless of implementation quality.
+       Section Z item 1 now reads: "REJECTED: bounded benefit (<=~33% ceiling, less in practice due
+       to seed pruning, zero for search-to-the-end users), unbounded failure mode (silent false
+       proofs)." -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.57</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
