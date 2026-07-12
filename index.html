@@ -5292,7 +5292,22 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        one root-slot card, so the union of the workers' subtrees is still the full serial tree); this
        only affects how MANY nodes get visited, never which ones or the correctness of the result.
        Section Z gets a new backlog item (7) with follow-up ideas for narrowing this gap. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.59</span></h1>
+  <!-- v17.8.60 -- REMOVED (commented out, not deleted) every "this could take forever, continue
+       anyway?" confirm() gate: _foreverWarn() itself and all five of its call sites (main solve,
+       bench/manager escalation, the single-tie reanalyze worker path, the manager OOP-swap path,
+       and the helper's judgeSlotInline path — all keyed off the same 30M+ fill/node-count check),
+       plus the two periodic +10M "keep going?" prompts (_maybeMgrPrompt, _maybeSlowPrompt) that
+       re-asked every 10M nodes during a long bench/manager pass. Now that every deep search runs
+       Stop-able (worker path from v17.8.41/51, section Z item 6), these pre-emptive "are you sure"
+       boxes are redundant with just letting it run and hitting Stop whenever — the user no longer
+       needs to commit up front to a search they can't back out of. All searches now proceed
+       straight through past the old 30M threshold with no dialog; the count computations that used
+       to feed the confirm text (exact0/exactOwn/exactMgr/exact4) and the overlay hide/show around
+       them were left in place where something downstream still reads them, only the confirm/return
+       lines themselves were cut. SAFE-REMOVAL: no other logic touched; every commented block is
+       left intact (not deleted) in case some path's Stop coverage ever regresses and this needs to
+       come back. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.60</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -8981,6 +8996,15 @@ function _fmtCount(n){
   if(typeof n==='bigint')return n>0n?n.toLocaleString():'';
   return isFinite(n)&&n>0?Math.round(n).toLocaleString():'';
 }
+// v17.8.60: _foreverWarn() and every one of its call sites (the 30M+ "this could take forever,
+// continue anyway?" confirm() gates, both in the main/bench/manager/helper solves and the periodic
+// +10M bench/manager "keep going?" prompts) are commented out, not deleted. Now that every deep
+// search runs Stop-able (worker path, section Z item 6 etc.), the forever-warning's entire reason to
+// exist — pre-empting a freeze the user had no way to escape mid-search — is moot: the user can just
+// let it run and hit Stop whenever they've had enough, same as any other long solve. Left in place
+// (commented) rather than removed in case Stop coverage ever regresses on some path and this needs
+// to come back.
+/*
 function _foreverWarn(label,actual,cap,isHelper){
   const actTxt=actual?' (actual: '+_fmtCount(actual)+')':'';
   // cap tells us what's ACTUALLY about to be attempted: 1e12 means a true, uncapped "search to the
@@ -9000,6 +9024,7 @@ function _foreverWarn(label,actual,cap,isHelper){
   msg+='\n\nContinue anyway?';
   return msg;
 }
+*/
 function runSolve(nodeCap,reuseSeed){runSolve.__reuse=!!reuseSeed;
   const _forceSerial=!!runSolve.__forceSerial;runSolve.__forceSerial=false; // v17.6.7: one-shot "re-run without workers" from the soft worker-cap warning
   syncAllSlots();
@@ -9072,7 +9097,9 @@ function runSolve(nodeCap,reuseSeed){runSolve.__reuse=!!reuseSeed;
       const exact0=form0?exactFillCount(form0,cards):null;
       const cnt=exact0!==null?exact0:(form0?countFills(form0,cards,30000000):0);
       _hideSolverOverlay();
+      /* v17.8.60: 30M+ forever-warning removed — Stop covers this now, no need to ask up front.
       if(cnt>=30000000&&!confirm(_foreverWarn('30 million',exact0,cap))){out.innerHTML=_prevHTML;return;} // cancelled: restore the original box, existing solve state is untouched
+      */
       // v16.19.0: parallel engage is now TOGGLE-ONLY (decoupled from the 30M+ fill-count line the
       // forever-warn dialog above still uses — that dialog is about warning on long solves,
       // completely separate from whether to split across workers). Default OFF, so normal users
@@ -9435,7 +9462,9 @@ function _reanalyze(which,cap){
     const exactOwn=which==='bench'
       ?(bd0?((typeof bd0.proofCeil==='bigint'&&bd0.proofCeil>0n)?Number(bd0.proofCeil):_benchNodeEstimate(bd0.mode,bd0.nodes,bd0.combos,bd0.combosChecked,bd0.unitsChecked,bd0.unitsTotal)):null)
       :(ctx.analyses?ctx.analyses.reduce((t,a)=>t+((a&&a.exact)?Number(a.exact):0),0)||(an0?an0.exact:null):(an0?an0.exact:null)); // manager gate: SUM of pool arrangements across every tie the rerun will touch — a per-tie number would understate a 200-tie pass by 200x
+    /* v17.8.60: 30M+ forever-warning removed — Stop covers this now.
     if(exactOwn!==null&&exactOwn!==undefined&&exactOwn>=30000000&&!confirm(_foreverWarn('30 million',exactOwn,cap)))return;
+    */
     _showSolverOverlay();setTimeout(_run,30);
     return;
   }
@@ -9553,7 +9582,9 @@ function _reanalyzeTie(escalate){
     else if(benchN!==null&&benchN!==undefined)exactOwn=benchN;
     else if(mgrN!==null&&mgrN!==undefined)exactOwn=mgrN;
     _showSolverOverlay();
+    /* v17.8.60: 30M+ forever-warning removed — Stop covers this now.
     if(exactOwn!==null&&exactOwn>=30000000&&!confirm(_foreverWarn('30 million',exactOwn,Math.max(tc.bench,tc.mgr)))){_hideSolverOverlay();return;}
+    */
     _runWorker();
     return;
   }
@@ -10441,14 +10472,23 @@ function _lexGt(a,b){for(let i=0;i<a.length;i++){if(a[i]!==b[i])return a[i]>b[i]
 // no warning anywhere — the exact hole the bench side had. Checked at each tie's ENTRY so a Stop takes
 // effect before the next solve starts (a solve already in flight can't be interrupted — JS limit).
 function _maybeMgrPrompt(){
+  // v17.8.60: periodic +10M "keep going?" prompt removed — Stop covers this now, so this is a no-op.
+  // Left commented (not deleted) in case Stop coverage on this path ever regresses.
+  return;
+  /*
   if(_mgrAbort||_mgrNodeAcc<_mgrPromptAt)return;
   const thM=Math.round(_mgrPromptAt/1000000);
   const est=(_mgrTieTotal>1&&_mgrTieIdx>=1)?' Finishing every tie AT THE CURRENT PER-TIE CAPS \u2248 '+_fmtCount(Math.round(_mgrNodeAcc/_mgrTieIdx*_mgrTieTotal))+' nodes total.':'';
   const ok=confirm('The manager checks have searched '+thM+'M+ nodes ACROSS ALL TIES so far and aren\'t finished. On tie '+_mgrTieIdx+' of '+_mgrTieTotal+'.'+est+'\n\nKeep going? (You\'ll be asked again every +10M nodes.) Choosing Cancel skips the remaining ties\' manager depth checks (their clean counts still show) \u2014 the bench results are unaffected.');
   if(ok)_mgrPromptAt+=10000000;else {_mgrAbort=true;_mgrAbortAtM=thM;}
   _recLog(thM+'M manager-pass prompt (tie '+_mgrTieIdx+'/'+_mgrTieTotal+'): '+(ok?'continued':'stopped \u2014 remaining ties\u2019 manager depth checks skipped'));
+  */
 }
 function _maybeSlowPrompt(){
+  // v17.8.60: periodic +10M "keep going?" prompt removed — Stop covers this now, so this is a no-op.
+  // Left commented (not deleted) in case Stop coverage on this path ever regresses.
+  return;
+  /*
   // Bench-only node-budget guard (10M threshold). Manager nodes no longer feed this accumulator —
   // this runs alongside — not instead of — the per-search 3M escalation boxes (_miniCapWarn /
   // _tieCapWarn) and the per-loop caps in computeBenchPicks: those catch a single solveBest() call
@@ -10464,6 +10504,7 @@ function _maybeSlowPrompt(){
   const ok=confirm('The bench pass has searched '+thM+'M+ nodes ACROSS ALL TIES so far and isn\'t finished.'+tieTxt+estTxt+' On a complex draft this can take an extremely long time, for little to no change in the actual recommendation.\n\nKeep going? (You\'ll be asked again every +10M nodes.) Choosing Cancel stops the remaining deep bench checks and shows the best bench result found so far \u2014 manager checks are unaffected and will continue as normal (they\'ll show their own cap prompt if they run long).');
   if(ok)_benchPromptAt+=10000000;else {_benchAbort=true;_benchAbortAtM=thM;}
   _recLog(thM+'M bench-pass prompt'+(_benchTieTotal>1?' (tie '+_benchTieIdx+'/'+_benchTieTotal+')':'')+': '+(ok?'continued':'stopped \u2014 remaining deep bench checks skipped'));
+  */
 }
 function computeBenchPicks(tie,form,mode){
   // v15.1.3 (documentation only, considered + declined): unlike the main solve, this (and
@@ -11335,7 +11376,7 @@ function _pickMgrInner(cap){
   } else {
     const seen=new Set(),pool=[];
     mainXI.concat(bench).forEach(c=>{if(c&&!seen.has(c.id)){seen.add(c.id);pool.push(Object.assign({},c,{hold:null}));}});
-    if(cap>30000000){_hideSolverOverlay();exactMgr=exactFillCount(form,pool);const cnt=exactMgr!==null?exactMgr:countFills(form,pool,30000000);if(cnt>=30000000&&!confirm(_foreverWarn('30 million',exactMgr,cap)))return;_showSolverOverlay();} // same forever-warn gate as the other deep searches
+    if(cap>30000000){_hideSolverOverlay();exactMgr=exactFillCount(form,pool);/* v17.8.60: 30M+ forever-warning removed — Stop covers this now. const cnt=exactMgr!==null?exactMgr:countFills(form,pool,30000000);if(cnt>=30000000&&!confirm(_foreverWarn('30 million',exactMgr,cap)))return; */_showSolverOverlay();} // same forever-warn gate as the other deep searches (now a no-op — see v17.8.60)
     if(exactMgr===null)exactMgr=exactFillCount(form,pool);
     const r2=solveBest(form,pool,cap,getRatingCeil());
     if(r2&&!r2.error&&r2.bestXIs&&r2.bestXIs.length){
@@ -13439,7 +13480,7 @@ function runHelperDeep(cap){
     syncAllSlots();
     const missingSlots=trueGaps(form.slots,cards);
     if(missingSlots.length){_hideSolverOverlay();judgeSlotInline();return;}
-    if(nextCap>30000000){const exact4=exactFillCount(form,cards);const cnt=exact4!==null?exact4:countFills(form,cards,30000000);_hideSolverOverlay();if(cnt>=30000000&&!confirm(_foreverWarn('30 million',exact4,nextCap,true))){judgeSlotInline();return;}_showSolverOverlay();}
+    if(nextCap>30000000){const exact4=exactFillCount(form,cards);/* v17.8.60: 30M+ forever-warning removed — Stop covers this now. const cnt=exact4!==null?exact4:countFills(form,cards,30000000); */_hideSolverOverlay();/* if(cnt>=30000000&&!confirm(_foreverWarn('30 million',exact4,nextCap,true))){judgeSlotInline();return;} */_showSolverOverlay();}
     const r=solveBest(form,cards,nextCap,getRatingCeil());
     _hideSolverOverlay();
     const ctx=(r.error||!r.bestXIs||!r.bestXIs.length)
