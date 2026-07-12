@@ -124,7 +124,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v17.8.51</title>
+<title>Draft Solver v17.8.52</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -4352,10 +4352,16 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                mid-pass worker error all fall back to the old synchronous path with its overlay and
                confirm() prompts fully intact (which also keeps the iOS standalone's behavior
                unchanged — no Workers there, so it takes the fallback automatically).
-               STILL SYNCHRONOUS BY DESIGN (unchanged, possible follow-ups): _pickTieWinner, the
-               emergency-fill renderer's single-tie bench call, pickMgr, and _reanalyzeTie's per-tie
-               reruns — each pre-confirms the prompts and is governed by its own cap system; they
-               were out of scope here exactly as they were for v15.1.3's parallelism review.
+               STILL SYNCHRONOUS BY DESIGN (possible follow-ups): _pickTieWinner, the
+               emergency-fill renderer's single-tie bench call, and pickMgr — each pre-confirms the
+               prompts and is governed by its own cap system; they were out of scope here exactly as
+               they were for v15.1.3's parallelism review. (_reanalyzeTie was originally on this list
+               too, then moved to the worker in v17.8.52 via the blob's d.single mode — one
+               computeBenchPicks + one analyzeManagerDepth at the tie's own escalated caps, fresh
+               bench published before the manager solve starts so a Stop mid-manager keeps it, a Stop
+               mid-bench simply keeps the previous analysis untouched, and the old synchronous body
+               retained verbatim as the fallback. Its post-processing was factored into a _finish
+               closure shared by both paths so ctx writes/warning cache/winner recompute can't drift.)
                WHY THE v17.8.50 DEFERRAL WAS OVERSTATED (lesson worth keeping): it claimed this needs
                item 1's resumable/chunked solver core. That is true only for true RESUME or a
                cooperative stop HANDSHAKE. For a live counter + terminate-based Stop, the pass's
@@ -5057,7 +5063,33 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        aborted stubs + seeded meters). Also updated the computeBenchPicks header note, the
        _showBenchMgrOverlay comment (now the sync fallback's UI only), section Z (item 6 body,
        header, CURRENT STATUS) and the section INDEX one-liner. -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.51</span></h1>
+  <!-- v17.8.52 -- SECTION Z ITEM 6 EXTENDED to "Re-analyse this bench" (_reanalyzeTie): the per-tie
+       rerun now runs in the same dedicated worker as the pass (new d.single mode in
+       _buildBenchWorkerBlob: one computeBenchPicks + one analyzeManagerDepth at THIS tie's own
+       ctx.tieCaps, manager depth always run, same rule as before), with the live "This tie -- bench
+       search / manager check: XM nodes" counter and the always-available Stop button -- exactly the
+       path where the caps this button escalates (27M, 81M, "search to the end") used to freeze the
+       page with no way out. Stop semantics for a single tie: the fresh bench result is published the
+       moment it finishes (before the manager solve starts), so Stop during the MANAGER solve keeps
+       the new bench and stubs the manager side as aborted (clean count still shows; the cached
+       warning box's buttons re-run deeper on demand), while Stop during the BENCH solve keeps the
+       previous analysis untouched (nothing new had finished; no re-render needed). _stopBenchRun
+       gained a run.single branch for this; the shared Stop button routing is unchanged. _tieCapWarn
+       gained a stoppedTie variant ("stopped early -- you pressed Stop" head + a "Managers -- skipped
+       after the stop" line) so a user stop is never called a cap, matching v17.8.51's stoppedPass
+       wording rule. _reanalyzeTie's post-processing (ctx writes, tieWarn cache, winner recompute,
+       applyTie) was factored into ONE _finish closure shared by the worker completion, the worker
+       stop, and the old synchronous body -- which is retained verbatim as _runSync and remains the
+       fallback for Worker unavailability/spawn failure/mid-run worker error (and therefore still the
+       iOS standalone's path, unchanged). One deliberate tightening while factoring: ctx.benchData is
+       now written together with ctx.analyses in _finish AFTER both searches complete, instead of
+       mid-try between the two calls -- an analyzeManagerDepth exception no longer leaves a
+       half-updated ctx (fresh bench + stale analysis). The 30M+ forever-warning gate is unchanged
+       and still fires before anything runs. Verified in the Node harness (stage 7: single-tie
+       end-to-end incl. bench tieDone publish + final shape; stage 8: stop-during-manager stub
+       assembly). Also updated section Z item 6's still-synchronous list and the computeBenchPicks
+       header note. -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v17.8.52</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -9011,6 +9043,16 @@ function _buildBenchWorkerBlob(){
     +'cards=d.cards;board=d.board;MANAGER_DB=d.managerDB;PIVOT_KIND=d.pivotKind;PIVOT_KEY=d.pivotKey;'
     +'_benchCap=d.benchCap;_mgrCap=d.mgrCap;__mode=d.mode;__ev=d.ev;__rc=d.ratingCeil;__depthN=d.depthN;'
     +'_tieHook=function(kind,i,data){postMessage({tieDone:kind,i:i,data:data});};'
+    // v17.8.52: single-tie mode ("Re-analyse this bench" — _reanalyzeTie). One computeBenchPicks +
+    // one analyzeManagerDepth at THIS tie's own caps (payload benchCap/mgrCap = ctx.tieCaps[cur]),
+    // manager depth always run (per-tie re-analyse is explicit intent, same rule as the sync path).
+    // The finished bench ships immediately so a Stop during the manager solve keeps it.
+    +'if(d.single){var bd,an;_benchTieIdx=1;_benchTieTotal=1;_mgrTieIdx=1;_mgrTieTotal=1;'
+    +'try{bd=computeBenchPicks(d.tie,d.form,__mode);postMessage({tieDone:"bench",i:0,data:bd});'
+    +'__phase="mgr";__inflight=0;__post(true);'
+    +'an=analyzeManagerDepth(d.tie,d.form,bd.bench.map(function(b){return b.c;}));}'
+    +'catch(err){postMessage({fatal:String(err&&err.message||err)});return;}'
+    +'postMessage({final:{bd:bd,an:an}});return;}'
     +'var A;try{A=_analyzeTies({bestXIs:d.ties},d.form,d.opts||{});}catch(err){postMessage({fatal:String(err&&err.message||err)});return;}'
     +'postMessage({final:A});};';
   return URL.createObjectURL(new Blob([src],{type:'application/javascript'}));
@@ -9070,6 +9112,23 @@ function _stopBenchRun(){
   try{URL.revokeObjectURL(run.url);}catch(e){}
   const sb=$('#solverStopBtn');if(sb)sb.style.display='none';
   _benchRun=null;_hideSolverOverlay();
+  // v17.8.52: "Re-analyse this bench" (single-tie) run. Stopped during the MANAGER solve -> the fresh
+  // bench already arrived (published before the manager solve started): keep it, stub the manager
+  // side as aborted (clean count stays visible; the cached warning box's own buttons re-run deeper on
+  // demand). Stopped during the BENCH solve -> nothing new finished: the previous analysis is simply
+  // kept untouched, no re-render needed (the rerun never wiped the panel).
+  if(run.single){
+    const bd=run.doneBench[0];
+    const M=Math.round((run.bench+run.mgr+run.inflight)/1000000);
+    if(bd){
+      const an={clean:cleanMgrCount(run.ctx.ties[run.tie].sc),subbed2:0,plus1:0,exact:null,capped:false,aborted:true}; // same stub shape analyzeManagerDepth's own abort path returns
+      _recLog('tie '+(run.tie+1)+' re-analysis stopped by user \u2014 '+M+'M nodes searched, fresh bench kept, manager check skipped');
+      run.finish(bd,an,true);
+    }else{
+      _recLog('tie '+(run.tie+1)+' re-analysis stopped by user \u2014 '+M+'M nodes searched, previous analysis kept');
+    }
+    return;
+  }
   const benchDoneCt=Object.keys(run.doneBench).length;
   const o=Object.assign({},run.opts,{doneBench:run.doneBench,doneMgr:run.doneMgr,stoppedPass:true,
     // Only mark the bench side stopped if it was actually cut short — a Stop during the manager phase
@@ -9204,12 +9263,28 @@ function _reanalyzeTie(escalate){
     if(prevBd&&prevBd.capped)tc.bench*=3;
     if(prevAn&&prevAn.capped)tc.mgr*=3;
   }
-  const _run=()=>{
-    _recLog('re-analyse tie '+(cur+1)
-      +(escalate==='reset'?' (caps reset to '+(getBenchNodeCap()/1000000)+'M bench / '+(getMgrNodeCap()/1000000)+'M mgr)'
-        :escalate==='forever'?' (search to the end)'
-        :' (bench cap '+(tc.bench>=1e12?'end':(tc.bench/1000000)+'M')+', mgr cap '+(tc.mgr>=1e12?'end':(tc.mgr/1000000)+'M')+')')
-      +' \u00b7 bench speed '+mode); // logged inside _run so a cancelled 150M forever-warning records nothing
+  const _log=()=>_recLog('re-analyse tie '+(cur+1)
+    +(escalate==='reset'?' (caps reset to '+(getBenchNodeCap()/1000000)+'M bench / '+(getMgrNodeCap()/1000000)+'M mgr)'
+      :escalate==='forever'?' (search to the end)'
+      :' (bench cap '+(tc.bench>=1e12?'end':(tc.bench/1000000)+'M')+', mgr cap '+(tc.mgr>=1e12?'end':(tc.mgr/1000000)+'M')+')')
+    +' \u00b7 bench speed '+mode); // logged at run-start so a cancelled 150M forever-warning records nothing
+  // v17.8.52: post-processing shared by the sync and worker paths (single source — the ctx writes,
+  // warning cache, winner recompute and re-render can't drift between the two). stoppedTie marks a
+  // rerun the user cut short with the Stop button (fresh bench kept, manager side stubbed).
+  const _finish=(bd,an,stoppedTie)=>{
+    ctx.benchData=ctx.benchData||ctx.ties.map(()=>null);ctx.benchData[cur]=bd;
+    ctx.analyses=ctx.analyses||ctx.ties.map(()=>null);ctx.analyses[cur]=an; // per-tie re-analyse is explicit intent for THIS tie: run manager depth regardless of the global slider
+    const capped=!!bd.capped||!!(an&&an.capped);
+    // Cache the warning HTML per tie so it survives switching away and back. applyTie() rebuilds the
+    // panel from scratch (wiping #tieReBenchWarn), so the box only ever appearing at rerun-time meant it
+    // vanished for good the moment you viewed another tie. Now applyTie re-injects it from this cache.
+    ctx.tieWarn=ctx.tieWarn||{};
+    ctx.tieWarn[cur]=(capped||stoppedTie)?_tieCapWarn(Math.max(tc.bench,tc.mgr),bd.combos,an&&an.exact,bd.nodes,bd.combosChecked,bd.mode,bd.unitsChecked,bd.unitsTotal,!!bd.capped,!!(an&&an.capped),bd.proofCeil,an&&an.nodes,stoppedTie):null;
+    ctx.winnerIdx=_recomputeWinnerIdx(ctx.ties,ctx.analyses); // this tie's fresh analysis may now beat (or lose to) the previous winner
+    _hideSolverOverlay();applyTie(cur); // keep the user on their current tie; applyTie re-injects the cached box
+  };
+  const _runSync=()=>{ // v17.8.52: the old synchronous path, unchanged in behavior — now the fallback for Worker unavailability/failure (and therefore still the iOS standalone's path)
+    _log();
     _benchNodeAcc=0;_benchPromptAt=Infinity;_benchAbort=false;_benchAbortAtM=null;_benchTieIdx=1;_benchTieTotal=1;_mgrNodeAcc=0;_mgrPromptAt=Infinity;_mgrAbort=false;_mgrAbortAtM=null;_mgrTieIdx=1;_mgrTieTotal=1; // single-tie rerun: pre-confirm BOTH cross-tie 10M prompts so neither fires (there are no other ties) — this path is governed entirely by its OWN per-tie 3x cap system and shows estimates scoped to just this tie
     // Swap this tie's own caps into the shared globals just for these two calls, then restore
     // whatever the bench/manager options panel had — a try/finally so a thrown error can't leave
@@ -9219,19 +9294,49 @@ function _reanalyzeTie(escalate){
     let bd,an=null;
     try{
       bd=computeBenchPicks(ctx.ties[cur],ctx.form,mode);
-      ctx.benchData=ctx.benchData||ctx.ties.map(()=>null);ctx.benchData[cur]=bd;
-      an=analyzeManagerDepth(ctx.ties[cur],ctx.form,bd.bench.map(b=>b.c));ctx.analyses=ctx.analyses||ctx.ties.map(()=>null);ctx.analyses[cur]=an; // per-tie re-analyse is explicit intent for THIS tie: run manager depth regardless of the global slider
+      an=analyzeManagerDepth(ctx.ties[cur],ctx.form,bd.bench.map(b=>b.c));
     }finally{
       _benchCap=savedBenchCap;_mgrCap=savedMgrCap; // restore the shared bench/manager-options caps untouched
     }
-    const capped=!!bd.capped||!!(an&&an.capped);
-    // Cache the warning HTML per tie so it survives switching away and back. applyTie() rebuilds the
-    // panel from scratch (wiping #tieReBenchWarn), so the box only ever appearing at rerun-time meant it
-    // vanished for good the moment you viewed another tie. Now applyTie re-injects it from this cache.
-    ctx.tieWarn=ctx.tieWarn||{};
-    ctx.tieWarn[cur]=capped?_tieCapWarn(Math.max(tc.bench,tc.mgr),bd.combos,an&&an.exact,bd.nodes,bd.combosChecked,bd.mode,bd.unitsChecked,bd.unitsTotal,!!bd.capped,!!(an&&an.capped),bd.proofCeil,an&&an.nodes):null;
-    ctx.winnerIdx=_recomputeWinnerIdx(ctx.ties,ctx.analyses); // this tie's fresh analysis may now beat (or lose to) the previous winner
-    _hideSolverOverlay();applyTie(cur); // keep the user on their current tie; applyTie re-injects the cached box
+    _finish(bd,an,false);
+  };
+  const _syncFallback=()=>{_showSolverOverlay();setTimeout(_runSync,30);};
+  // v17.8.52 (section Z item 6 extension): the rerun goes through the same dedicated worker as the
+  // pass (blob's d.single mode) — live node counter + always-available Stop at exactly the caps this
+  // button is for escalating (27M, 81M, "search to the end"...). Stop routes through the shared
+  // _stopParallelSolve -> _stopBenchRun guard, which recognises run.single.
+  const _runWorker=()=>{
+    let url=null;
+    try{url=_buildBenchWorkerBlob();}catch(e){url=null;}
+    if(!url||typeof Worker==='undefined'){_syncFallback();return;}
+    let w=null;
+    try{w=new Worker(url);}catch(e){w=null;}
+    if(!w){try{URL.revokeObjectURL(url);}catch(e){}_syncFallback();return;}
+    _log();
+    const run={url,worker:w,single:true,tie:cur,ctx,tc,doneBench:{},bench:0,mgr:0,inflight:0,phase:'bench',stopped:false,finish:_finish};
+    _benchRun=run;
+    _showSolverOverlay();
+    const sb=$('#solverStopBtn');if(sb)sb.style.display='block';
+    const hint=$('#solverBadgeHint');if(hint)hint.textContent='Re-analysing this tie\u2026 Stop keeps what\u2019s finished.';
+    const teardown=()=>{try{w.terminate();}catch(e){}try{URL.revokeObjectURL(url);}catch(e){}
+      if(sb)sb.style.display='none';if(_benchRun===run)_benchRun=null;};
+    const failToSync=()=>{if(run.stopped)return;run.stopped=true;teardown();_hideSolverOverlay();_syncFallback();};
+    w.onerror=failToSync;
+    w.onmessage=function(e){
+      if(run.stopped)return;const d=e.data;
+      if(d&&d.progress){
+        run.bench=d.bench;run.mgr=d.mgr;run.inflight=d.inflight||0;run.phase=d.phase;
+        if(hint){const tot=Math.round((d.bench+d.mgr+run.inflight)/1000000);
+          hint.textContent='This tie \u2014 '+(d.phase==='mgr'?'manager check':'bench search')+': '+tot+'M nodes \u2014 Stop keeps what\u2019s finished.';}
+        return;}
+      if(d&&d.tieDone){run.doneBench[0]=d.data;return;} // the finished bench, published before the manager solve starts
+      if(d&&d.fatal){failToSync();return;}
+      if(d&&d.final){run.stopped=true;teardown();_hideSolverOverlay();_finish(d.final.bd,d.final.an,false);}
+    };
+    w.postMessage({single:true,tie:ctx.ties[cur],form:{name:ctx.form.name,slots:ctx.form.slots.slice()},
+      cards:cards,board:board?board.map(s=>({id:s.id})):null,
+      managerDB:MANAGER_DB,pivotKind:PIVOT_KIND,pivotKey:PIVOT_KEY,
+      benchCap:tc.bench,mgrCap:tc.mgr,mode:mode,ev:_benchObjEV(),ratingCeil:getRatingCeil(),depthN:0});
   };
   if(tc.bench>30000000||tc.mgr>30000000){
     // Same fix as _reanalyze: gate on the bench/manager searches' OWN counts — bench's estimated total
@@ -9246,10 +9351,10 @@ function _reanalyzeTie(escalate){
     else if(mgrN!==null&&mgrN!==undefined)exactOwn=mgrN;
     _showSolverOverlay();
     if(exactOwn!==null&&exactOwn>=30000000&&!confirm(_foreverWarn('30 million',exactOwn,Math.max(tc.bench,tc.mgr)))){_hideSolverOverlay();return;}
-    setTimeout(_run,30);
+    _runWorker();
     return;
   }
-  _showSolverOverlay();setTimeout(_run,30);
+  _runWorker();
 }
 // checked/total are only directly comparable in "slow" mode, where each coverage() call IS one hold-combination.
 // In fast/medium, coverage() is called per-candidate, not per full combo, so we only show nodes there.
@@ -9338,7 +9443,7 @@ function _benchProgressTxt(mode,totalCombos,nodesUsed,combosChecked,unitsChecked
   const t=_benchStatusTxt(mode,totalCombos,nodesUsed,combosChecked,unitsChecked,unitsTotal,proofCeil);
   return t?' \u2014 '+t:'';
 }
-function _tieCapWarn(cap,benchCombos,mgrExact,benchNodes,benchCombosChecked,benchMode,benchUnitsChecked,benchUnitsTotal,benchIsCapped,mgrIsCapped,benchProofCeil,mgrNodes){
+function _tieCapWarn(cap,benchCombos,mgrExact,benchNodes,benchCombosChecked,benchMode,benchUnitsChecked,benchUnitsTotal,benchIsCapped,mgrIsCapped,benchProofCeil,mgrNodes,stoppedTie){
   const ctx=window._solveCtx,tc=ctx&&ctx.tieCaps&&ctx.tieCaps[ctx.cur];
   const bits=[];
   if(benchCombos){
@@ -9346,12 +9451,14 @@ function _tieCapWarn(cap,benchCombos,mgrExact,benchNodes,benchCombosChecked,benc
     if(t)bits.push('<b>Bench</b> \u2014 '+t+(benchIsCapped?' \u00b7 hit its budget':' \u00b7 finished'));
   }
   if(mgrExact)bits.push('<b>Managers</b> \u2014 '+(mgrNodes?_fmtCount(mgrNodes)+' nodes searched \u00b7 ':'')+_fmtCount(mgrExact)+' legal pool arrangements'+(mgrIsCapped?' \u00b7 hit its budget':' \u00b7 finished'));
+  if(stoppedTie&&!mgrExact)bits.push('<b>Managers</b> \u2014 skipped after the stop (clean count still shows)'); // v17.8.52: Stop landed during the manager solve — the fresh bench above was kept
   const detail=bits.length?'<div class="tiny" style="margin-top:4px">'+bits.join('<br>')+'</div>':'';
   const nextBits=[];
   if(benchIsCapped&&tc)nextBits.push('bench \u2192 '+((tc.bench*3)/1000000)+'M');
   if(mgrIsCapped&&tc)nextBits.push('managers \u2192 '+((tc.mgr*3)/1000000)+'M');
   const keepLabel='Keep searching'+(nextBits.length?' ('+nextBits.join(', ')+')':' (\u00d73)');
-  return '<div class="note" style="border-color:var(--bad);margin-top:8px"><b>\u26a0 This tie\u2019s bench/manager re-analysis capped at '+(cap/1000000)+'M nodes</b> \u2014 best found so far for this squad.'+detail
+  const head=stoppedTie?'\u26a0 This tie\u2019s re-analysis stopped early \u2014 you pressed Stop':'\u26a0 This tie\u2019s bench/manager re-analysis capped at '+(cap/1000000)+'M nodes'; // v17.8.52: a user Stop is not a cap — say what actually happened
+  return '<div class="note" style="border-color:var(--bad);margin-top:8px"><b>'+head+'</b> \u2014 best found so far for this squad.'+detail
     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'
     +'<button class="btn sm" onclick="_reanalyzeTie(true)">'+keepLabel+'</button>'
     +'<button class="btn sec sm" onclick="_reanalyzeTie(\'forever\')">Search to the end</button>'
@@ -10178,7 +10285,9 @@ function computeBenchPicks(tie,form,mode){
   // prompts are shimmed into progress postMessages, and Stop is the always-on button on the main
   // thread. The synchronous main-thread path below (prompts and all) remains fully live: it is the
   // fallback for worker failure/unavailability, and still the ONLY path for _pickTieWinner, the
-  // emergency-fill renderer, pickMgr, and _reanalyzeTie's per-tie reruns. Any edit here must
+  // emergency-fill renderer, and pickMgr (v17.8.52: _reanalyzeTie's per-tie reruns moved to the same
+  // worker via the blob's d.single mode, with its old synchronous body kept as the fallback). Any
+  // edit here must
   // therefore stay worker-safe: no DOM reads (the _benchMode/_benchObjEV/getRatingCeil/
   // _mgrDepthCount shims cover the existing ones), no new global helpers without adding them to
   // _buildBenchWorkerBlob's serialization list (the trueChemPerCard lesson).
