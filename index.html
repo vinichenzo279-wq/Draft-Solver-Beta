@@ -129,7 +129,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v18.5.1-BETA</title>
+<title>Draft Solver v18.6-BETA</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -5847,6 +5847,14 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        never truncated: JSON above 1.5M characters, or a quota rejection, stays memory-only and removes
        any older disk copy. Chained Stop→resume→Stop remains exact. _v18HashNow now caches by an exact
        unsorted card/helpValue signature, avoiding repeated sorting without changing the canonical hash.
+       v18.6-BETA CAP-TRIP RE-ARM: every verified replay frontier remains armed until a newer
+       completed-million checkpoint replaces it, including the exact non-million frontier produced by
+       a node-cap trip. Therefore cap→resume→Stop before the next million no longer discards the cap
+       frontier and restarts that partition. Snapshot checkpointNodes is derived from the checkpoint's
+       own stored counter rather than the periodic-million tracker, keeping both frontier shapes exact.
+       The engine comment also records the historical CAP+2 node-count invariant so it is not mistaken
+       for a regression: one real node is explored past CAP because the comparison is strict `>`, then
+       the detector entry increments once without work; checkpoint rollback/replay preserves both.
        This branch is v18.0.0-BETA and is NOT the release line. If it flops, it flops -- v17.8.69
        remains canonical. -->
   <!-- v18.0.1-BETA -- DB: added Bobb 95 Fulham, Gusto 95 Chelsea, and Mainoo 96 Man Utd. -->
@@ -5863,7 +5871,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <!-- v18.4-BETA -- Resume hardening: replayed exact-million frontiers remain armed across an immediate second Stop; resumed badges require accepted/carry-forward work; take-time frontier discards are logged; helper frontier labels no longer fabricate boundaries; Search-to-end zero-node stops label the sentinel as end. -->
 <!-- v18.5-BETA -- Reload-safe resume: complete frontiers persist locally below a 1.5M-character all-or-nothing size gate, active runs save each completed-million boundary, restored objects reuse every existing fail-closed verifier, and the solve-session hash avoids redundant re-sorts. -->
 <!-- v18.5.1-BETA -- DB: added Igor Thiago 95 (ST, Brazil, England Premier League, Brentford). -->
-<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v18.5.1-BETA</span></h1>
+<!-- v18.6-BETA -- Resume hardening: replayed cap-trip frontiers remain armed until the next completed million, snapshots report the checkpoint's own exact backed count, and the intentional CAP+2 counter invariant is documented for future maintainers. -->
+<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v18.6-BETA</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -8579,6 +8588,12 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
   //       cadence, and final node totals are IDENTICAL to an uninterrupted run at the bigger cap —
   //       which is what makes the harness's fresh-vs-resumed digest comparison a real proof
   //       ("is the state at node 1,000,000 the same either way" is checked literally).
+  //       KNOWN CAP+2 INVARIANT: `if(nodes++>CAP)` intentionally reports CAP+2 on a capped run.
+  //       The strict `>` allows one genuine node of work past CAP; the following detector entry
+  //       increments once, trips, and does no work. __makeCheckpoint rolls that detector increment
+  //       back (`nodes-1`) and resume re-pays it. Do NOT change `>`/increment placement merely to
+  //       normalize the display: that would shift every historical node/foundAt fingerprint. Any
+  //       cosmetic clamp belongs only in rendering, never in the traversal counter.
   // Traversal-order equivalence to the recursive dfs is separately fuzz-proven against the
   // untouched v17.8.69 function (see the v18 changelog entry). The explicit stack also removes JS
   // recursion-depth exposure and is the prerequisite for the future "N workers as direct frontier
@@ -8637,11 +8652,13 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       if(!Object.is(resumeFrom.rc,RC))throw new Error('v18-resume: rating ceiling changed since the checkpoint ('+resumeFrom.rc+' -> '+RC+')'); // Object.is, not !== — a NaN ceiling (defensive) must equal itself rather than spuriously refuse every resume
       if(resumeFrom.st!==(ST?1:0))throw new Error('v18-resume: skip-ties setting changed since the checkpoint');
       if((resumeFrom.dseed==null?null:resumeFrom.dseed)!==((typeof diversitySeed==='number')?diversitySeed:null))throw new Error('v18-resume: diversity seed changed since the checkpoint');
-      nodes=resumeFrom.nodes;best=resumeFrom.best;maxRating=resumeFrom.maxRating;__snapLast=resumeFrom.snapLast||0;__lastMilNodes=Math.floor((nodes||0)/1000000)*1000000;
-      // v18.4-BETA: a periodic frontier stores boundary-1 because resume re-pays the pending entry.
-      // Re-arm only that exact shape; cap-trip checkpoints are non-million and must wait for the next
-      // published boundary so checkpointNodes never claims more than the checkpoint actually backs.
-      if(((Number(nodes)||0)+1)%1000000===0){__lastMilNodes=(Number(nodes)||0)+1;__lastMilCk=resumeFrom;}
+      nodes=resumeFrom.nodes;best=resumeFrom.best;maxRating=resumeFrom.maxRating;__snapLast=resumeFrom.snapLast||0;
+      // v18.6-BETA: every verified frontier remains the safe fallback until a newer completed-million
+      // frontier replaces it. Its exact backed count is ck.nodes+1 for BOTH shapes: periodic checkpoints
+      // store boundary-1, while a cap-trip checkpoint stores the real counter with only the detector
+      // increment rolled back. __lastMilNodes remains solely the next periodic-boundary tracker.
+      const __resumeBacked=Math.max(0,(Number(resumeFrom.nodes)||0)+1);
+      __lastMilNodes=Math.floor(__resumeBacked/1000000)*1000000;__lastMilCk=resumeFrom;
       bestXIs=resumeFrom.bestXIs.map(x=>({xi:x.xi,sc:x.sc,foundAt:x.foundAt,key:x.key,seed:x.seed}));
       partSeen.clear();for(const id of resumeFrom.participatedIds)partSeen.add(id);
       triedSeen.clear();for(const id of resumeFrom.triedIds)triedSeen.add(id);
@@ -8692,7 +8709,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
       __lastMilCk=__makeCheckpoint();
     }
     if(__snapEvery&&nodes-__snapLast>=__snapEvery){__snapLast=nodes; // v17.8.41: periodic incumbent snapshot (worker path only; see __snapEvery above)
-      try{onSnapshot({best,bestXIs:bestXIs.slice(0,16).map(x=>({xi:x.xi,sc:x.sc})),nodes,maxRating,participatedIds:Array.from(partSeen),triedIds:Array.from(triedSeen),checkpoint:__lastMilCk,checkpointNodes:__lastMilNodes});}catch(__se){}}
+      try{onSnapshot({best,bestXIs:bestXIs.slice(0,16).map(x=>({xi:x.xi,sc:x.sc})),nodes,maxRating,participatedIds:Array.from(partSeen),triedIds:Array.from(triedSeen),checkpoint:__lastMilCk,checkpointNodes:__lastMilCk?Math.max(0,(Number(__lastMilCk.nodes)||0)+1):0});}catch(__se){}}
     if(k===order.length){
       const xi=pick.slice(),sc=scoreXI(xi);
       if(sc.rating>maxRating)maxRating=sc.rating;   // cheap: sc.rating already computed for the score
