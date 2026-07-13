@@ -129,7 +129,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v18.0.4-BETA</title>
+<title>Draft Solver v18.0.7-BETA</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -5821,7 +5821,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <!-- v18.0.2-BETA -- Solver: stopped x3 escalations resume from the last completed-million checkpoint, inline helper solves run in a stoppable worker, and single-tie bench-combo worker-splitting remains deferred (the beta already splits independent ties across workers). -->
     <!-- v18.0.3-BETA -- DB: added Modric, Cristiano Ronaldo, Casillas, Luis Figo, Olise, Matthaus, Dembele, Messi x2, Villa, Pepe, Klose, Rivaldo, and Garrincha 100-rated normal cards; added Corinthians/Botafogo to Others; reverted Premier League clubs from the promoted 2027 set back to West Ham/Burnley/Wolves for this edition. -->
     <!-- v18.0.4-BETA -- DB: added Ramos, Lahm, Zanetti, Cafu, and Buffon normal cards; documented deferred beta-only splitting of a single huge bench tie across workers. -->
-<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v18.0.4-BETA</span></h1>
+    <!-- v18.0.5-BETA -- Fix: bench/manager x3 escalation after Stop now uses the actual stopped node count (including the in-flight tie shown in progress) and rounds down to the last completed million; Search-to-the-end stopped at 3.9M now offers 9M, not 3T, while a zero-node stop repeats the current cap. -->
+    <!-- v18.0.6-BETA -- UI/state fix: the worker-count slider now disables and grays out while Parallel search is off; version changes now clear saved formation calibration so it returns to the default manual/off state. -->
+    <!-- v18.0.7-BETA -- User feedback: _poolSizeWarning's 50+ card warning was showing BOTH the eval-based "likely deadweight" clause and the post-solve "not expected to make final XI" clause together, which was redundant in the post-solve cap warning (_cappedWarnHTML) since the eval half is already visible in the helper panel at pick time. Now strictly context-split: the post-solve cap warning shows ONLY the search-evidence (participatedIds/triedIds) clause; the pre-solve helper panel keeps ONLY the eval-based clause (DW_EVAL_MAX=85) and its weakest-card fallback. Removed the now-unneeded cross-filtering between the two (old dwIds/_seen exclusions). -->
+<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v18.0.7-BETA</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -6000,10 +6003,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t collect every equal-scoring lineup (faster, on by default).</span>
       </label>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
-        <input type="checkbox" id="parBeta" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
+        <input type="checkbox" id="parBeta" onchange="_syncParWorkersEnabled();saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Parallel search</b> &mdash; split any solve across CPU workers. Same answer, roughly &divide; workers wall-clock. Off by default.</span>
       </label>
-      <div style="margin:2px 0 8px 26px">
+      <div id="parWorkersWrap" style="margin:2px 0 8px 26px;transition:opacity .15s ease">
         <label style="font-size:11px;color:var(--mut);display:flex;justify-content:space-between"><span>Workers</span><span id="parWorkersLbl">4</span></label>
         <input type="range" id="parWorkers" min="2" max="64" value="4" oninput="$('#parWorkersLbl').textContent=this.value" onchange="saveAdvSettings()" style="width:100%">
         <p class="tiny" style="margin:2px 0 0">Past your device&rsquo;s core count this stops helping and some devices won&rsquo;t handle the top end well.</p>
@@ -6305,7 +6308,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     const verKey='pacwyn_app_version';
     const prev=localStorage.getItem(verKey);
     if(prev!==cur){
-      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1','pacwyn_pivot_kind_v1','pacwyn_pivot_key_v1','pacwyn_pivot_league_v1'].forEach(k=>{ // v17.8.18: pivot keys added — a version bump should reset the helper pivot back to default (rank 1 / England Prem) too, same as every other saved setting
+      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1','pacwyn_pivot_kind_v1','pacwyn_pivot_key_v1','pacwyn_pivot_league_v1','pacwyn_formcal_v1'].forEach(k=>{ // v17.8.18: pivot keys added — a version bump should reset the helper pivot back to default (rank 1 / England Prem) too, same as every other saved setting; v18.0.6: formation calibration added so a new version returns formation ranking to manual/off
         try{localStorage.removeItem(k);}catch(e){}
         try{sessionStorage.removeItem(k);}catch(e){}
       });
@@ -8821,6 +8824,11 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
 // Diversity modes are intentionally NOT combined with the parallel path in this beta.
 function _parallelBetaOn(){const cb=$('#parBeta');return !!(cb&&cb.checked);}
 function _parWorkerCount(){const el=$('#parWorkers');const v=el?parseInt(el.value,10):4;return(isNaN(v)||v<2)?2:Math.min(v,64);}
+function _syncParWorkersEnabled(){
+  const on=_parallelBetaOn(),el=$('#parWorkers'),wrap=$('#parWorkersWrap');
+  if(el){el.disabled=!on;el.setAttribute('aria-disabled',on?'false':'true');}
+  if(wrap){wrap.style.opacity=on?'1':'0.42';wrap.style.filter=on?'none':'grayscale(1)';}
+}
 function _buildSolverWorkerBlob(){
   // FIX (v16.16.1.1): trueChem was split into trueChemPerCard (real logic) + trueChem (thin sum
   // wrapper) back in v16.9.2. This list still only serialized trueChem's wrapper source, never
@@ -9823,6 +9831,7 @@ function saveAdvSettings(){
 _updMgrDepthLbl();
   }catch(e){}
 })();
+_syncParWorkersEnabled();
 function resetAdvSettings(){
   const rc=$('#ratingCeilSlider');if(rc)rc.value=21;   // 96
   const nc=$('#nodeCapInput');if(nc)nc.value=3;        // 3M
@@ -9838,6 +9847,7 @@ function resetAdvSettings(){
   const st=$('#skipTies');if(st)st.checked=true;      // v16.21.0: skip-ties default ON (same-score ties, auto-tiebroken pre-display)
   const bev=$('#benchObjEV');if(bev)bev.checked=false; // v15.0: EV objective default OFF (+2 gamble)
   const pw=$('#parWorkers');if(pw){pw.value='4';const pwl=$('#parWorkersLbl');if(pwl)pwl.textContent='4';}
+  _syncParWorkersEnabled();
   if(typeof updateRatingCeilLabel==='function')updateRatingCeilLabel();
   saveAdvSettings();_solveCache=null;
 }
@@ -10416,7 +10426,8 @@ function _stopBenchRun(){
   // kept untouched, no re-render needed (the rerun never wiped the panel).
   if(run.single){
     const bd=run.doneBench[0];
-    const M=Math.round((run.bench+run.mgr+run.inflight)/1000000);
+    const stoppedNodes=run.bench+run.mgr+(run.inflight||0);
+    const M=Math.floor(stoppedNodes/1000000);
     if(bd){
       const an={clean:cleanMgrCount(run.ctx.ties[run.tie].sc),subbed2:0,plus1:0,exact:null,capped:false,aborted:true}; // same stub shape analyzeManagerDepth's own abort path returns
       _recLog('tie '+(run.tie+1)+' re-analysis stopped by user \u2014 '+M+'M nodes searched, fresh bench kept, manager check skipped');
@@ -10427,13 +10438,17 @@ function _stopBenchRun(){
     return;
   }
   const benchDoneCt=Object.keys(run.doneBench).length;
+  const stoppedBenchNodes=run.bench+(run.phase==='bench'?(run.inflight||0):0);
+  const stoppedMgrNodes=run.mgr+(run.phase==='mgr'?(run.inflight||0):0);
   const o=Object.assign({},run.opts,{doneBench:run.doneBench,doneMgr:run.doneMgr,stoppedPass:true,
     // Only mark the bench side stopped if it was actually cut short — a Stop during the manager phase
-    // leaves a COMPLETE bench pass (every tie in doneBench), which must not render as aborted.
-    benchStopAtM:(run.opts.only==='mgr'||benchDoneCt>=run.r.bestXIs.length)?null:Math.max(1,Math.round((run.bench+(run.phase==='bench'?run.inflight:0))/1000000)),
-    benchStopNodes:run.bench,
-    mgrStopAtM:Math.max(1,Math.round((run.mgr+(run.phase==='mgr'?run.inflight:0))/1000000)),
-    mgrStopNodes:run.mgr});
+    // leaves a COMPLETE bench pass (every tie in doneBench), which must not render as aborted. The
+    // node totals include the in-flight tie, because the x3 ladder is based on work actually searched,
+    // even though unfinished tie results are deliberately not reused.
+    benchStopAtM:(run.opts.only==='mgr'||benchDoneCt>=run.r.bestXIs.length)?null:Math.max(0,Math.floor(stoppedBenchNodes/1000000)),
+    benchStopNodes:stoppedBenchNodes,
+    mgrStopAtM:Math.max(0,Math.floor(stoppedMgrNodes/1000000)),
+    mgrStopNodes:stoppedMgrNodes});
   const A=_analyzeTies(run.r,run.form,o);
   _recLog('bench/manager pass stopped by user \u2014 '+Math.round((run.bench+run.mgr+run.inflight)/1000000)+'M nodes searched, finished ties kept');
   run.done(A);
@@ -11437,25 +11452,42 @@ function maxPossibleRating(pool,form){
   return ''; // rc > ub and the search completed uncapped: provably optimal, nothing to flag
 }
 function _milFloor(n){n=Number(n)||0;return n>0?Math.max(1000000,Math.floor(n/1000000)*1000000):1000000;}
+function _x3StoppedLike(r){return !!(r&&(r.stoppedEarly||r.aborted||r.stoppedPass||r.tieAborted));}
+function _x3StoppedNodes(r){
+  if(!r)return 0;
+  // Main-solve stops prefer the published checkpoint boundary; bench/manager stops use the pass
+  // meter, which now includes the in-flight tie's progress at the moment Stop was pressed.
+  const keys=['resumeBaseNodes','checkpointNodes','passNodes','nodes','tieNodes'];
+  for(const k of keys){const v=Number(r[k]);if(isFinite(v)&&v>0)return v;}
+  return 0;
+}
 function _x3Base(cap,r){
-  // v18.0.2-BETA: every x3 button uses the last completed million-node boundary, not a rounded
-  // display number. Stopped/resumable runs prefer the checkpoint boundary (3.9M -> 3M), avoiding
-  // an apparent continuation from 4M that would skip unsearched nodes.
-  if(r&&r.stoppedEarly){
-    if(r.resumeBaseNodes)return _milFloor(r.resumeBaseNodes);
-    if(r.checkpointNodes)return _milFloor(r.checkpointNodes);
-    if(typeof r.nodes==='number'&&r.nodes>0)return _milFloor(r.nodes);
+  // v18.0.5-BETA: stopped bench/manager passes are "stopped-like" even though they arrive as
+  // aborted/stoppedPass aggregates rather than stoppedEarly main-solve results. Base every stopped
+  // x3 on the actual searched node count, rounded DOWN to the last completed million (3.9M -> 3M).
+  // If Stop lands before any nodes were searched, do not inflate to cap*3; repeat the current cap.
+  const stopped=_x3StoppedLike(r);
+  if(stopped){
+    const n=_x3StoppedNodes(r);
+    if(n>0)return _milFloor(n);
+    return _milFloor(cap);
   }
   return _milFloor(cap);
 }
-function _x3Cap(cap,r){return _x3Base(cap,r)*3;}
+function _x3Cap(cap,r){
+  if(_x3StoppedLike(r)){
+    const n=_x3StoppedNodes(r);
+    return n>0?_milFloor(n)*3:_milFloor(cap);
+  }
+  return _milFloor(cap)*3;
+}
 function _mTxt(n){n=_milFloor(n);return (n/1000000)+'M';}
 function _cappedWarnHTML(cap,r){
   // v17.8.42 (user feedback on v17.8.41): a STOPPED run's x3 escalation is based on the nodes
   // actually explored when Stop was pressed, not the cap the run never reached — stopping an 11M-in
   // run on a 300M cap offers 33M, not 900M. Normal capped runs keep cap*3 exactly as before.
   const base=_x3Base(cap,r);
-  const nextCap=base*3;
+  const nextCap=_x3Cap(cap,r);
   const nextM=nextCap/1000000;
   const note=nextCap>100000000?'Going much deeper may take very long and may not be worthwhile.':'Jumping to '+nextM+'M has improved results in practice.';
   // v17.8.41 (section Z item 3): a user-stopped run reuses this exact box (same escalations, same
@@ -12200,26 +12232,24 @@ function _slotLbl(c){
   const l=(s&&s.label)||(c&&c.slot)||'';
   return l?(' \u00b7 '+esc(l)):'';
 }
+// v17.8.66 (user feedback): the eval-based "likely deadweight" clause and the post-solve
+// "not expected to make final XI" clause used to BOTH render everywhere this function was called --
+// overkill in the post-solve cap warning, where the eval half is redundant with what the helper
+// already shows at pick time, and only the search's own evidence (participatedIds/triedIds) belongs.
+// Now strictly context-split on whether a solve result `r` was passed in:
+//   - r present  (post-solve cap warning, _cappedWarnHTML)      -> ONLY the participation clause.
+//   - r absent   (pre-solve helper panel, pick time)            -> ONLY the eval clause (+ its own
+//                                                                   weakest-card fallback).
+// No more cross-filtering between the two (the old dwIds/_seen exclusions existed only because both
+// halves could render together); each branch is now fully self-contained.
 function _poolSizeWarning(r){
   if(cards.length<=50)return '';
   let extra='';
   const nm=c=>esc(c.label||cardMeta(c));
-  // v17.8.53: the confident, evidence-free half first -- same rule pre- and post-solve.
-  // One safety valve: after a solve we KNOW which cards actually appeared in a best/tied XI
-  // (participatedIds). The eval rule must never contradict the search itself, so anything that won
-  // its way into a top squad is dropped from the list no matter what its eval says.
-  const _seen=(r&&r.participatedIds)?new Set(r.participatedIds):null;
-  const dw=_trueDeadweight().filter(d=>!(_seen&&_seen.has(d.c.id)));
-  const dwIds=new Set(dw.map(d=>d.c.id));
-  if(dw.length){
-    const SHOW=15;
-    extra+=' <b>Likely deadweight</b> (eval under '+DW_EVAL_MAX+', and either adding no fresh nation/league/club or off-pivot and still weak): '
-      +dw.slice(0,SHOW).map(d=>nm(d.c)+' ('+d.c.rating+' \u00b7 eval '+d.v.toFixed(1)+_slotLbl(d.c)+')').join(', ')
-      +(dw.length>SHOW?', +'+(dw.length-SHOW)+' more':'')+'.';
-  }
   if(r&&r.participatedIds&&r.triedIds){
+    // POST-SOLVE: cap warning context -- search evidence only, no eval-based deadweight clause.
     const won=new Set(r.participatedIds),tried=new Set(r.triedIds);
-    const suspect=cards.filter(c=>tried.has(c.id)&&!won.has(c.id)&&!dwIds.has(c.id)).sort((a,b)=>a.rating-b.rating); // v17.8.53: don't repeat anything the eval rule already named above
+    const suspect=cards.filter(c=>tried.has(c.id)&&!won.has(c.id)).sort((a,b)=>a.rating-b.rating);
     if(suspect.length){
       const SHOW=15;
       const nmR=c=>nm(c)+' ('+c.rating+_slotLbl(c)+')';
@@ -12227,13 +12257,21 @@ function _poolSizeWarning(r){
         +suspect.slice(0,SHOW).map(nmR).join(', ')+(suspect.length>SHOW?', +'+(suspect.length-SHOW)+' more':'')
         +'. (A deep enough search could still prove one of these wrong, but it\u2019s unlikely.)';
     }
-  }
-  // v17.8.55: nothing named by EITHER rule -> the "remove deadweight" advice has nothing to act on.
-  // Name the weakest single option so there's always a starting point, and say plainly that it
-  // didn't meet the deadweight bar (so the user knows this is a nudge, not a verdict).
-  if(!extra){
-    const w=_weakestCard(_seen);
-    if(w)extra=' Nothing here meets the deadweight bar, so there\u2019s no obvious cut \u2014 if you want one anyway, <b>'+nm(w.c)+'</b> ('+w.c.rating+' \u00b7 eval '+w.v.toFixed(1)+_slotLbl(w.c)+') is the weakest option on the board. Otherwise leave the pool as it is and just expect a slower solve.';
+  }else{
+    // PRE-SOLVE: helper panel, pick time -- eval-based clause only (v17.8.53's rule).
+    const dw=_trueDeadweight();
+    if(dw.length){
+      const SHOW=15;
+      extra+=' <b>Likely deadweight</b> (eval under '+DW_EVAL_MAX+', and either adding no fresh nation/league/club or off-pivot and still weak): '
+        +dw.slice(0,SHOW).map(d=>nm(d.c)+' ('+d.c.rating+' \u00b7 eval '+d.v.toFixed(1)+_slotLbl(d.c)+')').join(', ')
+        +(dw.length>SHOW?', +'+(dw.length-SHOW)+' more':'')+'.';
+    }
+    // v17.8.55: nothing named by the eval rule -> name the weakest single option so there's always
+    // a starting point, and say plainly it didn't meet the deadweight bar (a nudge, not a verdict).
+    if(!extra){
+      const w=_weakestCard(null);
+      if(w)extra=' Nothing here meets the deadweight bar, so there\u2019s no obvious cut \u2014 if you want one anyway, <b>'+nm(w.c)+'</b> ('+w.c.rating+' \u00b7 eval '+w.v.toFixed(1)+_slotLbl(w.c)+') is the weakest option on the board. Otherwise leave the pool as it is and just expect a slower solve.';
+    }
   }
   return '<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 '+cards.length+' cards on the board \u2014 consider removing deadweight (options with no realistic shot at the XI) so the end-solve stays fast.'+extra+'</div>';
 }
