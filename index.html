@@ -129,7 +129,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v18.12-BETA</title>
+<title>Draft Solver v18.14.1-BETA</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -5911,7 +5911,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <!-- v18.10-BETA -- Fix: version changes now clear the persisted no-hold calibration and checkbox along with the pivot, so startup selects the current rank-1 pivot and auto-calibrates for it instead of retaining a stale vector fitted to the previous pivot. -->
 <!-- v18.11-BETA -- Functionality/UI only, no card-data expansion: formation calibration now evaluates only icons, heroes, and normals matching the chosen pivot; includes the live rarity bonus/steepness; invalidates visibly when DB, pivot, or rarity context changes. Updated DB accuracy wording and removed stray rating placeholders. -->
 <!-- v18.12-BETA -- Objective rarity calibration: removed the subjective rarity bonus/steepness controls; the DB calibrator now fits separate signed nation, club and league rarity effects from copies-weighted card-type rarity percentiles, with formation normals measured inside the eligible pivot pool. Nation-pivot normals skip nation rarity, league-pivot normals skip league rarity; heroes use nation+league and icons nation only. Pure-manual helper and formation weights remain separate and unchanged. -->
-<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v18.12-BETA</span></h1>
+<!-- v18.13-BETA -- Calibrated type/rarity refinement: icons and heroes now receive independently fitted intrinsic coefficients in both helper and formation calibration; nation, club and league rarity coefficients are constrained to a +0.00 minimum so shallow sampling can switch an unproven rarity effect off but can never reward commonness. Old calibration blobs are invalidated and recalibrated. -->
+<!-- v18.14-BETA -- Calibration cleanup/stability: new-nation, new-club and new-league coefficients now share the +0.00 floor with objective rarity, so shallow samples can switch an unproven freshness effect off but never reward repetition. Removed the fitted extends-pivot-pool coefficient because pivot commitment is already owned by the always-live pivot head-start, alternate-rank and icon/hero pivot controls, while formation normals are already pivot-filtered. Default/automatic calibration size raised 150 -> 300; stored calibration key bumped again. -->
+<!-- v18.14.1-BETA -- Calibration input now has a hard 20-draft minimum in both the UI and sync/async engines; manually entered lower values are clamped visibly to 20 before fitting, preventing the misleading insufficient-scenarios error caused purely by an undersized request. -->
+<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v18.14.1-BETA</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -6202,8 +6205,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     <h2>Helper weights</h2>
     <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 6px"><input type="checkbox" id="hNoHold" onchange="onNoHoldToggle()"> No-hold drafting &mdash; always TAKE the top option (never suggest a hold)</label>
     <details class="hlp" style="margin:0 0 10px"><summary>Objective weights &mdash; calibrated from your DB</summary>
-      <p class="tiny" style="margin:6px 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; including separate nation, club and league rarity effects measured from copies-weighted card-type distributions and gated by the chosen pivot. Those objective rarity terms have no manual bonus or steepness. The fitted scorer replaces the hand-tuned one (inside <b>Manual</b> below) whenever a valid calibration for the current DB exists. Deterministic (same DB + seed &rarr; same result). Takes a few seconds.</p>
-      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 6px"># drafts to simulate: <input type="number" id="calNScripts" value="150" min="1" step="1" autocomplete="off" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
+      <p class="tiny" style="margin:6px 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; including separate icon and hero type effects, plus separate nation, club and league rarity effects measured from copies-weighted card-type distributions and gated by the chosen pivot. Objective newness and rarity can add value or settle at +0.00, but never reward repetition or a more common axis. Pivot commitment remains in the always-live subjective controls below. The fitted scorer replaces the hand-tuned one (inside <b>Manual</b> below) whenever a valid calibration for the current DB exists. Deterministic (same DB + seed &rarr; same result). Runs automatically in the background and may take several seconds.</p>
+      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 6px"># drafts to simulate: <input type="number" id="calNScripts" value="300" min="20" step="1" autocomplete="off" onchange="this.value=Math.max(20,parseInt(this.value,10)||300)" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Seed (0&ndash;4294967295, blank = auto from DB): <input type="number" id="calSeed" placeholder="auto" min="0" max="4294967295" step="1" autocomplete="off" style="width:120px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <button class="btn sec sm" id="calBtn" onclick="runNoHoldCalibration()">Calibrate from DB</button>
       <div id="calStatus" class="tiny" style="margin-top:7px"></div>
@@ -6266,7 +6269,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <div class="note" style="margin:6px 0 10px;border-color:var(--warn)"><b>&#9888; Proof of concept &mdash; primary positions are not yet reliable.</b> First-listed position is used as primary; for multi-position cards this is often wrong. Formation ranking below should be treated as inaccurate until real primary data is added.</div>
       <div id="formCalWrap" style="margin:6px 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
         <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective formation ranking</div>
-        <p class="tiny" style="margin:0 0 7px">Ranks formations by which positions hold the best eligible players: <b>icons, heroes, and normal cards matching the chosen pivot only</b>. Uses your objectively calibrated card weights, including separately fitted nation, club and league rarity effects; auto-fits a quick default if you haven&rsquo;t calibrated those weights yet. While calibrated, this replaces the manual weights below; <b>Clear</b> restores them.</p>
+        <p class="tiny" style="margin:0 0 7px">Ranks formations by which positions hold the best eligible players: <b>icons, heroes, and normal cards matching the chosen pivot only</b>. Uses your objectively calibrated card weights, including separate icon and hero effects plus separately fitted nation, club and league freshness/rarity effects (all six objective newness/rarity terms floored at +0.00); auto-fits a quick default if you haven&rsquo;t calibrated those weights yet. While calibrated, this replaces the manual weights below; <b>Clear</b> restores them.</p>
         <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Depth per position: <input type="number" id="formCalTopX" value="15" min="1" max="500" step="1" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
         <div class="row">
           <button class="btn sec sm" id="formCalBtn" onclick="runFormCalibration()">Calibrate formations</button>
@@ -6395,7 +6398,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     const verKey='pacwyn_app_version';
     const prev=localStorage.getItem(verKey);
     if(prev!==cur){
-      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1','pacwyn_pivot_kind_v1','pacwyn_pivot_key_v1','pacwyn_pivot_league_v1','pacwyn_nohold_cal_v3','pacwyn_nohold_cal_v4','pacwyn_nohold_chk_v1','pacwyn_formcal_v1','pacwyn_v18_frontier_v1'].forEach(k=>{ // v17.8.18: pivot keys added — a version bump should reset the helper pivot back to default (rank 1 / England Prem) too, same as every other saved setting; v18.10: no-hold calibration + checkbox added after an old La Liga-fitted vector survived the v18.9 pivot/ranking change; v18.0.6: formation calibration added so a new version returns formation ranking to manual/off; v18.5: persisted resume frontiers are version-scoped too
+      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1','pacwyn_pivot_kind_v1','pacwyn_pivot_key_v1','pacwyn_pivot_league_v1','pacwyn_nohold_cal_v3','pacwyn_nohold_cal_v4','pacwyn_nohold_cal_v5','pacwyn_nohold_cal_v6','pacwyn_nohold_chk_v1','pacwyn_formcal_v1','pacwyn_v18_frontier_v1'].forEach(k=>{ // v17.8.18: pivot keys added — a version bump should reset the helper pivot back to default (rank 1 / England Prem) too, same as every other saved setting; v18.10: no-hold calibration + checkbox added after an old La Liga-fitted vector survived the v18.9 pivot/ranking change; v18.0.6: formation calibration added so a new version returns formation ranking to manual/off; v18.5: persisted resume frontiers are version-scoped too
         try{localStorage.removeItem(k);}catch(e){}
         try{sessionStorage.removeItem(k);}catch(e){}
       });
@@ -6774,7 +6777,7 @@ let NAT_RANK={},LG_RANK={},NAT_COUNT={},CLB_COUNT={},LG_COUNT={},DB_M=1; // raw 
 let NAT_COUNT_NORMAL={},NAT_COUNT_HERO={},NAT_COUNT_ICON={},LG_COUNT_NORMAL={},LG_COUNT_HERO={};
 // v16.0.0: multi-league + pivot state. DB_MULTILEAGUE = the live DB actually contains a non-PL
 // NORMAL (set by rebuildRarity); until it does, every generalized branch below reproduces the old
-// all-PL behavior exactly. PIVOT_KIND/PIVOT_KEY = which league OR nation the helper's "prem" factor
+// all-PL behavior exactly. PIVOT_KIND/PIVOT_KEY = which league OR nation the helper's pivot controls
 // rewards at pick time; defaults to the PL league, settable from the pivot analyzer, persisted
 // per-browser.
 // v16.7.0: nation pivots generalized in alongside league pivots (previously "use as helper pivot"
@@ -12934,7 +12937,7 @@ function _pivotMismatchWarning(excludeSlotId){
 // a strong overall score can still come from a non-pivot league/nation card, and taking it commits
 // you to either eating the mismatch or abandoning the pivot later. Same _pivotMatches gate as
 // everywhere else; scoped to type==='normal' like _pivotMismatchWarning (heroes/icons have their
-// own separate non-pivot-preferred handling, see the w.prem site\u2019s comment).
+// own separate non-pivot-preferred handling through the live icon/hero pivot penalty and diversity terms).
 function _topEvalPivotWarning(ranked){
   if(!PIVOT_KEY||!ranked||!ranked.length)return'';
   const top=ranked[0].c;
@@ -13990,7 +13993,8 @@ function _ratingCurveFrac(rating,thr,hardBound,minFrac,maxFrac,isLow){
    fallback whenever calibration is off, absent, or stale. All hard feasibility overrides
    (urgent-position/last-pick, soleForce, out-of-formation) stay senior to any score — see
    rankAndVerdict. Nothing here touches the solver. */
-const _NOHOLD_CAL_KEY='pacwyn_nohold_cal_v4'; // v4 (v18.12): calibrated weights now include objective nation/club/league rarity terms; old v3 blobs lack those dimensions and must not be reused
+const _NOHOLD_CAL_KEY='pacwyn_nohold_cal_v6'; // v6 (v18.14): removes the obsolete fitted pivot-pool coefficient and constrains all objective newness + rarity coefficients to >=0; old v5 blobs can contain w.prem and negative newness
+const _CAL_NONNEG_DIMS=new Set(['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg']); // v18.14: objective freshness/rarity may help or settle at zero, but repetition/commonness is never rewarded
 let NOHOLD_CAL=null; // {hash, weights, trainMean, holdMean, nScripts, K, date}
 (function restoreCal(){try{const raw=localStorage.getItem(_NOHOLD_CAL_KEY);if(!raw)return;const s=JSON.parse(raw);if(s&&s.weights)NOHOLD_CAL=s;}catch(e){}})();
 
@@ -14011,7 +14015,10 @@ function _calRng(seed){return function(){seed|=0;seed=(seed+0x6D2B79F5)|0;let t=
 
 // The calibrated scorer: marginal value of `card` given the already-`committed` board. Most
 // board-state features ask "does this add something NEW?"; v18.12 also adds three continuous,
-// objective card-type rarity percentiles whose signed values are fitted by the same simulations.
+// objective card-type rarity percentiles whose non-negative values are fitted by the same simulations.
+// v18.14: pivot commitment is deliberately NOT fitted here: formation normals are already pivot-filtered,
+// while the live helper owns pivot strategy through pivotHeadStart, pivotRankPenalty/Steepness and
+// pivotIconHeroPenalty. The former w.prem term duplicated those controls and was weakly identified.
 // holdCtx (optional, 3rd call-time arg, NOT touched by the calibration engine — see below) lets a
 // LIVE caller soften the flat w.clash "brings nothing new" penalty when the only reason it fired is
 // that the blocking card(s) are sitting in a multi-card HOLD rather than actually committed. The
@@ -14044,8 +14051,8 @@ function _calMakeScorer(w,rarityCtx){
     // v13.1: scoreXI grants a one-time +1 distinct-club credit the FIRST time an icon appears, and
     // again the first time a hero appears (clubs=premClubs+(hasIcon?1:0)+(hasHero?1:0)) -- separate
     // from newLg (which already covers the "Icons" league bucket / a hero's own league via leagueOf)
-    // and from the flat iconHero bias below, which previously had to average over 1st-vs-Nth icon/
-    // hero and couldn't tell them apart. These fire once per board, exactly like scoreXI's flags.
+    // and from the separate icon/hero intrinsic biases below. Those type terms still apply to every card
+    // of their own type, while these firstIcon/firstHero credits fire only once per board. These fire once per board, exactly like scoreXI's flags.
     if(card.type==='icon'&&!hasIcon)v+=w.firstIcon;
     if(card.type==='hero'&&!hasHero)v+=w.firstHero;
     const bringsSomething=newNat||(card.type==='normal'?(newClub||(DB_MULTILEAGUE&&newLg)):newLg)||(card.type==='icon'&&!hasIcon)||(card.type==='hero'&&!hasHero); // v16.0.0: a non-PL normal can also bring a new league; gated so all-PL DBs behave exactly as before
@@ -14078,7 +14085,6 @@ function _calMakeScorer(w,rarityCtx){
       }
       v+=clashPen;
     }
-    if((card.type==='normal'||card.type==='hero')&&_pivotMatches(card))v+=w.prem; // v16.0.0: flat bonus for matching the current PIVOT (defaults to PL league — identical on legacy DBs); v16.7.0: league OR nation. Heroes/icons keep their existing NON-pivot-preferred (diversity) handling elsewhere — unchanged.
     // v17.4.0 PIVOT HEAD START / RANK PENALTY — REPLACES v17.2.0/v17.3.0's stateful "emergent
     // reinforcement" (committed-depth tracking per league/nation). See FOR FUTURE MAINTAINERS section
     // U's v17.4.0 note for the full rationale; short version: the analyzer/helper has no way to tell
@@ -14088,8 +14094,8 @@ function _calMakeScorer(w,rarityCtx){
     // benchPenalty, always live, never grayed by calibration):
     //   • A NORMAL matching the CHOSEN pivot gets a flat SHAPE.pivotHeadStart bonus. No board-state,
     //     no depth, no ramping — every pivot-matching normal gets exactly the same amount, pick 1 or
-    //     pick 20 (this stacks with the existing fitted w.prem above, which section U showed can't be
-    //     trusted alone to encode true dominance).
+    //     pick 20. The old fitted pivot-pool coefficient was removed in v18.14 because it duplicated
+    //     these controls and formation normals are already restricted to the chosen pivot.
     //   • A NORMAL that does NOT match the chosen pivot is penalised by SHAPE.pivotRankPenalty times
     //     the BETTER (lower/higher-ranked) of its OWN league's and OWN nation's rank in the pivot
     //     analyzer's ranked list (PIVOT_RANK, refreshed at pivot-change / calibration-start — see
@@ -14136,7 +14142,8 @@ function _calMakeScorer(w,rarityCtx){
     if((card.type==='icon'||card.type==='hero')&&_pivotMatches(card)){
       v-=SHAPE.pivotIconHeroPenalty||0;
     }
-    if(card.type==='icon'||card.type==='hero')v+=w.iconHero;
+    if(card.type==='icon')v+=(w.iconBias||0);
+    else if(card.type==='hero')v+=(w.heroBias||0);
     return v;
   };
 }
@@ -14188,7 +14195,7 @@ function _calFeasible(db,forms,K){
 // that's the staleness key compared against playerDB elsewhere -- while `seed` records whichever
 // seed actually drove the rng, so a manual seed never gets mistaken for a DB change (or vice versa).
 function _calibrateNoHold(db,forms,opts){
-  opts=opts||{};const K=opts.K||5,nScripts=opts.nScripts||150,nVec=opts.nVec||600;
+  opts=opts||{};const K=opts.K||5,nScripts=Math.max(20,Math.floor(Number(opts.nScripts)||300)),nVec=opts.nVec||600;
   if(typeof _refreshPivotEdge==='function')_refreshPivotEdge(); // v17.1.0: recompute the DB-level dominance gap once, before fitting
   const feasErr=_calFeasible(db,forms,K);if(feasErr)return{error:feasErr};
   const hash=_calDbHash(db);
@@ -14202,12 +14209,12 @@ function _calibrateNoHold(db,forms,opts){
   const R=(a,b)=>a+rng()*(b-a);
   let best=null,bestV=-Infinity;
   for(let v=0;v<nVec;v++){
-    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),rarityNat:R(-4,4),rarityClub:R(-4,4),rarityLg:R(-4,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)}; // v17.4.0: pivotDepth removed — the depth-based reinforcement it fed is gone (see section U's v17.4.0 note); pivot head-start/rank-penalty are now stateless, hand-set SHAPE weights, not fitted
+    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),rarityNat:R(0,4),rarityClub:R(0,4),rarityLg:R(0,4),clash:-R(0,8),iconBias:R(-3,3),heroBias:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)}; // v18.14: all objective freshness/rarity starts non-negative; fitted pivot-pool term removed; icon and hero effects remain separate.
     const m=_calMean(train,_calMakeScorer(w,rarityCtx));if(m>bestV){bestV=m;best=w;}
   }
-  const dims=['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg','prem','clash','iconHero','firstIcon','firstHero'];
+  const dims=['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg','clash','iconBias','heroBias','firstIcon','firstHero'];
   let improved=true,cur=bestV;
-  while(improved){improved=false;for(const d of dims){for(const step of[1,-1,0.5,-0.5,0.2,-0.2]){const w2={...best,[d]:best[d]+step};const m=_calMean(train,_calMakeScorer(w2,rarityCtx));if(m>cur+1e-9){cur=m;best=w2;improved=true;}}}}
+  while(improved){improved=false;for(const d of dims){for(const step of[1,-1,0.5,-0.5,0.2,-0.2]){const raw=best[d]+step;const next=_CAL_NONNEG_DIMS.has(d)?Math.max(0,raw):raw;if(next===best[d])continue;const w2={...best,[d]:next};const m=_calMean(train,_calMakeScorer(w2,rarityCtx));if(m>cur+1e-9){cur=m;best=w2;improved=true;}}}}
   return{hash,seed,weights:best,trainMean:cur,holdMean:_calMean(hold,_calMakeScorer(best,rarityCtx)),nScripts:scripts.length,K,date:new Date().toISOString().slice(0,10)};
 }
 
@@ -14224,7 +14231,7 @@ function _calActive(){return NOHOLD_CAL&&NOHOLD_CAL.weights&&NOHOLD_CAL.hash===_
 // the tab, at the cost of a little wall-clock overhead from the yields themselves.
 function _calYield(){return new Promise(res=>setTimeout(res,0));}
 async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
-  opts=opts||{};const K=opts.K||5,nScripts=opts.nScripts||150,nVec=opts.nVec||600;
+  opts=opts||{};const K=opts.K||5,nScripts=Math.max(20,Math.floor(Number(opts.nScripts)||300)),nVec=opts.nVec||600;
   if(typeof _refreshPivotEdge==='function')_refreshPivotEdge(); // v17.1.0: mirrors the sync path exactly (section H discipline)
   const feasErr=_calFeasible(db,forms,K);if(feasErr)return{error:feasErr};
   const hash=_calDbHash(db);
@@ -14239,7 +14246,7 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
   let best=null,bestV=-Infinity;
   let tYield=performance.now();
   for(let v=0;v<nVec;v++){
-    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),rarityNat:R(-4,4),rarityClub:R(-4,4),rarityLg:R(-4,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)}; // v17.4.0: mirrors the sync fitter exactly (section H discipline) — pivotDepth removed, same as sync
+    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),rarityNat:R(0,4),rarityClub:R(0,4),rarityLg:R(0,4),clash:-R(0,8),iconBias:R(-3,3),heroBias:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)}; // v18.14: mirrors the sync fitter exactly — non-negative objective freshness/rarity, no fitted pivot-pool term, separate icon/hero effects
     const m=_calMean(train,_calMakeScorer(w,rarityCtx));if(m>bestV){bestV=m;best=w;}
     if(performance.now()-tYield>40){ // ~once per animation frame's worth of work, not every iteration -- keeps overhead negligible
       if(onProgress)onProgress('Searching weight space\u2026 '+Math.round(((v+1)/nVec)*100)+'%');
@@ -14247,14 +14254,15 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
       tYield=performance.now();
     }
   }
-  const dims=['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg','prem','clash','iconHero','firstIcon','firstHero'];
+  const dims=['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg','clash','iconBias','heroBias','firstIcon','firstHero'];
   let improved=true,cur=bestV;
   tYield=performance.now();
   while(improved){
     improved=false;
     for(const d of dims){
       for(const step of[1,-1,0.5,-0.5,0.2,-0.2]){
-        const w2={...best,[d]:best[d]+step};const m=_calMean(train,_calMakeScorer(w2,rarityCtx));
+        const raw=best[d]+step;const next=_CAL_NONNEG_DIMS.has(d)?Math.max(0,raw):raw;if(next===best[d])continue;
+        const w2={...best,[d]:next};const m=_calMean(train,_calMakeScorer(w2,rarityCtx));
         if(m>cur+1e-9){cur=m;best=w2;improved=true;}
         if(performance.now()-tYield>40){
           if(onProgress)onProgress('Refining weights\u2026');
@@ -14293,7 +14301,7 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
 //                 draft is to hand you the seven actual bucket normals the build assumes. Heroes
 //                 and icons are selected separately and must not inflate this number.
 // NOT a solver change: purely advisory, and the "use as
-// helper pivot" action only retargets which league the pick-time w.prem factor rewards.
+// helper pivot" action retargets the live pivot head-start/rank/rarity context.
 function analyzePivots(){
   const src=playerDB.length?playerDB:DEFAULT_DB;
   const W=c=>(typeof c.copies==='number'&&c.copies>0)?c.copies:1;
@@ -14588,8 +14596,8 @@ function _fcalCardValue(c,w,rarityCtx){
   if(!(typ==='normal'&&PIVOT_KIND==='nation'))v+=w.newNat*rarityNat(c.nation);
   if(typ==='hero'||(typ==='normal'&&PIVOT_KIND==='nation'&&DB_MULTILEAGUE))v+=w.newLg*rarityLg(lg);
   if(typ==='normal')v+=w.newClub*clubRare(c.club);
-  if((c.type==='normal'||c.type==='hero')&&_pivotMatches(c))v+=w.prem; // v16.0.0: pivot generalization (see above); v16.7.0: pivot can now be a league OR a nation
-  if(c.type==='icon'||c.type==='hero')v+=w.iconHero;
+  if(c.type==='icon')v+=(w.iconBias||0);
+  else if(c.type==='hero')v+=(w.heroBias||0);
   if(c.type==='icon')v+=w.firstIcon;
   if(c.type==='hero')v+=w.firstHero;
   const rr=_calRarityAxes(c,rarityCtx);
@@ -14671,11 +14679,12 @@ function runFormCalibration(){
   // yet, auto-fit them with the same fast default "Calibrate from DB" uses (150 simulated drafts,
   // auto seed) — quick, and good enough to rank formations by. Anyone who wants a hand-tuned or
   // larger-sample fit can still run "Calibrate from DB" themselves first; this just removes the
-  // requirement to do so before formations can be ranked at all.
+  // requirement to do so before formations can be ranked at all. v18.14 raises this quick default
+  // from 150 to 300 now that the obsolete fitted pivot-pool dimension has been removed.
   if(!_calActive()||_pivotCalStale()){
-    if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Card weights aren\u2019t calibrated yet \u2014 fitting them first (quick, ~150 drafts)\u2026</span>';
+    if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Card weights aren\u2019t calibrated yet \u2014 fitting them first (quick, ~300 drafts)\u2026</span>';
     if(btn)btn.disabled=true;
-    const wres=_calibrateNoHold(playerDB,FORMS,{nScripts:150,seed:null});
+    const wres=_calibrateNoHold(playerDB,FORMS,{nScripts:300,seed:null});
     if(wres.error){
       if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+wres.error+'</span>';
       if(btn)btn.disabled=false;
@@ -14693,7 +14702,7 @@ function runFormCalibration(){
   if(btn)btn.disabled=true;
   const t0=performance.now();
   const r=_fcalibrateAnalytic(pool,FORMS,NOHOLD_CAL.weights,topX);
-  const res={values:r.values,posVal:r.posVal,posTop:r.posTop,topX,source:'no-hold cal \u00b7 pivot '+(PIVOT_KIND==='nation'?'nation ':'')+PIVOT_KEY+' \u00b7 fitted rarity N/C/L '+_fmtW(NOHOLD_CAL.weights.rarityNat||0)+'/'+_fmtW(NOHOLD_CAL.weights.rarityClub||0)+'/'+_fmtW(NOHOLD_CAL.weights.rarityLg||0)+' \u00b7 DB '+(NOHOLD_CAL.hash>>>0).toString(16).slice(0,8),date:new Date().toISOString().slice(0,10),dbHash:_calDbHash(playerDB),pivotKind:PIVOT_KIND,pivotKey:PIVOT_KEY,calSig:_fcalWeightSig()};
+  const res={values:r.values,posVal:r.posVal,posTop:r.posTop,topX,source:'no-hold cal \u00b7 pivot '+(PIVOT_KIND==='nation'?'nation ':'')+PIVOT_KEY+' \u00b7 type I/H '+_fmtW(NOHOLD_CAL.weights.iconBias||0)+'/'+_fmtW(NOHOLD_CAL.weights.heroBias||0)+' \u00b7 fitted rarity N/C/L '+_fmtW(NOHOLD_CAL.weights.rarityNat||0)+'/'+_fmtW(NOHOLD_CAL.weights.rarityClub||0)+'/'+_fmtW(NOHOLD_CAL.weights.rarityLg||0)+' \u00b7 DB '+(NOHOLD_CAL.hash>>>0).toString(16).slice(0,8),date:new Date().toISOString().slice(0,10),dbHash:_calDbHash(playerDB),pivotKind:PIVOT_KIND,pivotKey:PIVOT_KEY,calSig:_fcalWeightSig()};
   FORM_CAL=res;
   try{localStorage.setItem(_FORMCAL_KEY,JSON.stringify(res));}catch(e){}
   const ms=Math.max(1,Math.round(performance.now()-t0));
@@ -14787,7 +14796,7 @@ function _renderCalResult(){
   const active=!stale; // v16.15.0: calibration owns ranking whenever valid, independent of the No-hold checkbox
   _calGrayManual(active);
   // interpretable "type value beyond a normal of equal rating" reading, plus per-factor lines
-  const iconHeroBias=w.iconHero, premGlue=w.prem;
+  const iconBias=w.iconBias||0, heroBias=w.heroBias||0;
   let html='';
   if(dbStale){
     html+='<div class="note" style="border-color:var(--warn);color:var(--warn);margin:0 0 6px;padding:6px 8px;font-size:11px">\u26a0 DB changed since this calibration &mdash; the manual weights are being used until you recalibrate.</div>';
@@ -14807,19 +14816,19 @@ function _renderCalResult(){
     +'&bull; nation rarity (common&rarr;rare): <b>'+_fmtW(w.rarityNat||0)+'</b><br>'
     +'&bull; club rarity (normals): <b>'+_fmtW(w.rarityClub||0)+'</b><br>'
     +'&bull; league rarity (heroes / nation-pivot normals): <b>'+_fmtW(w.rarityLg||0)+'</b><br>'
-    +'&bull; extends pivot pool: <b>'+_fmtW(w.prem)+'</b><br>'
     +'&bull; brings nothing new (clash): <b>'+_fmtW(w.clash)+'</b><br>'
-    +'&bull; is an icon/hero (beyond its rating): <b>'+_fmtW(w.iconHero)+'</b><br>'
+    +'&bull; is an icon (beyond its rating): <b>'+_fmtW(iconBias)+'</b><br>'
+    +'&bull; is a hero (beyond its rating): <b>'+_fmtW(heroBias)+'</b><br>'
     +'&bull; 1st icon on the board (club credit): <b>'+_fmtW(w.firstIcon)+'</b><br>'
     +'&bull; 1st hero on the board (club credit): <b>'+_fmtW(w.firstHero)+'</b>'
     +'</div>'
-    +'<div class="tiny" style="margin-top:5px;color:var(--mut)">Rarity inputs are objective copies-weighted percentiles within each card type; formation calibration measures eligible normals inside the chosen pivot pool. Nation-pivot normals get no nation-rarity term; league-pivot normals get no league-rarity term. Positive values favour rarer axes, negative values favour better-supplied ones.</div>';
-  // Translate to the icon/hero/normal split the user knows (12/10/8 today), as an "at equal rating"
-  // comparison: normal gets prem glue; icon/hero get the intrinsic bias (no prem).
+    +'<div class="tiny" style="margin-top:5px;color:var(--mut)">Newness and rarity are objective chemistry-value inputs. All six nation/club/league coefficients are constrained to +0.00 or above: if an effect is not reliable at the chosen sample depth, it settles at zero instead of rewarding repetition or commonness. Formation calibration measures eligible normals inside the chosen pivot pool; pivot commitment itself is handled only by the always-live subjective controls.</div>';
+  // Translate to the icon/hero/normal split the user knows (12/10/8 today), as an at-equal-rating
+  // intrinsic type comparison. Normal is the zero baseline; pivot commitment is deliberately separate.
   html+='<div class="tiny" style="margin-top:7px;padding-top:6px;border-top:1px solid var(--line)">'
-    +'<b>In your current split terms:</b> at equal rating, the data values '
-    +'<b>icon '+_fmtW(iconHeroBias)+'</b> / <b>hero '+_fmtW(iconHeroBias)+'</b> / <b>normal '+_fmtW(premGlue)+'</b> beyond rating '
-    +'&mdash; i.e. type matters far less than <b>rating + not clashing</b>. Diversity (nation/club/league) is the real driver.'
+    +'<b>Intrinsic type value at equal rating:</b> '
+    +'<b>icon '+_fmtW(iconBias)+'</b> / <b>hero '+_fmtW(heroBias)+'</b> / <b>normal +0.00</b> beyond rating. '
+    +'Pivot commitment is added separately by the live pivot controls; diversity (nation/club/league) remains the objective driver.'
     +'</div>';
   html+='<div class="tiny" style="margin-top:6px;color:var(--mut)">Fit: '+NOHOLD_CAL.nScripts+' scenarios, K='+NOHOLD_CAL.K+' &middot; DB '+(NOHOLD_CAL.hash>>>0).toString(16).slice(0,8)+' &middot; seed '+(NOHOLD_CAL.seed>>>0)+' &middot; '+NOHOLD_CAL.date
     +'<br>One of several near-optimal balances (the objective is flat near the top) &mdash; treat as guidance, not exact truth.</div>';
@@ -14860,13 +14869,13 @@ function _calFinish(res,st,btn,t0){
   _solveCache=null;
   _renderCalResult();
   if(typeof _formCalContextChanged==='function')_formCalContextChanged();
-  _recLog&&_recLog('no-hold weights calibrated \u2014 DB '+(res.hash>>>0).toString(16).slice(0,8)+' \u00b7 newNat '+res.weights.newNat.toFixed(1)+' newClub '+res.weights.newClub.toFixed(1)+' newLg '+res.weights.newLg.toFixed(1)+' rareNat '+(res.weights.rarityNat||0).toFixed(1)+' rareClub '+(res.weights.rarityClub||0).toFixed(1)+' rareLg '+(res.weights.rarityLg||0).toFixed(1)+' prem '+res.weights.prem.toFixed(1)+' clash '+res.weights.clash.toFixed(1)+' iconHero '+res.weights.iconHero.toFixed(1)+' 1stIcon '+res.weights.firstIcon.toFixed(1)+' 1stHero '+res.weights.firstHero.toFixed(1));
+  _recLog&&_recLog('no-hold weights calibrated \u2014 DB '+(res.hash>>>0).toString(16).slice(0,8)+' \u00b7 newNat '+res.weights.newNat.toFixed(1)+' newClub '+res.weights.newClub.toFixed(1)+' newLg '+res.weights.newLg.toFixed(1)+' rareNat '+(res.weights.rarityNat||0).toFixed(1)+' rareClub '+(res.weights.rarityClub||0).toFixed(1)+' rareLg '+(res.weights.rarityLg||0).toFixed(1)+' clash '+res.weights.clash.toFixed(1)+' icon '+(res.weights.iconBias||0).toFixed(1)+' hero '+(res.weights.heroBias||0).toFixed(1)+' 1stIcon '+res.weights.firstIcon.toFixed(1)+' 1stHero '+res.weights.firstHero.toFixed(1));
   if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
   if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
 }
 // v16.15.0: silent background auto-calibration. Runs once on load (deferred so first paint isn't
 // blocked) whenever no valid calibration exists for the current DB (hash mismatch or never run).
-// Uses the chunked async engine so the tab stays responsive; ~1.4s for the default 150 drafts, so
+// Uses the chunked async engine so the tab stays responsive; v18.14 defaults to 300 drafts, so
 // it's normally finished before the Helper tab is even opened. Manual "Calibrate from DB" with a
 // custom count/seed still works exactly as before and takes precedence (it just overwrites).
 function _autoCalibrateOnLoad(){
@@ -14877,17 +14886,19 @@ function _autoCalibrateOnLoad(){
     if(btn)btn.disabled=true;
     if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Auto-calibrating from your DB in the background\u2026</span>';
     const t0=performance.now();
-    _calibrateNoHoldAsync(playerDB,FORMS,{nScripts:150,seed:null},null)
+    _calibrateNoHoldAsync(playerDB,FORMS,{nScripts:300,seed:null},null)
       .then(function(res){_calFinish(res,st,btn,t0);
-        if(st&&!res.error)st.innerHTML='<span style="color:var(--good)">\u2714 Auto-calibrated on load ('+Math.round(performance.now()-t0)+' ms \u00b7 150 drafts \u00b7 auto seed). Recalibrate manually any time.</span>';})
+        if(st&&!res.error)st.innerHTML='<span style="color:var(--good)">\u2714 Auto-calibrated on load ('+Math.round(performance.now()-t0)+' ms \u00b7 300 drafts \u00b7 auto seed). Recalibrate manually any time.</span>';})
       .catch(function(e){if(st)st.innerHTML='';if(btn)btn.disabled=false;});
   }catch(e){}
 }
 function runNoHoldCalibration(){
   const st=$('#calStatus'), btn=$('#calBtn');
   const nEl=$('#calNScripts');
-  let nScripts=nEl?parseInt(nEl.value,10):150;
-  if(!nScripts||nScripts<1||isNaN(nScripts))nScripts=150;
+  let nScripts=nEl?parseInt(nEl.value,10):300;
+  if(!nScripts||isNaN(nScripts))nScripts=300;
+  nScripts=Math.max(20,nScripts); // v18.14.1: fewer than 20 scenarios cannot produce a valid train/holdout calibration
+  if(nEl)nEl.value=nScripts; // visibly show the clamped value actually used
   const big=nScripts>1000;
   if(big&&!confirm('Simulating over 1000 drafts could take minutes, and provide negligible results. Are you sure you want to search this many drafts? This may take minutes.'))return;
   const seedEl=$('#calSeed');
