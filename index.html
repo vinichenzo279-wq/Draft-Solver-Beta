@@ -129,7 +129,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v18.8-BETA</title>
+<title>Draft Solver v18.10-BETA</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -174,6 +174,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--cyan-dim)}
 .btn.sec{background:var(--panel2);color:var(--cyan);border:1px solid var(--cyan-dim)}
 .btn.gho{background:none;color:var(--mut);border:1px solid var(--line)}
 .btn.sm{padding:8px;font-size:12px}
+.dbactions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:6px}
+.dbactions .btn{margin:0;display:flex;align-items:center;justify-content:center}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .chip{padding:7px 11px;border-radius:20px;border:1px solid var(--line);background:var(--panel2);
   color:var(--mut);font-size:13px;font-weight:600}
@@ -5903,7 +5905,11 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <!-- v18.6-BETA -- Resume hardening: replayed cap-trip frontiers remain armed until the next completed million, snapshots report the checkpoint's own exact backed count, and the intentional CAP+2 counter invariant is documented for future maintainers. -->
 <!-- v18.7-BETA -- Resume hardening: a resumed worker now publishes its verified, re-armed frontier in one immediate snapshot right after replay (before any new node), so a Stop at any instant of a resumed run re-publishes that frontier instead of dropping the partition; periodic snapshot cadence and all node counters are untouched. -->
 <!-- v18.8-BETA -- Frontier + result monotonicity: stopping a resumed run at ANY instant now falls back per-partition to the exact consumed frontier (refused restarts keep their own smaller state to avoid a fail-closed loop), the disk copy inherits the same fallback, snapshots carry the refusal and resumed markers, and a capped/stopped rung that reports a lower best than the XI already on screen keeps the previously found XI (display layer only; solver state, counters, and byte-identity untouched). -->
-<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v18.8-BETA</span></h1>
+<!-- v18.8.1-BETA -- Validation + minor UI patch: CAP+2/checkpoint counters, the chained cap-trip ladder, immediate four-worker Stop, reload restoration, worker-layout discard, size-gate fallback, and digest/path tamper refusal all matched their fresh-search fingerprints; manager search now accepts partial name + partial rating ("lip 9" finds Lippi 98); league aliases remain visible through partial "league" suffixes and accept "portugese"; player/manager DB actions share one equal grid; incidental UI examples were removed and helper copy now says holding everything. -->
+<!-- v18.8.2-BETA -- League search now understands country/adjective + women/women's, including partial input (for example, English/England/Swedish wom-), and narrows the result to that country's women's league. -->
+<!-- v18.9-BETA -- Pivot Analyzer now ranks by real buildable XI first, normal-card supply second, and ceiling only as a final tiebreak; supply now counts copies-weighted normals only, so heroes/icons cannot make a thin league look reliable. -->
+<!-- v18.10-BETA -- Fix: version changes now clear the persisted no-hold calibration and checkbox along with the pivot, so startup selects the current rank-1 pivot and auto-calibrates for it instead of retaining a stale vector fitted to the previous pivot. -->
+<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v18.10-BETA</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -5982,7 +5988,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <button data-t="icon">Icon</button>
     </div>
     <label>Name <span style="color:var(--mut)">&mdash; type a name to search; add a rating to narrow it, e.g. &ldquo;Van Dijk 90&rdquo;. Or just type your own label.</span></label>
-    <div class="combo"><input type="text" id="f-label" placeholder="e.g. Mbeumo, or &ldquo;Van Dijk 90&rdquo;" autocomplete="off"><div class="combolist" id="f-label-list"></div></div>
+    <div class="combo"><input type="text" id="f-label" placeholder="Player name or custom label" autocomplete="off"><div class="combolist" id="f-label-list"></div></div>
     <div class="row">
       <div style="flex:.5"><label>Rating</label><input type="number" id="f-rating" inputmode="numeric" placeholder="85"></div>
       <div><label>Nation</label><div class="combo"><input type="text" id="f-nation" placeholder="type to search&hellip;" autocomplete="off"><div class="combolist" id="f-nation-list"></div></div></div>
@@ -6150,7 +6156,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="panel" id="mgrPanel" style="display:none">
     <h2>Manager</h2>
     <div class="tiny">Search a manager by name &mdash; its nation + league are what score (+2 when both are fresh vs your XI). The solver already breaks XI ties to keep the most managers usable. <span style="color:var(--mut)">Manage the manager database (import / export / reset / add) in the DB tab.</span></div>
-    <div class="combo" style="margin-top:8px"><input type="text" id="m-name" placeholder="Search manager by name&hellip;" autocomplete="off"><div class="combolist" id="m-name-list"></div></div>
+    <div class="combo" style="margin-top:8px"><input type="text" id="m-name" placeholder="Search manager by name or name + rating&hellip;" autocomplete="off"><div class="combolist" id="m-name-list"></div></div>
     <details class="hlp" style="margin-top:8px"><summary>Not in the list? Add manually</summary>
       <p>The DB isn't exhaustive &mdash; type any nation + league (Icons included) and add it. Works exactly the same in the solver. Tap any manager below to edit it here too.</p>
       <div class="row">
@@ -6228,7 +6234,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="panel">
     <details class="hlp"><summary>Pure card evaluator (no board context)</summary>
     <p class="tiny" style="margin:6px 0">Scores cards in isolation using only the weights above &mdash; no board, no clash penalties, no formation context. Useful for comparing raw card value before a draft or away from the board.</p>
-    <div class="combo" style="margin-bottom:7px"><input type="text" id="h-label" placeholder="Type a name, or 'name rating' e.g. Van Dijk 90" autocomplete="off"><div class="combolist" id="h-label-list"></div></div>
+    <div class="combo" style="margin-bottom:7px"><input type="text" id="h-label" placeholder="Type a player name or name + rating" autocomplete="off"><div class="combolist" id="h-label-list"></div></div>
     <div class="seg" id="hTypeSeg">
       <button class="on" data-t="normal">Normal</button>
       <button data-t="hero">Hero</button>
@@ -6276,7 +6282,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="panel">
     <details class="hlp"><summary>Pivot analyzer</summary>
       <p class="tiny" style="margin:6px 0 5px"><b>What is a pivot?</b> Your pivot is the single league or nation you plan to build around. Chemistry in this game rewards having most of your XI in one league or nation, so committing to a pivot early lets the helper steer picks toward it consistently. Set yours using the league/nation buttons above the helper.</p>
-      <p class="tiny" style="margin:0 0 7px">Ranks every viable <b>league</b> and <b>nation pivot</b> by best-XI <b>ceiling</b> and copies-weighted <b>supply</b>. Advisory only &mdash; never constrains the solver. Runs automatically at startup so the results and rank penalty are ready from your first pick; re-run any time your DB changes. Top 5 shown; remainder collapsed below. </p>
+      <p class="tiny" style="margin:0 0 7px">Ranks every viable <b>league</b> and <b>nation pivot</b> by a real <b>buildable</b> XI first, with copies-weighted <b>normal-card supply</b> breaking ties; ceiling is shown as context. Advisory only &mdash; never constrains the solver. Runs automatically at startup so the results and rank penalty are ready from your first pick; re-run any time your DB changes. Top 5 shown; remainder collapsed below. </p>
       <button class="btn sec sm" onclick="runPivotAnalysis()">Analyze pivots from DB</button>
       <div id="pivotResult" style="margin-top:8px"></div>
     </details>
@@ -6289,8 +6295,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <div class="wrap">
   <div class="panel">
     <h2>Player database</h2>
-    <div class="row" style="margin-bottom:6px;flex-wrap:wrap">
-      <label class="btn sec sm" style="text-align:center;cursor:pointer;margin:0">Import<input type="file" id="dbFile" accept=".json,.txt,application/json,text/plain" style="display:none"></label>
+    <div class="dbactions">
+      <label class="btn sec sm" style="text-align:center;cursor:pointer">Import<input type="file" id="dbFile" accept=".json,.txt,application/json,text/plain" style="display:none"></label>
       <button class="btn gho sm" onclick="exportDB()">Export</button>
       <button class="btn gho sm" onclick="resetDB()">Reset to default</button>
       <button class="btn gho sm" onclick="clearDB()">Clear</button>
@@ -6300,8 +6306,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 
   <div class="panel">
     <h2>Manager database</h2>
-    <div class="row" style="margin-bottom:6px;flex-wrap:wrap">
-      <label class="btn sec sm" style="text-align:center;cursor:pointer;margin:0">Import managers<input type="file" id="mgrFile" accept=".json,application/json" style="display:none"></label>
+    <div class="dbactions">
+      <label class="btn sec sm" style="text-align:center;cursor:pointer">Import<input type="file" id="mgrFile" accept=".json,application/json" style="display:none"></label>
       <button class="btn gho sm" onclick="exportManagers()">Export</button>
       <button class="btn gho sm" onclick="resetManagers()">Reset to default</button>
       <button class="btn gho sm" onclick="clearManagers()">Clear</button>
@@ -6319,7 +6325,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="panel">
     <h2>Remove / edit a manager</h2>
     <div class="tiny" style="margin-bottom:8px">Search the manager database &mdash; tap a result to edit its fields inline, or tap &times; to delete it.</div>
-    <input type="text" id="dbmr-search" placeholder="Type a name to search&hellip;" autocomplete="off" oninput="renderMgrDBSearch()">
+    <input type="text" id="dbmr-search" placeholder="Type a name or rating to search&hellip;" autocomplete="off" oninput="renderMgrDBSearch()">
     <div id="dbmr-results" style="margin-top:8px"></div>
   </div>
 
@@ -6353,8 +6359,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="panel">
     <h2>Add a manager to the database</h2>
     <div class="tiny" style="margin-bottom:8px">Adds one manager to the database so it shows up in the manager search. It persists in this browser automatically &mdash; export if you want a backup or want to carry it to another browser/device.</div>
-    <label>Name <span style="color:var(--mut)">&mdash; include the rating, e.g. Polzin 75</span></label>
-    <input type="text" id="dbm-label" placeholder="e.g. Polzin 75" autocomplete="off">
+    <label>Name <span style="color:var(--mut)">&mdash; include the rating</span></label>
+    <input type="text" id="dbm-label" placeholder="Manager name and rating" autocomplete="off">
     <div class="row">
       <div style="flex:1.1"><label>Nation</label><div class="combo"><input type="text" id="dbm-nation" placeholder="type to search&hellip;" autocomplete="off"><div class="combolist" id="dbm-nation-list"></div></div></div>
       <div style="flex:1.5"><label>League</label><div class="combo"><input type="text" id="dbm-league" placeholder="type to search&hellip;" autocomplete="off"><div class="combolist" id="dbm-league-list"></div></div></div>
@@ -6387,7 +6393,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     const verKey='pacwyn_app_version';
     const prev=localStorage.getItem(verKey);
     if(prev!==cur){
-      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1','pacwyn_pivot_kind_v1','pacwyn_pivot_key_v1','pacwyn_pivot_league_v1','pacwyn_formcal_v1','pacwyn_v18_frontier_v1'].forEach(k=>{ // v17.8.18: pivot keys added — a version bump should reset the helper pivot back to default (rank 1 / England Prem) too, same as every other saved setting; v18.0.6: formation calibration added so a new version returns formation ranking to manual/off; v18.5: persisted resume frontiers are version-scoped too
+      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1','pacwyn_pivot_kind_v1','pacwyn_pivot_key_v1','pacwyn_pivot_league_v1','pacwyn_nohold_cal_v3','pacwyn_nohold_chk_v1','pacwyn_formcal_v1','pacwyn_v18_frontier_v1'].forEach(k=>{ // v17.8.18: pivot keys added — a version bump should reset the helper pivot back to default (rank 1 / England Prem) too, same as every other saved setting; v18.10: no-hold calibration + checkbox added after an old La Liga-fitted vector survived the v18.9 pivot/ranking change; v18.0.6: formation calibration added so a new version returns formation ranking to manual/off; v18.5: persisted resume frontiers are version-scoped too
         try{localStorage.removeItem(k);}catch(e){}
         try{sessionStorage.removeItem(k);}catch(e){}
       });
@@ -6899,7 +6905,7 @@ let PIVOT_RANK=new Map(), PIVOT_RANK_FALLBACK=1;
 function _refreshPivotEdge(precomputedList){
   PIVOT_RANK=new Map();PIVOT_RANK_FALLBACK=1;
   try{
-    const list=precomputedList||analyzePivots(); // v17.5.0: accepts an already-computed list (runPivotAnalysis() passes its own `res` so a single click/startup pass only calls analyzePivots() once, not twice) -- already sorted best-first (ceiling, then buildable, then reliability) -- see analyzePivots()'s own out.sort()
+    const list=precomputedList||analyzePivots(); // v17.5.0: accepts an already-computed list (runPivotAnalysis() passes its own `res` so a single click/startup pass only calls analyzePivots() once, not twice) -- already sorted best-first (buildable, then normal-card supply, then ceiling) -- see analyzePivots()'s own out.sort()
     list.forEach((r,i)=>PIVOT_RANK.set(r.kind+'|'+r.key,i+1)); // 1-indexed: rank 1 = top of the analyzer's own list
     PIVOT_RANK_FALLBACK=list.length+1; // one worse than the worst LISTED candidate, for a league/nation too thin to even appear (< 7-card viability floor)
     const cur=list.find(r=>r.kind===PIVOT_KIND&&r.key===PIVOT_KEY);
@@ -7027,7 +7033,32 @@ function makeCombo(id,opts,alias){
     // nation aliases, including keys containing spaces or accents.
     if(f&&alias){
       const add=v=>{for(const x of (Array.isArray(v)?v:[v]))if(opts.includes(x)&&!m.includes(x))m.push(x);};
-      for(const [k,v] of Object.entries(alias)){const nk=norm(k);if(nk===f||nk.includes(f))add(v);}
+      // Keep a country/adjective alias alive while the user continues with a generic word such as
+      // "league" (including a partial tail: "greek lea-"). Without this, "greek" matched but
+      // vanished as soon as more letters were typed because the query became longer than the alias.
+      const aliasTailMode=tail=>{
+        if(!tail)return '';
+        if('league'.startsWith(tail)||'leagues'.startsWith(tail))return 'all';
+        // Country/adjective + women/women's (including partial typing such as "english wom-")
+        // should narrow the alias group to its women's competition instead of disappearing or
+        // showing every men's division as well. A following partial "league" remains accepted.
+        for(const root of ['women','womens','woman','womans','female']){
+          if(root.startsWith(tail))return 'women';
+          if(tail.startsWith(root)){
+            const rest=tail.slice(root.length);
+            if(!rest||'league'.startsWith(rest)||'leagues'.startsWith(rest))return 'women';
+          }
+        }
+        return '';
+      };
+      for(const [k,v] of Object.entries(alias)){
+        const nk=norm(k);
+        if(nk===f||nk.includes(f)){add(v);continue;}
+        if(!f.startsWith(nk))continue;
+        const mode=aliasTailMode(f.slice(nk.length));
+        if(mode==='all')add(v);
+        else if(mode==='women')add((Array.isArray(v)?v:[v]).filter(x=>/\sW$/i.test(x)));
+      }
     }
     list.innerHTML=m.length?m.slice(0,80).map(o=>'<div class="copt">'+o+'</div>').join(''):'<div class="cnone">No match &mdash; check spelling</div>';
     list.classList.add('open');
@@ -7056,7 +7087,7 @@ const LEAGUE_SEARCH_ALIAS={
   'spain':['Spain LaLiga','Spain Segunda','Spain Liga F W'],'spanish':['Spain LaLiga','Spain Segunda','Spain Liga F W'],
   'germany':['Germany Bundesliga','Germany Bundesliga 2','Germany 3. Liga','Germany Frauen-Bundesliga W'],'german':['Germany Bundesliga','Germany Bundesliga 2','Germany 3. Liga','Germany Frauen-Bundesliga W'],
   'netherlands':['Netherlands Eredivisie','Netherlands Vrouwen W'],'dutch':['Netherlands Eredivisie','Netherlands Vrouwen W'],
-  'portugal':['Portugal Primeira','Portugal Liga Feminino W'],'portuguese':['Portugal Primeira','Portugal Liga Feminino W'],
+  'portugal':['Portugal Primeira','Portugal Liga Feminino W'],'portuguese':['Portugal Primeira','Portugal Liga Feminino W'],'portugese':['Portugal Primeira','Portugal Liga Feminino W'],
   'scotland':['Scottish Premiership','Scottish SWPL W'],'scottish':['Scottish Premiership','Scottish SWPL W'],
   'sweden':['Sweden Allsvenskan','Sweden Damallsvenskan W'],'swedish':['Sweden Allsvenskan','Sweden Damallsvenskan W'],
   'switzerland':['Switzerland Super League','Switzerland Damen W'],'swiss':['Switzerland Super League','Switzerland Damen W'],
@@ -7106,6 +7137,21 @@ function norm(s){return String(s).toLowerCase().replace(/['\u2019\u2018\u02bc\s\
 // A trailing number in a search is a RATING filter ("van dijk 90" -> name "van dijk", rating 90).
 // Player names never contain digits, so any trailing integer is unambiguous.
 function splitNameRating(raw){const t=String(raw).trim();const m=t.match(/^(.+?)\s+(\d{1,3})$/);if(m)return{f:norm(m[1]),r:+m[2]};const mn=t.match(/^(\d{1,3})$/);if(mn)return{f:'',r:+mn[1]};return{f:norm(t),r:null};}
+// Managers store the rating inside their display name (for example, "Lippi 98").
+// Reuse the player-style trailing-rating query without changing the stored manager schema:
+// "lip 9" matches the base name "Lippi" and any rating beginning with 9.
+function managerNameRatingParts(m){
+  const t=String((m&&m.name)||'').trim(),hit=t.match(/^(.*?)(?:\s+(\d{1,3})(?=\s|$))/);
+  return hit?{f:norm(hit[1]),r:String(hit[2])}:{f:norm(t),r:null};
+}
+function managerMatchesSearch(m,raw,includeNation){
+  const q=splitNameRating(raw),f=q.f;
+  if(q.r!=null){
+    const p=managerNameRatingParts(m);
+    return (!f||p.f.includes(f)||(includeNation&&norm(m.nation).includes(f)))&&p.r!=null&&p.r.startsWith(String(q.r));
+  }
+  return !f||norm(m.name).includes(f)||(includeNation&&norm(m.nation).includes(f));
+}
 // when a dropdown option is chosen, eat the click that would otherwise fall through to whatever
 // control sits under the dropdown (position chip / type button) once the list closes.
 function swallowNextClick(){
@@ -7547,9 +7593,9 @@ function cancelDBEdit(){
   document.querySelectorAll('#dbr-results .crow').forEach(r=>r.style.background='');
 }
 function renderMgrDBSearch(){
-  const q=norm(($('#dbmr-search')||{}).value||'');const el=$('#dbmr-results');if(!el)return;
-  if(!q){el.innerHTML='<div class="tiny" style="color:var(--mut)">Type above to search.</div>';return;}
-  const hits=MANAGER_DB.map((m,i)=>({m,i})).filter(({m})=>norm(m.name).includes(q)||norm(m.nation).includes(q)).slice(0,30);
+  const raw=(($('#dbmr-search')||{}).value||'').trim();const el=$('#dbmr-results');if(!el)return;
+  if(!raw){el.innerHTML='<div class="tiny" style="color:var(--mut)">Type above to search.</div>';return;}
+  const hits=MANAGER_DB.map((m,i)=>({m,i})).filter(({m})=>managerMatchesSearch(m,raw,true)).slice(0,30);
   if(!hits.length){el.innerHTML='<div class="tiny" style="color:var(--mut)">No managers match.</div>';return;}
   el.innerHTML=hits.map(({m,i})=>'<div class="crow" id="dbmr-'+i+'" style="cursor:pointer" onclick="openMgrDBEdit('+i+',this)">'
     +'<div class="nm"><b>'+esc(m.name)+'</b><div class="meta">'+m.nation+' · '+(m.league==='Icons'?'Icon manager':m.league.replace('England ',''))+'</div></div>'
@@ -7572,7 +7618,7 @@ function openMgrDBEdit(i,rowEl){
   div.style.cssText='background:var(--panel2);border:1px solid var(--cyan-dim);border-radius:10px;padding:12px;margin:6px 0 8px;';
   div.innerHTML=`
     <div style="font-size:11px;color:var(--cyan);font-weight:800;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Edit manager</div>
-    <label style="font-size:11px;color:var(--mut);display:block;margin-bottom:3px">Name <span style="color:var(--mut);font-weight:400">— include the rating, e.g. Klopp 94</span></label>
+    <label style="font-size:11px;color:var(--mut);display:block;margin-bottom:3px">Name <span style="color:var(--mut);font-weight:400">— include the rating</span></label>
     <input id="dbme-name" type="text" value="${esc(m.name)}" style="font-size:13px;margin-bottom:6px">
     <div class="row" style="margin-bottom:6px;gap:8px">
       <div style="flex:1.1"><label style="font-size:11px;color:var(--mut);display:block;margin-bottom:3px">Nation</label>
@@ -7653,7 +7699,7 @@ makeCombo('dbm-nation',NATIONS,NATION_ALIAS);makeCombo('dbm-league',MLEAGUES,LEA
 function addMgrToDB(){
   const err=$('#dbmAddErr');err.style.color='var(--bad)';
   const name=$('#dbm-label').value.trim();
-  if(!name){err.textContent='Need a name (include the rating, e.g. Polzin 75).';return}
+  if(!name){err.textContent='Need a manager name including the rating.';return}
   const nation=comboVal('dbm-nation',NATIONS);
   if(!NATIONS.includes(nation)){err.textContent='Pick a nation from the list.';return}
   const league=comboVal('dbm-league',MLEAGUES);
@@ -12908,8 +12954,8 @@ function mgrLabel(m){return m.name+'  \u00b7  '+m.nation+'  \u00b7  '+(m.league=
 function wireMgrCombo(){
   const inp=$('#m-name'),list=$('#m-name-list');if(!inp)return;
   function render(){
-    const f=norm(inp.value.trim());
-    const m=(f?MANAGER_DB.filter(o=>norm(o.name).includes(f)):MANAGER_DB).slice(0,60);
+    const raw=inp.value.trim();
+    const m=(raw?MANAGER_DB.filter(o=>managerMatchesSearch(o,raw,false)):MANAGER_DB).slice(0,60);
     list.innerHTML=m.length?m.map(o=>'<div class="copt" data-n="'+esc(o.name)+'">'+esc(mgrLabel(o))+'</div>').join(''):'<div class="cnone">No match</div>';
     list.classList.add('open');
   }
@@ -14202,25 +14248,24 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
 //                 the best shape wins, +2 manager. Every term >= that term in ANY real squad of its
 //                 shape, so the ceiling can never sit under a buildable squad; slight over-estimates
 //                 are the acceptable direction ("ceiling" = at-or-above). Both numbers are shown as
-//                 a buildable–ceiling band; ranking is by ceiling, tie-broken by buildable.
-//   reliability — copies-weighted supply of the pivot bucket (icons counted as wildcards for
-//                 league pivots, x2 for nation pivots per trueChem), i.e. how likely a real draft
-//                 is to actually hand you the 7+ bodies. E's finding that PL wins "mainly on draw
-//                 reliability" is exactly this column.
-// Pool units mirror the chem rules: league pivot -> normal 1 / hero 2 / icon 1(wildcard);
-// nation pivot -> normal+hero 1 / icon 2. NOT a solver change: purely advisory, and the "use as
+//                 a buildable–ceiling band; ranking is by buildable, tie-broken by normal-card
+//                 supply, with ceiling only a final deterministic tiebreak.
+//   reliability — copies-weighted NORMAL-card supply of the pivot bucket, i.e. how likely a real
+//                 draft is to hand you the seven actual bucket normals the build assumes. Heroes
+//                 and icons are selected separately and must not inflate this number.
+// NOT a solver change: purely advisory, and the "use as
 // helper pivot" action only retargets which league the pick-time w.prem factor rewards.
 function analyzePivots(){
   const src=playerDB.length?playerDB:DEFAULT_DB;
   const W=c=>(typeof c.copies==='number'&&c.copies>0)?c.copies:1;
   const lg={},nat={};const iconsArr=[];const heroesArr=[];let iconsW=0;
   src.forEach(c=>{const w=W(c);
-    (nat[c.nation]=nat[c.nation]||{w:0,cards:[]});nat[c.nation].w+=w*(c.type==='icon'?2:1);
-    if(c.type==='normal')nat[c.nation].cards.push(c); // v16.5.2 fix: Step-1 pool must only ever contain club-scoring normals -- heroes/icons are chosen separately (Step 2/3) and would otherwise steal a mandatory-7 slot without giving a real club point
+    (nat[c.nation]=nat[c.nation]||{w:0,cards:[]});
+    if(c.type==='normal'){nat[c.nation].w+=w;nat[c.nation].cards.push(c);} // supply and Step-1 viability are NORMALS only; heroes/icons are chosen separately and must not inflate the pivot's draw pool
     if(c.type==='icon'){iconsArr.push(c);iconsW+=w;return;}
     if(c.type==='hero')heroesArr.push(c);
-    const L=leagueOf(c);(lg[L]=lg[L]||{w:0,cards:[]});lg[L].w+=w*(c.type==='hero'?2:1);
-    if(c.type==='normal')lg[L].cards.push(c); // v16.5.2 fix: same reasoning as nat[N].cards above
+    const L=leagueOf(c);(lg[L]=lg[L]||{w:0,cards:[]});
+    if(c.type==='normal'){lg[L].w+=w;lg[L].cards.push(c);} // same normals-only rule for league supply and the mandatory seven-card bucket
   });
   const byRating=(a,b)=>b.rating-a.rating;
   const iconsSorted=iconsArr.slice().sort(byRating);
@@ -14346,14 +14391,14 @@ function analyzePivots(){
     if(L==='Icons')continue;
     const g=greedyCeil(lg[L].cards,c=>c.type==='hero'?2:1,'league');
     const rc=relaxCeil(lg[L].cards,'league'); // v16.8.0: the CEILING is the relaxation (true upper bound); greedy is the buildable floor
-    if(g&&rc)out.push({kind:'league',key:L,ceiling:rc.total,buildable:g.total,shape:rc.shape,reliability:Math.round(lg[L].w),detail:g.raw}); // reliability deliberately EXCLUDES icon wildcards: they boost every league equally, so they'd only obscure the comparison (and 7-icon draws aren't a real draft anyway)
+    if(g&&rc)out.push({kind:'league',key:L,ceiling:rc.total,buildable:g.total,shape:rc.shape,reliability:Math.round(lg[L].w),detail:g.raw}); // reliability is copies-weighted NORMALS only: these are the seven bucket bodies the build actually requires
   }
   for(const N in nat){
     const g=greedyCeil(nat[N].cards,c=>c.type==='icon'?2:1,'nation');
     const rc=relaxCeil(nat[N].cards,'nation');
     if(g&&rc)out.push({kind:'nation',key:N,ceiling:rc.total,buildable:g.total,shape:rc.shape,reliability:Math.round(nat[N].w),detail:g.raw});
   }
-  out.sort((a,b)=>(b.ceiling-a.ceiling)||((b.buildable||0)-(a.buildable||0))||(b.reliability-a.reliability));
+  out.sort((a,b)=>((b.buildable||0)-(a.buildable||0))||(b.reliability-a.reliability)||(b.ceiling-a.ceiling));
   return out;
 }
 function runPivotAnalysis(){
@@ -14391,7 +14436,7 @@ function runPivotAnalysis(){
   // collapsed block at the bottom instead of being silently sliced away.
   const rest=res.slice(K);
   const restHtml=rest.length?('<details style="margin-top:8px"><summary class="tiny" style="color:var(--mut);cursor:pointer">'+rest.length+' more outside the top '+K+'</summary><div style="margin-top:4px;opacity:.75">'+rest.map((r,i)=>rowHtml(r,K+i)).join('')+'</div></details>'):'';
-  box.innerHTML='<div class="tiny" style="color:var(--mut)">Analyzed in '+ms+' ms \u00b7 buildable = a real greedy XI (floor), ceiling = per-component relaxation (never below any buildable squad), both position-agnostic \u00b7 supply = copies-weighted draw pool. Current helper pivot: <b id="pivotCurrent">'+(PIVOT_KIND==='nation'?'\uD83C\uDF10 ':'')+PIVOT_KEY+'</b> \u00b7 top '+K+' shown</div>'+top+restHtml;
+  box.innerHTML='<div class="tiny" style="color:var(--mut)">Analyzed in '+ms+' ms \u00b7 buildable = a real greedy XI (floor), ceiling = per-component relaxation (never below any buildable squad), both position-agnostic \u00b7 supply = copies-weighted normal-card pool. Current helper pivot: <b id="pivotCurrent">'+(PIVOT_KIND==='nation'?'\uD83C\uDF10 ':'')+PIVOT_KEY+'</b> \u00b7 top '+K+' shown</div>'+top+restHtml;
   // v17.8.25: box.innerHTML above wipes any warning setHelperPivot() may have appended earlier in
   // this same call (the auto-default branch above calls setHelperPivot() before this point) --
   // re-render it fresh now that the box's real content is in place.
@@ -15195,7 +15240,7 @@ function renderHelperPrompt(){
   const opts=slotCards(s.id);
   if(!opts.length){el.innerHTML='<div class="tiny" style="color:var(--mut)">Add this board\u2019s options \u2014 then tap the helper to rate them against the rest of your board.</div>';return;}
   el.innerHTML='<button class="btn sec sm" style="margin:6px 0 0" onclick="runHelper()">\u2696 Check '+(opts.length>1?'these '+opts.length+' options':'this pick')+' with the helper</button>'
-    +'<div class="tiny" style="color:var(--mut);margin-top:4px">Optional \u2014 it solves your projected XI for accuracy, so it can take a second or two. Skip it if you\u2019re just banking holds.</div>';
+    +'<div class="tiny" style="color:var(--mut);margin-top:4px">Optional \u2014 it solves your projected XI for accuracy, so it can take a second or two. Skip if you\u2019re just holding everything.</div>';
 }
 function _helperCtxFromResult(r,cap){
   const key=boardKey();let backedBase=null;
