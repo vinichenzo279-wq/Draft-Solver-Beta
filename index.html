@@ -135,10 +135,11 @@
         not mean no other bug could possibly exist — it's just guidance for what to check first.
      ================================================================================================ -->
 
-<!-- DATA BUILD CHECKPOINT — v19.0.27-COMPLETE
+<!-- DATA BUILD CHECKPOINT — v21.1.0-COMPLETE
      COMPLETE CLEAN DB: 10,061 unique rows / 10,475 expanded cards, embedded exactly from synchronized JSON v4.96.
-     DATA: adds Chenzo 105 GK — Yugoslavia / Serbian SuperLiga / Red Star Belgrade.
+     DATA: includes Chenzo 105 GK — Yugoslavia / Serbian SuperLiga / Red Star Belgrade.
      PIVOT ANALYZER: startup analysis remains automatic; later player-card add/edit/remove/import/reset/clear operations visibly mark the displayed ranking stale until re-analysis.
+     FORMATION CALIBRATOR: seeded primary-only 11x5 simulation for every formation. X drafts per formation and seed are the only controls; boards use the realistic normal/hero/icon offer mix, real-person dedupe, real squad scoring and manager +2. Results show average, best and worst scores; ranking uses 50% average, 25% best and 25% worst.
      UI: preserves the clean dark form controls and Pick-per-hold stable-ID disambiguation fix.
      PERMANENT ORDER RULE: Others stays at the absolute bottom of the player DB and clubs map.
 -->
@@ -149,7 +150,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v19.0.27</title>
+<title>Draft Solver v21.4.4</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -279,6 +280,19 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 .pivpreview{margin:8px 0!important;padding:7px 9px!important}
 .pivpreview summary{font-size:11px!important;color:var(--mut)!important}
 @media(max-width:390px){.pivgrid{grid-template-columns:1fr}}
+
+/* v21.3.0 — center the Formation weights UI while keeping it fluid on narrow screens. */
+.formweights-body{width:100%;max-width:720px;margin:0 auto}
+.formweights-body #formCalWrap{margin-left:auto!important;margin-right:auto!important}
+.formweights-body #formCalResult{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.formweights-body #fwGrid{width:100%;max-width:420px;margin:6px auto 0!important}
+.formweights-footer{max-width:420px;margin:8px auto 0;text-align:center}
+.formweights-footer .btn{margin-top:0!important}
+.formweights-footer .tiny{display:block;margin:6px 0 0!important}
+@media(max-width:420px){
+  .formweights-body #formCalWrap{padding:8px 7px!important}
+  .formweights-body #formCalWrap>.row{flex-direction:column}
+}
 </style>
 </head>
 <body>
@@ -3336,80 +3350,34 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           feature, not a significant problem — flagged here so it's remembered rather than
           mistaken for settled ground truth, not because a fix is expected or available.
 
-       L. FORMATION RANKING: WHY FILLABILITY-BASED APPROACHES NEVER WORKED (added v15.0).
+       L. FORMATION RANKING: PRIMARY-ONLY SEEDED DRAFT SIMULATION (reworked v21.0.0).
 
-          THE UNDERLYING DRAFT FORMAT, for context on why primary position is the right lens here
-          specifically (not an arbitrary simplification): pick a formation -> pick a captain (offered
-          from the board; must be placeable into a position slot you actually have — you can't captain
-          a position absent from your formation) -> pick each formation slot in turn, where each slot's
-          5 options are ALWAYS that slot's PRIMARY position only (a CDM slot is only ever offered
-          primary-CDM players, never a primary-CM player who happens to also play CDM) -> pick the
-          bench, where each of its 5 options can be ANY position, primary or not -> and finally, after
-          the whole squad is drafted, choose 1 of 5 managers offered and keep whichever helps your
-          score most. Two different position rules are live at two different stages, and each half of
-          this app's model matches the stage it represents: formation ranking (this section) mirrors
-          the SLOT-DRAFT stage, where only primary position is ever on offer, so it can only ever be
-          about maximising the chance the best available PRIMARY-position players line up with your
-          slots. The main XI solver (solveBest/scoreXI) mirrors what happens AFTER everything is
-          drafted: once a card is in your pool — whether it arrived via a primary-locked slot pick or
-          an any-position bench pick — where it came from and its primary position stop mattering, and
-          the solver is free to place it in any slot it's eligible for (a CDM/CM card legitimately fills
-          a CM slot in the solved XI, no different from a bench pickup starting instead of a slot pick).
-          That's not a contradiction between the two systems, it's them each being faithful to a
-          different, correctly-scoped stage of the same draft. Bench and final-manager choice matter
-          for one thing beyond XI score: two squads that solve to an IDENTICAL main-XI score can still
-          differ in how many managers their leftover bench can rescue to +1/+2 — since you keep the
-          best of 5 managers offered at the end — which is exactly why bench picking and same-score
-          tiebreaking are the only places bench/manager considerations enter the ranking at all.
+          THE UNDERLYING DRAFT FORMAT: choose a formation, then each starter slot offers five cards
+          whose PRIMARY position exactly matches that slot. Secondary eligibility is irrelevant at
+          this stage: a primary-CDM/secondary-CM card can appear for CDM, not for CM. Bench drafting
+          and the final manager happen later. The formation model therefore tests the starter-slot
+          stage directly instead of treating the full DB as a shop.
 
-          Every earlier attempt to rank formations — the manual FW per-position weight grid, and an
-          abandoned draft-simulation calibrator that got as far as being wired into the UI before
-          being abandoned mid-build — was implicitly testing whether a formation's slots could be
-          FILLED: could this shape complete an XI from a drafted pool, how often, how well. That
-          framing is a category error. Every formation in FORMS has exactly 11 slots, and the pool
-          always has enough eligible cards across all playable positions to fill any of them —
-          fillability is not what distinguishes one formation from another, so anything measuring
-          it converges on noise or on trivial artifacts of pool/draw size, never on a formation's
-          actual quality.
-          What actually distinguishes formations is WHICH POSITIONS HOLD THE BEST CARDS — i.e.
-          which slots maximise the chance that a genuinely elite player's TRUE PRIMARY position
-          lines up with a slot in that formation. A second, related trap: the live playerDB lists
-          every position a card is ELIGIBLE for (Salah as RW/RM/CAM…), so scoring "can this card
-          fill a CM slot" counts a primary-CDM, secondary-CM player (Caicedo) as equally valuable to
-          a CM slot as an actual primary-CM player — inflating CM-heavy formations for players who
-          would never actually be drafted AS a CM. The fix (_buildGoldPool + _fcalibrateAnalytic,
-          this version) sidesteps both traps at once: it never asks "can this formation be filled"
-          at all (fillability is irrelevant and dropped from the model entirely), and it credits
-          each player to their TRUE PRIMARY position only (via GOLD_DB), not their full eligible-
-          position list, so a CDM/CM card only ever strengthens CDM slots.
+          CURRENT MODEL: every non-custom formation receives X seeded synthetic 11x5 boards. Each
+          board targets roughly 35 normals, 15 heroes and 5 icons with bounded variance. Normals are
+          drawn from the active pivot; icons and heroes remain global. If a pivot has no normal for
+          a required primary position, that normal offer falls back to an ordinary off-pivot normal
+          rather than becoming another icon or hero. Copies weight draw probability, and name+pidx
+          prevents the same real person from appearing twice in a chosen XI.
 
-          WHY FILLABILITY IS TRIVIAL, NOT JUST IRRELEVANT: a formation will essentially always fill.
-          The only thing that can make a fill harder is a bust — losing a slot's committed card mid-
-          board and needing to cover it from the bench instead — and that's a rare, not-formation-
-          specific event, not a reason to weight one shape over another. Fillability-based scoring
-          specifically loves CM: CDM, CM, and CAM players overwhelmingly ALSO list CM as a secondary
-          position (a CDM/CM and a CAM/CM are both extremely common combos), so any metric that credits
-          eligible positions rather than primary ones systematically overweights CM slots purely
-          because more players happen to be ABLE to cover them, not because CM is where the best
-          players actually are. That's the same trap as the Caicedo CDM/CM example above, generalized:
-          "this position is easy to fill" and "this position gets you the best players" are unrelated
-          facts, and fillability only ever measures the former. Even at its theoretical best,
-          fillability only protects against the rare no-full-XI outcome — it says nothing about the
-          MAXIMUM SCORE achievable, which is the actual goal. And the format context matters here too:
-          some modes give unlimited attempts at a board, others (the current one) are best-10-of-40 —
-          in neither case is trading away access to the best available cards worth buying a marginally
-          easier fill. Formation consistency was never something worth prioritising over card quality,
-          and fillability-based scoring had no way to know that.
+          Each board is searched with one fixed deterministic beam and the surviving full XIs are
+          scored by scoreXI() plus the standard manager +2. The beam width and type mix are fixed
+          implementation rules, not tuning knobs. The only user controls are X (drafts per formation)
+          and seed. The UI shows each formation's average, best and worst final score. Its ranking
+          value is 50% average, 25% best and 25% worst, so repeatable strength matters most while both
+          ceiling and bad-board resilience still contribute.
 
-          FUTURE WORK: GOLD_DB only covers players who have an actual Gold card in-game, so today's
-          formation calibration is scoped to that subset of the full player pool, not the entire
-          live playerDB. The right long-term fix is a PERMANENT, per-entry "true primary position"
-          field on every DB card (not just Gold-eligible ones) — once that exists, _buildGoldPool's
-          dedupe-through-GOLD_DB step becomes unnecessary and _fcalibrateAnalytic can run directly
-          over the full DB, making the ranking materially more accurate (today it undercounts
-          positional depth for any player who's strong but never got a Gold card). Not implemented
-          yet — flagged for whoever adds primary-position data entry to the DB maintenance workflow
-          next.
+          WHY THIS REPLACED THE ANALYTIC TOP-N CURVES: a full-pool buildable model ties too many
+          formations because a deep DB can hand-pick an ideal XI for almost every shape. The old
+          rating/rarity/commonness curves separated those ties only by adding subjective assumptions.
+          Seeded primary-only boards instead measure the actual question: given five realistic offers
+          at each slot, what score can this shape produce across average, upside and downside? Close results are genuinely close;
+          raise X or compare several seeds before treating a few hundredths as meaningful.
 
        M. PHILOSOPHY: WHEN AN ARBITRARY NUMBER SHOULD BECOME AN ADVANCED SETTING (added v15.1.4,
           process convention — not a code/logic entry). Whenever a change introduces a genuinely
@@ -5998,7 +5966,21 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <!-- v19.0.25 — Documentation only: replaced the obsolete direct-DEFAULT_DB card-edit instructions with the synchronized JSON-first workflow, including primary-position reading, pidx registry updates, club-order/empty-club handling, copy-vs-overlap rules, safe embedding and validation. -->
 <!-- v19.0.26 — Pivot analysis now auto-runs through a deferred startup scheduler after first paint and before the 350 ms DB calibrator begins. Manual re-analysis cancels any queued duplicate; the panel shows a queued status immediately. No analyzer formula, solver scoring, or DB data changed. -->
 <!-- v19.0.27 — Pivot Analyzer now warns whenever player-card data has changed since its last completed run, clearing only after re-analysis; added Chenzo 105 normal GK for Yugoslavia / Serbian SuperLiga / Red Star Belgrade and synchronized JSON v4.96. -->
-<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v19.0.27</span></h1>
+<!-- v19.1.0 — FORMATION CALIBRATOR BUGFIX: _pivotPersonKey was scoped inside analyzePivots(), so the live-DB pool builder threw a ReferenceError; a broad empty catch hid it and silently rebuilt from legacy GOLD_DB despite complete primary data. The identity helper is now shared, live DB is authoritative whenever any usable primary cards exist, and fallback is explicit/visible only when none exist. Formation ranking now evaluates every eligible icon, hero and pivot-matching normal card version first, applies only structurally relevant nation/club/league rarity axes, keeps the highest-evaluated version per real person/pidx, then takes the top N per winning primary position; it no longer discards rarer/higher-eval versions by choosing highest raw rating first. -->
+<!-- v19.2.0 — FORMATION CALIBRATOR NORMALS-ONLY COMPARISON: icons and heroes are excluded from the live positional candidate pool and from the rarity histogram used to evaluate it; only pivot-matching normal cards compete for each primary-position top N. The underlying card-weight fit remains unchanged, and legacy GOLD_DB remains a visible last-resort fallback only when no usable live normal primaries exist. -->
+<!-- v20.0.0 — FORMATION CALIBRATOR REWORK: removed the full no-hold/draft-calibration dependency. Pivot-matching normals now score as raw rating plus capped club and nation/league rarity curves, with both curve steepnesses persisted under Advanced settings. Defaults rank 3-5-2 first for the shipped Premier League pool, while the +8/+9 caps prevent low-rated rarity outliers from overtaking elite cards on rarity alone. -->
+<!-- v20.1.0 — CALIBRATOR + FORMATION-CURVE PATCH: helper calibration now ignores re-clicks throughout an active fit (including clicks queued by the blocked synchronous path), invalidates old proportion-sampled fits, and keeps the best simulated score in the load-time completion line. Simulated 11x5 boards use a separate helper-sampling pool (pivot normals + all icons/heroes) and a randomized plan averaging 5 icons, 15 heroes and 35 normals; thin pivots use ordinary off-pivot normals as positional fallback instead of extra specials, preventing mostly-icon/hero 150+ ceilings. Formation Advanced settings now own persisted depth, equal +10 rarity caps, and pivot-local rank-tapered common penalties (clubs top 5, nations top 11, leagues top 5); default rarity curves were retuned to preserve the shipped 3-5-2 acceptance ranking. -->
+<!-- v21.0.0 — PRIMARY-ONLY FORMATION SIMULATOR: replaced the analytic depth/rarity/commonness formation curves with seeded X-per-formation 11x5 simulations. Starter offers require exact primary-position matches, use shared position packs for fair cross-formation comparison, average the realistic 35 normal / 15 hero / 5 icon mix, fall back to ordinary off-pivot normals before extra specials, forbid duplicate real people, and rank all formations by average real squad score plus manager. The UI now exposes only X and seed and shows the complete average-score list. -->
+<!-- v21.1.0 — FORMATION RANGE RANKING: simulation results now show average, best and worst final scores for every formation. The ranking value blends all three on the same score scale (50% average, 25% best, 25% worst), rewarding both upside and reliability without letting one extreme outweigh the full sample. A normals-only comparison was tested but not adopted: it removed real draft offers and moved the Premier League ranking toward 4-2-4/4-3-3 while making 3-5-2 materially less stable, so the realistic mixed normal/hero/icon board remains fixed and X plus seed remain the only controls. -->
+<!-- v21.2.0 — HONEST PIVOT LIKELY SCORE: Formation simulations now default to 10 drafts and the UI label no longer includes “(X)”. Pivot Analyzer no longer subtracts fitted thin/depth/diversity penalties from buildable or exposes tuning controls. Buildable is the untouched score of a concrete full-pool squad; a separate likely score ranks it using a bounded supply adjustment of 7 × (1 − copies ratio × distinct-player ratio), with seven coming directly from the seven matching normals every pivot needs. Results show likely, buildable, combined supply confidence and ceiling separately; Premier League ranks first by a clear margin without a league-name anchor. -->
+<!-- v21.3.0 — Pivot Analyzer adds a position-aware full-55 reliability gate with no off-pivot normal fallback and a 35-normal minimum; supply now follows ceiling, and Formation weights are centered responsively. Buildable and both calibrators are unchanged. -->
+<!-- v21.3.1 — Fixed league/nation buildable diversity mode wiring and replaced the ranking explainer with a concise pivot definition. -->
+<!-- v21.4.0 — Version bumps now invalidate the current helper calibration; helper calibration defaults to 500 drafts, Pivot scores use clearer Realistic/Perfect/Theoretical Maximum labels with a flat -2 realism gap, and supply shows unique-player depth. -->
+<!-- v21.4.1 — Pivot rows now show distinct players against true copies-weighted total supply, removing the misleading distinct-player maximum denominator. -->
+<!-- v21.4.2 — Formation calibration hides the stale-results warning while a replacement simulation is actively running. -->
+<!-- v21.4.3 — Clarified the calibrated type-value label by treating normal as the reference instead of displaying a misleading +0.00 value. -->
+<!-- v21.4.4 — Pivot Analyzer now shows the top 10 pivots and uses a shorter total-supply label. -->
+<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v21.4.4</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -6291,7 +6273,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 6px"><input type="checkbox" id="hNoHold" onchange="onNoHoldToggle()"> No-hold drafting &mdash; always TAKE the top option (never suggest a hold)</label>
     <details class="hlp" style="margin:0 0 10px"><summary>Objective weights &mdash; calibrated from your DB</summary>
       <p class="tiny" style="margin:6px 0 7px">Simulates drafts on your loaded DB to learn what each pick-time factor is actually worth &mdash; nation, club, league, icon and hero effects &mdash; instead of using hand-tuned weights. Replaces the manual weights below once fitted. Deterministic (same DB + seed &rarr; same result) and runs automatically in the background.</p>
-      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 6px"># drafts to simulate: <input type="number" id="calNScripts" value="300" min="20" step="1" autocomplete="off" onchange="this.value=Math.max(20,parseInt(this.value,10)||300)" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 6px"># drafts to simulate: <input type="number" id="calNScripts" value="500" min="20" step="1" autocomplete="off" onchange="this.value=Math.max(20,parseInt(this.value,10)||500)" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Seed (0&ndash;4294967295, blank = auto from DB): <input type="number" id="calSeed" placeholder="auto" min="0" max="4294967295" step="1" autocomplete="off" style="width:120px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
       <button class="btn sec sm" id="calBtn" onclick="runNoHoldCalibration()">Calibrate from DB</button>
       <div id="calStatus" class="tiny" style="margin-top:7px"></div>
@@ -6351,42 +6333,38 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 
   <div class="panel">
     <details class="hlp"><summary>Formation weights</summary>
+      <div class="formweights-body">
       <div id="formCalWrap" style="margin:6px 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
-        <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective formation ranking</div>
-        <p class="tiny" style="margin:0 0 7px">Ranks formations by which positions hold the best eligible players &mdash; icons, heroes, and normal cards matching your pivot &mdash; using your calibrated card weights. Auto-fits a quick default if you haven&rsquo;t calibrated yet. While calibrated, this replaces the manual weights below; <b>Clear</b> restores them.</p>
-        <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Depth per position: <input type="number" id="formCalTopX" value="15" min="1" max="500" step="1" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
+        <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Primary-only formation simulator</div>
+        <p class="tiny" style="margin:0 0 8px">Generates a separate 11&times;5 draft for every formation. Each slot only offers cards whose <b>primary position</b> matches that slot, then the strongest final XI found is scored with the real squad formula. The ranked score combines the average, best and worst result. It replaces the manual weights below until you press <b>Clear</b>.</p>
+        <div class="row" style="margin-bottom:8px">
+          <div><label for="formCalX">Drafts per formation</label><input id="formCalX" type="number" min="1" max="5000" step="1" value="10" inputmode="numeric" onchange="_fcalCommitSetting('formCalX','x')"><div class="tiny">Raise this to steady very close rankings.</div></div>
+          <div><label for="formCalSeed">Seed</label><input id="formCalSeed" type="number" min="0" max="2147483647" step="1" value="12345" inputmode="numeric" onchange="_fcalCommitSetting('formCalSeed','seed')"><div class="tiny">Reuse a seed to reproduce the same test.</div></div>
+        </div>
         <div class="row">
-          <button class="btn sec sm" id="formCalBtn" onclick="runFormCalibration()">Calibrate formations</button>
+          <button class="btn sec sm" id="formCalBtn" onclick="runFormCalibration()">Simulate formations</button>
           <button class="btn gho sm" onclick="clearFormCalibration()">Clear</button>
         </div>
         <div id="formCalStatus" class="tiny" style="margin-top:7px"></div>
         <div id="formCalResult" style="margin-top:7px"></div>
       </div>
       <div id="fwGrid" style="margin-top:6px"></div>
-      <button class="btn gho sm" style="margin-top:8px" onclick="resetFW()">Reset to defaults</button>
-      <span class="tiny" style="margin-left:8px;color:var(--mut)">Tap &plusmn; to flip the sign &mdash; negative values make the position unwanted</span>
+      <div class="formweights-footer">
+        <button class="btn gho sm" style="margin-top:8px" onclick="resetFW()">Reset to defaults</button>
+        <span class="tiny" style="margin-left:8px;color:var(--mut)">Tap &plusmn; to flip the sign &mdash; negative values make the position unwanted</span>
+      </div>
+      </div>
     </details>
   </div>
 
   <div class="panel">
     <details class="hlp"><summary>Pivot analyzer</summary>
-      <p class="tiny" style="margin:6px 0 7px">Ranks league and nation pivots by realistic buildable XI. Runs automatically on startup; advisory only; top 5 shown.</p>
+      <div class="note" style="margin:7px 0 9px">
+        <b style="color:var(--ink)">What is a pivot?</b><br>
+        The nation or league you build the draft around to reach 33 chemistry with maximum diversity.
+      </div>
       <button class="btn sec sm" onclick="runPivotAnalysis()">Re-analyze pivots from DB</button>
       <div id="pivotStaleWarn" class="note" style="display:none;margin:8px 0 0;border-left-color:var(--warn);color:var(--warn)"></div>
-      <details class="hlp" style="margin-top:8px">
-        <summary>Advanced pivot tuning</summary>
-        <p class="tiny" style="margin:6px 0 4px">Only affects the buildable estimate, not solver scoring.</p>
-        <div class="pivgrid">
-          <div class="pivfield"><label for="pivExposures">Draft pool size</label><div class="pivdesc">Estimated card sightings.</div><input id="pivExposures" type="number" min="1" step="10" value="300" placeholder="300" oninput="onPivSettingChange()" onchange="onPivSettingCommit()"></div>
-          <div class="pivfield"><label for="pivPenMax">Thin-pool penalty</label><div class="pivdesc">Maximum penalty for very shallow supply.</div><input id="pivPenMax" type="number" min="0" step="1" value="12" placeholder="12" oninput="onPivSettingChange()" onchange="onPivSettingCommit()"></div>
-          <div class="pivfield"><label for="pivPenKnee">Penalty midpoint</label><div class="pivdesc">Supply level where half the thin penalty applies.</div><input id="pivPenKnee" type="number" min="1" step="5" value="60" placeholder="60" oninput="onPivSettingChange()" onchange="onPivSettingCommit()"></div>
-          <div class="pivfield"><label for="pivPenSteep">Penalty curve</label><div class="pivdesc">How sharply the thin penalty rises.</div><input id="pivPenSteep" type="number" min="0" step="0.1" value="2" placeholder="2" oninput="onPivSettingChange()" onchange="onPivSettingCommit()"></div>
-          <div class="pivfield"><label for="pivSupplyLogWeight">Depth penalty</label><div class="pivdesc">Penalty versus the deepest available pivot.</div><input id="pivSupplyLogWeight" type="number" min="0" step="0.1" value="0.5" placeholder="0.5" oninput="onPivSettingChange()" onchange="onPivSettingCommit()"></div>
-          <div class="pivfield"><label for="pivDiversityWeight">Concentration penalty</label><div class="pivdesc">Penalty for supply concentrated in too few clubs or leagues.</div><input id="pivDiversityWeight" type="number" min="0" step="0.1" value="1.5" placeholder="1.5" oninput="onPivSettingChange()" onchange="onPivSettingCommit()"></div>
-        </div>
-        <details class="hlp pivpreview"><summary>Penalty preview</summary><div id="pivPenPreview" class="tiny" style="margin:7px 0 1px;color:var(--mut)">Pivot analysis is queued automatically on startup; use the button above to rerun it after DB changes.</div></details>
-        <button class="btn gho sm" onclick="resetPivSettings()">Reset pivot tuning</button>
-      </details>
       <div id="pivotResult" style="margin-top:8px"></div>
     </details>
   </div>
@@ -6498,7 +6476,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
     const verKey='pacwyn_app_version';
     const prev=localStorage.getItem(verKey);
     if(prev!==cur){
-      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1','pacwyn_pivot_kind_v1','pacwyn_pivot_key_v1','pacwyn_pivot_league_v1','pacwyn_nohold_cal_v3','pacwyn_nohold_cal_v4','pacwyn_nohold_cal_v5','pacwyn_nohold_cal_v6','pacwyn_nohold_chk_v1','pacwyn_formcal_v1','pacwyn_v18_frontier_v1','pacwyn_piv_v1'].forEach(k=>{ // v17.8.18: pivot keys added — a version bump should reset the helper pivot back to default (rank 1 / England Prem) too, same as every other saved setting; v18.10: no-hold calibration + checkbox added after an old La Liga-fitted vector survived the v18.9 pivot/ranking change; v18.0.6: formation calibration added so a new version returns formation ranking to manual/off; v18.5: persisted resume frontiers are version-scoped too; v18.19.2: pacwyn_piv_v1 (advanced pivot-analyzer tunables) added -- it was missing from this list in v18.19.0/.1, so hand-tuned exposure/penalty values would have survived a version bump while every other setting reset, silently re-ranking pivots on a new build
+      ['pacwyn_state_v3','pacwyn_fw_v1','pacwyn_shape_v1','pacwyn_db_v1','pacwyn_adv_v1','pacwyn_hw_v1','pacwyn_pivot_kind_v1','pacwyn_pivot_key_v1','pacwyn_pivot_league_v1','pacwyn_nohold_cal_v3','pacwyn_nohold_cal_v4','pacwyn_nohold_cal_v5','pacwyn_nohold_cal_v6','pacwyn_nohold_cal_v7','pacwyn_nohold_chk_v1','pacwyn_formcal_v1','pacwyn_formcal_cfg_v1','pacwyn_formcal_v2','pacwyn_formcal_cfg_v3','pacwyn_formcal_cfg_v4','pacwyn_v18_frontier_v1','pacwyn_piv_v1'].forEach(k=>{ // v17.8.18: pivot keys added — a version bump should reset the helper pivot back to default (rank 1 / England Prem) too, same as every other saved setting; v18.10: no-hold calibration + checkbox added after an old La Liga-fitted vector survived the v18.9 pivot/ranking change; v18.0.6: formation calibration added so a new version returns formation ranking to manual/off; v18.5: persisted resume frontiers are version-scoped too; v18.19.2: pacwyn_piv_v1 (advanced pivot-analyzer tunables) added -- it was missing from this list in v18.19.0/.1, so hand-tuned exposure/penalty values would have survived a version bump while every other setting reset, silently re-ranking pivots on a new build
         try{localStorage.removeItem(k);}catch(e){}
         try{sessionStorage.removeItem(k);}catch(e){}
       });
@@ -6554,58 +6532,36 @@ let FW={...FW_DEF};
 // Restore any user-saved formation weights immediately so FORMS initial scores use them.
 (function(){try{const r=localStorage.getItem('pacwyn_fw_v1');if(!r)return;const s=JSON.parse(r);if(s&&typeof s==='object')FW={...FW_DEF,...s};}catch(e){}})();
 
-// ---- v18.19.0 PIVOT ANALYZER TUNABLES ---------------------------------------------------------
-// Every magic number the pivot analyzer's buildable now depends on, exposed as user-editable
-// advanced settings (Weights tab -> Pivot analyzer -> Advanced). All six are ADVISORY-ONLY knobs:
-// they move the analyzer's buildable/ranking and therefore PIVOT_RANK/PIVOT_EDGE, but they never
-// enter the solver's own scoring or bounds.
-//   EXPOSURES  — v18.18.0's draft-exposure constant. E = EXPOSURES * bucketSupply/totalNormalSupply
-//                = how many bucket-card sightings a real draft is assumed to give this pivot; drives
-//                the order-statistic "expected visible pool" the greedy builds from. FITTED so the
-//                EPL's once-achieved 155 record is reproduced exactly and uniquely on the v18.17 DB.
-//   PEN_MAX/PEN_KNEE/PEN_STEEP — the absolute thin-supply Hill curve applied ON TOP of the
-//                discounted pool (they are complementary, not redundant: the pool discount says
-//                "you'll be picking deeper into your own bucket", the penalty says "and you may not
-//                even see seven of them"). penalty = PEN_MAX / (1 + (supply/PEN_KNEE)^PEN_STEEP):
-//                flat ~0 for deep buckets (EPL s1316 -> 0.02, i.e. full score), sub-point for the
-//                big nations (Brazil s308 -> 0.44), and collapsing hard at the bottom (s102 -> 3.1,
-//                s55 -> 6.5, s41 -> 8.2, s7 -> 11.8). Defaults chosen to give exactly that shape.
-//   SUPPLY_LOG_WEIGHT — relative-depth penalty: weight * ln(deepest viable supply / own supply).
-//                The deepest pivot pays zero. This prevents another well-stocked pivot from tying
-//                the EPL merely because both paper builds round to 155, without hardcoding the EPL.
-//   DIVERSITY_WEIGHT — concentration penalty on the mandatory seven pivot normals. For a league
-//                pivot, copies-weighted supply is grouped by CLUB; for a nation pivot, by LEAGUE.
-//                Effective count = exp(Shannon entropy). penalty = weight * max(0, ln(7/effective)).
-//                Seven is objective (the mandatory pivot-normal count), not another fitted knob.
-//                A 70%-single-club pool with many token clubs therefore behaves like only a few
-//                genuinely available clubs, while an evenly spread seven-plus-category pool pays 0.
-// All three penalties are subtracted then ROUNDED. Current defaults keep the EPL anchor at 155 and
-// place every other default-DB candidate below it.
-const PIV_DEF={EXPOSURES:300,PEN_MAX:12,PEN_KNEE:60,PEN_STEEP:2,SUPPLY_LOG_WEIGHT:0.5,DIVERSITY_WEIGHT:1.5};
-let PIV={...PIV_DEF};
-(function(){try{const r=localStorage.getItem('pacwyn_piv_v1');if(!r)return;const s=JSON.parse(r);if(s&&typeof s==='object')PIV={...PIV_DEF,...s};}catch(e){}})();
-function savePivSettings(){try{localStorage.setItem('pacwyn_piv_v1',JSON.stringify(PIV));}catch(e){}}
-function _pivSupplyPenalty(supplyW){ // absolute thin-supply Hill curve — see PIV_DEF notes above
-  const knee=Math.max(1e-6,+PIV.PEN_KNEE||0),steep=+PIV.PEN_STEEP||0,max=+PIV.PEN_MAX||0;
-  if(max<=0)return 0;
-  return max/(1+Math.pow(Math.max(0,supplyW)/knee,steep));
+// ---- v21.2.0 OBJECTIVE PIVOT RANKING -----------------------------------------------------------
+// Buildable and supply are separate facts. Buildable is the unmodified score of a concrete greedy
+// squad constructed from the full pivot bucket. Ranking uses a separate likely score:
+//
+//   copiesRatio       = own copies-weighted normal supply / deepest viable copies supply
+//   identityRatio     = own distinct real-player depth / deepest viable identity depth
+//   supplyConfidence  = copiesRatio * identityRatio
+//   supplyAdjustment  = 7 * (1 - supplyConfidence)
+//   realisticScore  = buildable - supplyAdjustment - 2
+//
+// Supply has to pass two real gates: enough total appearances and enough different players to form
+// a seven-card core. Seven is not fitted: it is the exact number of matching normals a pivot needs.
+// The adjustment is therefore transparent and bounded at seven, unlike the removed penalty curves.
+const PIVOT_REQUIRED_NORMALS=7;
+const PIVOT_REALISTIC_OFFSET=2; // flat realism gap below the best supply-adjusted build
+const PIVOT_MIN_DRAFT_NORMALS=35;
+const PIVOT_RELIABILITY_TRIALS=10;
+const PIVOT_RELIABILITY_SEED=12345;
+function _pivRatio(value,maxValue){
+  return Math.max(0,Math.min(1,Math.max(0,+value||0)/Math.max(1,+maxValue||1)));
 }
-function _pivRelativeSupplyPenalty(supplyW,maxSupplyW){
-  // v18.23.0: multiplicative supply gaps become an additive score penalty through ln(ratio).
-  // The deepest viable candidate is the reference and pays exactly zero; no league name is
-  // hardcoded. This complements the absolute Hill curve: Hill handles genuinely thin pools,
-  // while this term separates two deep pools whose expected greedy builds happen to round equal.
-  const weight=Math.max(0,+PIV.SUPPLY_LOG_WEIGHT||0);
-  if(weight<=0)return 0;
-  const top=Math.max(1,+maxSupplyW||1),own=Math.max(1,+supplyW||1);
-  return weight*Math.max(0,Math.log(top/own));
+function _pivSupplyScores(supplyW,maxSupplyW,identityCount,maxIdentityCount){
+  const copiesRatio=_pivRatio(supplyW,maxSupplyW);
+  const identityRatio=_pivRatio(identityCount,maxIdentityCount);
+  const supplyConfidence=copiesRatio*identityRatio;
+  const supplyAdjustment=PIVOT_REQUIRED_NORMALS*(1-supplyConfidence);
+  return {copiesRatio,identityRatio,supplyConfidence,supplyAdjustment};
 }
 function _pivDiversityStats(cards,kind,W){
-  // v18.28.0: supply depth and supply spread are separate facts. A league with 300 prints but
-  // 70% from one club is not as buildable as 300 prints spread evenly across clubs. Likewise a
-  // nation concentrated in one league has less useful cross-league diversity than its row count
-  // suggests. Use copies-weighted Shannon entropy, then exponentiate to the intuitive "effective
-  // number of equally represented categories". This reacts to BOTH category count and skew.
+  // Supporting diagnostic only. It no longer modifies buildable or likely score.
   const counts={};let total=0,top=0;
   for(const c of cards){
     const key=kind==='league'?(c.club||'(no club)'):leagueOf(c);
@@ -6614,12 +6570,6 @@ function _pivDiversityStats(cards,kind,W){
   let H=0;
   if(total>0)for(const k in counts){const n=counts[k],p=n/total;if(n>top)top=n;if(p>0)H-=p*Math.log(p);}
   return {effective:total>0?Math.exp(H):1,dominantShare:total>0?top/total:1,categories:Object.keys(counts).length};
-}
-function _pivDiversityPenalty(effective){
-  const weight=Math.max(0,+PIV.DIVERSITY_WEIGHT||0);
-  if(weight<=0)return 0;
-  const target=7,eff=Math.max(1,+effective||1);
-  return weight*Math.max(0,Math.log(target/eff));
 }
 
 // Prem club rarity in the gold pool (higher = rarer = far more valuable, since you need 7+ distinct clubs).
@@ -7024,45 +6974,28 @@ let PIVOT_EDGE=0;
 // the top of each calibration run (same discipline PIVOT_EDGE already established at v17.1.0) -- NOT
 // inside the hot per-candidate scorer loop (analyzePivots() costs ~6-11ms, fine once, not fine per
 // candidate per script step). PIVOT_EDGE itself is no longer read by the scorer (nothing currently
-// uses the composite ceiling/buildable/reliability dominance number) but is left in, computed
-// correctly, for any future genuinely non-redundant use -- same "leave it in" precedent as v17.1.0.
+// uses the analyzer's dominance signal) but is left in for any future genuinely non-redundant use.
 let PIVOT_RANK=new Map(), PIVOT_RANK_FALLBACK=1;
-// v17.1.1 CORRECTION: an EARLIER version of this function used ceiling alone, and testing exposed
-// why that's wrong -- ceiling is a best-CASE number (every score term maximised independently,
-// section T) and does NOT penalise thin supply once a bucket clears its minimum 7-body threshold.
-// On a synthetic DB with a deliberately high-rated but thin second league, PL and the thin league
-// tied at ceiling=155 -- the ceiling literally cannot see "22 cards vs 180 cards" once both clear 7.
-// The signal that DOES capture it is reliability (copies-weighted draw supply): PL was ~6x the thin
-// league's reliability there, with buildable (the realistic greedy floor) also showing a small real
-// gap the ceiling missed entirely. So PIVOT_EDGE (still computed, no longer scorer-read -- see above)
-// combines all three numbers the analyzer already computes, each compared independently against
-// whichever OTHER candidate is strongest on THAT specific dimension (the most conservative
-// combination: it can only grow if EVERY dimension confirms an advantage, never inflated by one
-// dimension while another disagrees):
-//   edgeCeiling    = max(0, our ceiling    - best OTHER candidate's ceiling)
-//   edgeBuildable  = max(0, our buildable  - best OTHER candidate's buildable)
-//   edgeReliability= max(0, ln(our reliability / best OTHER candidate's reliability)) * 10
-// The x10 on the log-ratio is a NORMALIZATION constant only (so a 6x supply advantage -- ln(6)~1.8 --
-// lands in the same rough 0-20 point scale as typical ceiling/buildable gaps), not a strength choice.
+// v21.2.0: likelyScore already combines the untouched buildable value with copies and distinct-player
+// supply. PIVOT_EDGE therefore compares likelyScore plus the independent best-case ceiling; adding a
+// second raw-supply term would count supply twice. The helper scorer still does not read PIVOT_EDGE.
 function _refreshPivotEdge(precomputedList){
   PIVOT_RANK=new Map();PIVOT_RANK_FALLBACK=1;
   try{
-    const list=precomputedList||analyzePivots(); // v17.5.0: accepts an already-computed list (runPivotAnalysis() passes its own `res` so a single click/startup pass only calls analyzePivots() once, not twice) -- already sorted best-first (buildable, then normal-card supply, then ceiling) -- see analyzePivots()'s own out.sort()
-    list.forEach((r,i)=>PIVOT_RANK.set(r.kind+'|'+r.key,i+1)); // 1-indexed: rank 1 = top of the analyzer's own list
+    const list=(precomputedList||analyzePivots()).filter(r=>!r.unreliable); // unreliable pivots are diagnostic rows, not usable helper alternatives
+    list.forEach((r,i)=>PIVOT_RANK.set(r.kind+'|'+r.key,i+1)); // 1-indexed: rank 1 = top of the analyzer's own reliable list
     PIVOT_RANK_FALLBACK=list.length+1; // one worse than the worst LISTED candidate, for a league/nation too thin to even appear (< 7-card viability floor)
     const cur=list.find(r=>r.kind===PIVOT_KIND&&r.key===PIVOT_KEY);
     if(!cur){PIVOT_EDGE=0;return;}
-    let bestOtherCeil=-Infinity,bestOtherBuild=-Infinity,bestOtherRel=-Infinity;
+    let bestOtherCeil=-Infinity,bestOtherLikely=-Infinity;
     for(const r of list){
       if(r.kind===PIVOT_KIND&&r.key===PIVOT_KEY)continue;
       if(r.ceiling>bestOtherCeil)bestOtherCeil=r.ceiling;
-      if(r.buildable>bestOtherBuild)bestOtherBuild=r.buildable;
-      if(r.reliability>bestOtherRel)bestOtherRel=r.reliability;
+      if(r.likelyScore>bestOtherLikely)bestOtherLikely=r.likelyScore;
     }
     const edgeCeil=bestOtherCeil>-Infinity?Math.max(0,cur.ceiling-bestOtherCeil):0;
-    const edgeBuild=bestOtherBuild>-Infinity?Math.max(0,cur.buildable-bestOtherBuild):0;
-    const edgeRel=(bestOtherRel>-Infinity&&bestOtherRel>0&&cur.reliability>0)?Math.max(0,Math.log(cur.reliability/bestOtherRel))*10:0;
-    PIVOT_EDGE=edgeCeil+edgeBuild+edgeRel;
+    const edgeLikely=bestOtherLikely>-Infinity?Math.max(0,cur.likelyScore-bestOtherLikely):0;
+    PIVOT_EDGE=edgeCeil+edgeLikely;
   }catch(e){PIVOT_EDGE=0;}
 }
 // v16.9.0: the advisory layer's old hardcoded "is this the Premier League" checks all really meant
@@ -10261,8 +10194,8 @@ function getHelperNodeCap(){const el=$('#helperNodeCapInput');if(!el)return 1000
 // hardcoded default this replaces, so existing behaviour is unchanged unless the user opts in.
 function getBenchNodeCap(){const el=$('#benchNodeCapInput');if(!el)return 3000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?3000000:v*1000000;}
 function getMgrNodeCap(){const el=$('#mgrNodeCapInput');if(!el)return 3000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?3000000:v*1000000;}
-// Pivot analyzer top K: fixed at 5, no longer an exposed Advanced solver setting.
-function getPivotTopK(){return 5;}
+// Pivot analyzer top K: fixed at 10, no longer an exposed Advanced solver setting.
+function getPivotTopK(){return 10;}
 // Advanced solver settings persistence (rating ceiling + node cap). Same pattern as saveHW/restoreHW:
 // save on every change, restore on load. Unlike HW these two live directly as hardcoded <input> values
 // in the markup rather than a JS object rendered into the DOM, so restore sets .value on the elements
@@ -13621,11 +13554,11 @@ function reorderDropdownLists(){
 // used for scoring here — the simpler weight approach is more predictable and tunable.)
 // Score = sum of FW[slot] for all 11 slots, stored as a per-slot average for display.
 function recomputeFormScores(){
-  const calOn=(typeof _formCalActive==='function')&&_formCalActive(); // v15.0: calibrated gold-sim ranking supersedes FW when on
+  const calOn=(typeof _formCalActive==='function')&&_formCalActive(); // calibrated live-DB formation ranking supersedes FW when active
   FORMS.forEach(f=>{
     if(f.name==='Custom')return;
     if(calOn&&FORM_CAL.values[f.name]!==undefined){
-      f.score=FORM_CAL.values[f.name]; // solver-graded average best-XI from the gold-pool simulation
+      f.score=FORM_CAL.values[f.name]; // balanced formation score: 50% average, 25% best, 25% worst
     }else{
       const total=f.slots.reduce((s,p)=>s+(FW[p]||0),0);
       f.score=Math.round(total/f.slots.length*100)/100;
@@ -14173,9 +14106,15 @@ function _ratingCurveFrac(rating,thr,hardBound,minFrac,maxFrac,isLow){
    fallback whenever calibration is off, absent, or stale. All hard feasibility overrides
    (urgent-position/last-pick, soleForce, out-of-formation) stay senior to any score — see
    rankAndVerdict. Nothing here touches the solver. */
-const _NOHOLD_CAL_KEY='pacwyn_nohold_cal_v6'; // v6 (v18.14): removes the obsolete fitted pivot-pool coefficient and constrains all objective newness + rarity coefficients to >=0; old v5 blobs can contain w.prem and negative newness
+const _NOHOLD_CAL_KEY='pacwyn_nohold_cal_v7'; // v7 (v20.1.0): invalidates fits made with DB-proportion type sampling; scripts now target a realistic ~35 normal / 15 hero / 5 icon offer mix
 const _CAL_NONNEG_DIMS=new Set(['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg']); // v18.14: objective freshness/rarity may help or settle at zero, but repetition/commonness is never rewarded
 let NOHOLD_CAL=null; // {hash, weights, trainMean, holdMean, nScripts, K, date}
+let _CALIBRATION_RUNNING=false; // shared lock: result-panel/main-button re-clicks are ignored until the active manual/auto fit finishes
+let _CALIBRATION_COOLDOWN_UNTIL=0;
+function _calUnlockSoon(){
+  _CALIBRATION_COOLDOWN_UNTIL=performance.now()+350; // also catches a click event queued during a synchronous blocked fit but delivered just after unlock
+  setTimeout(function(){_CALIBRATION_RUNNING=false;},0);
+}
 let _AUTO_CAL_SCHEDULED=false,_AUTO_CAL_RUNNING=false; // helper visibility only: true while load-time DB calibration is queued/running
 (function restoreCal(){try{const raw=localStorage.getItem(_NOHOLD_CAL_KEY);if(!raw)return;const s=JSON.parse(raw);if(s&&s.weights)NOHOLD_CAL=s;}catch(e){}})();
 
@@ -14328,29 +14267,69 @@ function _calMakeScorer(w,rarityCtx){
     return v;
   };
 }
-function _calMakeScripts(db,forms,nScripts,K,rng){
+function _calMakeScripts(db,forms,nScripts,K,rng,normalFallbackDb){
   const pick=arr=>arr[Math.floor(rng()*arr.length)];
   const byPos={};const scripts=[];
-  // v16.10.1: pool entries are drawn copies-weighted (a card with copies:N is N times as likely to
-  // be offered), matching rebuildRarity's treatment of copies elsewhere. Previously this sampled
-  // uniformly per DB ROW regardless of copies, so a copies:20 card and a copies:1 card were equally
-  // likely to appear in a simulated pack -- silently at odds with the rarity model and capable of
-  // skewing the fitted calibration weights whenever copy counts varied across cards.
+  // v20.1.0: a real 11x5 board is expected to expose roughly 5 icons and 15 heroes among its
+  // 55 offered cards, with ordinary test-to-test variance. Sampling directly from a thin pivot
+  // pool made the type mix depend on DB supply -- a 10-normal pivot could become almost entirely
+  // icons/heroes and report fantasy 150+ ceilings. Build a randomized per-script type plan instead:
+  // mean 5 icons / 15 heroes / 35 normals at 55 offers, scaled for any other slot/K count. Type
+  // selection is therefore independent of how shallow the chosen pivot is; copies weighting still
+  // applies INSIDE each type/position bucket. If the pivot has no normal for a requested position,
+  // the normal offer comes from the full DB's normal pool rather than being replaced by an icon or
+  // hero. This is the key thin-pivot fix: a weak pivot stays weak through off-pivot normals instead
+  // of becoming an all-special fantasy draft. Missing special coverage also falls back to normals
+  // before the other special type.
   const _cw=c=>(typeof c.copies==='number'&&c.copies>0)?c.copies:1;
+  const bucket=cards=>{
+    const cum=[];let total=0;
+    for(const c of cards){total+=_cw(c);cum.push(total);}
+    return{cards,cum,total};
+  };
+  const draw=b=>{
+    const r=rng()*b.total;let lo=0,hi=b.cum.length-1;
+    while(lo<hi){const mid=(lo+hi)>>1;if(b.cum[mid]<r)lo=mid+1;else hi=mid;}
+    return b.cards[lo];
+  };
+  const jitterCount=(mean,spread,max)=>{
+    // Sum of four uniforms gives a smooth, bounded bell-like jitter around the requested mean.
+    const j=(rng()+rng()+rng()+rng()-2)*spread;
+    return Math.max(0,Math.min(max,Math.round(mean+j)));
+  };
   for(let s=0;s<nScripts;s++){
-    const f=pick(forms);const steps=[];let ok=true;
+    const f=pick(forms),totalOffers=f.slots.length*K;
+    let iconN=jitterCount(totalOffers*(5/55),1.5,totalOffers);
+    let heroN=jitterCount(totalOffers*(15/55),2.5,totalOffers-iconN);
+    if(iconN+heroN>totalOffers)heroN=Math.max(0,totalOffers-iconN);
+    const typePlan=[];
+    for(let i=0;i<iconN;i++)typePlan.push('icon');
+    for(let i=0;i<heroN;i++)typePlan.push('hero');
+    while(typePlan.length<totalOffers)typePlan.push('normal');
+    for(let i=typePlan.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));const t=typePlan[i];typePlan[i]=typePlan[j];typePlan[j]=t;}
+
+    const steps=[];let ok=true,offerIx=0;
     for(const pos of f.slots){
       if(!byPos[pos]){
-        const cards=db.filter(c=>c.pos.includes(pos));
-        const cum=[];let running=0;for(const c of cards){running+=_cw(c);cum.push(running);}
-        byPos[pos]={cards,cum,total:running};
+        const all=db.filter(c=>c.pos.includes(pos));
+        const fallbackAll=(normalFallbackDb||db).filter(c=>c.pos.includes(pos)&&(c.type||'normal')==='normal');
+        byPos[pos]={
+          normal:bucket(all.filter(c=>(c.type||'normal')==='normal')),
+          normalFallback:bucket(fallbackAll),
+          hero:bucket(all.filter(c=>c.type==='hero')),
+          icon:bucket(all.filter(c=>c.type==='icon'))
+        };
       }
-      const {cards,cum,total}=byPos[pos];if(cards.length<1){ok=false;break;}
+      const pools=byPos[pos];
+      if(!(pools.normal.cards.length||pools.normalFallback.cards.length||pools.hero.cards.length||pools.icon.cards.length)){ok=false;break;}
       const opts=[];
       for(let i=0;i<K;i++){
-        const r=rng()*total;let lo=0,hi=cum.length-1;
-        while(lo<hi){const mid=(lo+hi)>>1;if(cum[mid]<r)lo=mid+1;else hi=mid;}
-        opts.push(cards[lo]);
+        const wanted=typePlan[offerIx++];
+        const order=wanted==='normal'
+          ?['normal','normalFallback','hero','icon']
+          :(wanted==='hero'?['hero','normal','normalFallback','icon']:['icon','normal','normalFallback','hero']);
+        let use=null;for(const typ of order){if(pools[typ].cards.length){use=pools[typ];break;}}
+        opts.push(draw(use));
       }
       steps.push({pos,options:opts});
     }
@@ -14410,23 +14389,25 @@ function _calFeasible(db,forms,K){
 // that's the staleness key compared against playerDB elsewhere -- while `seed` records whichever
 // seed actually drove the rng, so a manual seed never gets mistaken for a DB change (or vice versa).
 function _calibrateNoHold(db,forms,opts){
-  opts=opts||{};const K=opts.K||5,nScripts=Math.max(20,Math.floor(Number(opts.nScripts)||300)),nVec=opts.nVec||600;
+  opts=opts||{};const K=opts.K||5,nScripts=Math.max(20,Math.floor(Number(opts.nScripts)||500)),nVec=opts.nVec||600;
   if(typeof _refreshPivotEdge==='function')_refreshPivotEdge(); // v17.1.0: recompute the DB-level dominance gap once, before fitting
   // v19.0.18: fit on the ACTIVE PIVOT POOL, not the raw DB. The simulated packs (_calMakeScripts) were
   // the ONE calibration input that never applied _fcalEligible, so on a multi-league DB they drew
   // normals from every league -- making "new club"/"new league" true for ~every option, killing their
   // discriminating signal and collapsing both fitted coefficients to the non-negative floor of 0.
   // The analyzer is meaningful only AFTER a pivot is chosen; sampling the full DB models a game the
-  // user never drafts. Restricting to pivot-matching normals + all icons + heroes matches what
-  // _calBuildRarityContext (see its _pivotMatches guard) and _buildGoldPool/_fcalEligible already do.
+  // user never drafts. _calSampleEligible keeps pivot-matching normals + all icons + heroes
+  // (separate from the formation calibrator's normals-only _fcalEligible), while _calMakeScripts
+  // receives the full DB as a NORMAL-only positional fallback so a thin pivot
+  // preserves the expected 35/15/5 normal/hero/icon offer mix instead of substituting specials.
   // hash STAYS on the full db so _calActive()'s staleness key vs _calDbHash(playerDB) is unchanged;
   // _pivotCalStale() already invalidates a fit when the pivot itself moves.
-  const pool=db.filter(_fcalEligible);
-  const feasErr=_calFeasible(pool,forms,K);if(feasErr)return{error:feasErr};
+  const pool=db.filter(_calSampleEligible);
+  const feasErr=_calFeasible(db,forms,K);if(feasErr)return{error:feasErr};
   const hash=_calDbHash(db);
   const seed=(opts.seed!=null&&!isNaN(opts.seed))?(Math.min(4294967295,Math.max(0,Math.floor(opts.seed)))>>>0):hash;
   const rng=_calRng(seed);
-  const scripts=_calMakeScripts(pool,forms,nScripts,K,rng);
+  const scripts=_calMakeScripts(pool,forms,nScripts,K,rng,db);
   const rarityCtx=_calBuildRarityContext(db);
   if(scripts.length<20)return{error:'Could not build enough valid draft scenarios from this DB.'};
   const nTrain=Math.floor(scripts.length*0.7);
@@ -14458,14 +14439,14 @@ function _calActive(){return NOHOLD_CAL&&NOHOLD_CAL.weights&&NOHOLD_CAL.hash===_
 // the tab, at the cost of a little wall-clock overhead from the yields themselves.
 function _calYield(){return new Promise(res=>setTimeout(res,0));}
 async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
-  opts=opts||{};const K=opts.K||5,nScripts=Math.max(20,Math.floor(Number(opts.nScripts)||300)),nVec=opts.nVec||600;
+  opts=opts||{};const K=opts.K||5,nScripts=Math.max(20,Math.floor(Number(opts.nScripts)||500)),nVec=opts.nVec||600;
   if(typeof _refreshPivotEdge==='function')_refreshPivotEdge(); // v17.1.0: mirrors the sync path exactly (section H discipline)
-  const pool=db.filter(_fcalEligible); // v19.0.18: same pivot-pool fit as the sync twin -- see its comment. Section H: keep both engines byte-identical here.
-  const feasErr=_calFeasible(pool,forms,K);if(feasErr)return{error:feasErr};
+  const pool=db.filter(_calSampleEligible); // pivot normals + all icons/heroes; deliberately NOT formation-only _fcalEligible. Full DB supplies normal fallback. Keep sync/async mirrored.
+  const feasErr=_calFeasible(db,forms,K);if(feasErr)return{error:feasErr};
   const hash=_calDbHash(db);
   const seed=(opts.seed!=null&&!isNaN(opts.seed))?(Math.min(4294967295,Math.max(0,Math.floor(opts.seed)))>>>0):hash;
   const rng=_calRng(seed);
-  const scripts=_calMakeScripts(pool,forms,nScripts,K,rng);
+  const scripts=_calMakeScripts(pool,forms,nScripts,K,rng,db);
   const rarityCtx=_calBuildRarityContext(db);
   if(scripts.length<20)return{error:'Could not build enough valid draft scenarios from this DB.'};
   const nTrain=Math.floor(scripts.length*0.7);
@@ -14512,14 +14493,10 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
 // plausibly hit the >=7 chem-pool threshold on their own -- that's the ONLY thing that excludes a
 // candidate; an icon, some heroes, and a manager on top are assumed always obtainable in a real
 // draft (see greedyCeil below), so they never gate viability. Two numbers per candidate:
-//   buildable   — v18.18.0: EXPECTED buildable. scoreXI().total of a greedy XI built from the
-//                 supply-discounted "expected visible pool" (order-statistic sample of what a real
-//                 copies-weighted draft would actually show this pivot -- see the v18.18.0 block
-//                 above greedyCeil), capped by min() with the old full-pool greedy. No longer a
-//                 guaranteed floor of every real draft: it's the realistic ~best a draft with this
-//                 DB's supply hands you (calibrated so the EPL's once-achieved 155 record is
-//                 reproduced exactly and uniquely). Thin-supply pivots with elite paper cards now
-//                 score honestly below deep-supply ones.
+//   buildable   — the untouched score of one concrete squad built from the full pivot bucket.
+//                 It answers only what the DB can construct; supply never changes this number.
+//   likelyScore  — buildable minus a separate 0..7 supply adjustment. Seven is the exact number
+//                 of matching normals the pivot needs, and the deepest viable pivot loses zero.
 //   ceiling     — v16.8.0: a per-composition RELAXATION, not a built squad (any built squad is a
 //                 lower bound by construction, which is why the old greedy 'ceiling' sat 4+ under
 //                 manual builds). For each shape (i icons in {0,1} x h heroes in {0..3}, n=11-i-h
@@ -14530,13 +14507,22 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
 //                 the best shape wins, +2 manager. Every term >= that term in ANY real squad of its
 //                 shape, so the ceiling can never sit under a buildable squad; slight over-estimates
 //                 are the acceptable direction ("ceiling" = at-or-above). Both numbers are shown as
-//                 a buildable–ceiling band; ranking is by buildable, tie-broken by normal-card
-//                 supply, with ceiling only a final deterministic tiebreak.
+//                 a buildable–ceiling band; ranking is by likelyScore, then untouched buildable,
+//                 normal-card supply, and finally ceiling.
 //   reliability — copies-weighted NORMAL-card supply of the pivot bucket, i.e. how likely a real
 //                 draft is to hand you the seven actual bucket normals the build assumes. Heroes
 //                 and icons are selected separately and must not inflate this number.
 // NOT a solver change: purely advisory, and the "use as
 // helper pivot" action retargets the live pivot head-start/rank/rarity context.
+// v19.1.0: shared real-person identity for Pivot Analyzer AND Formation Calibrator.
+// This used to be declared inside analyzePivots(), so _buildGoldPool() could not see it; its
+// ReferenceError was swallowed by a broad catch and silently sent formation calibration to GOLD_DB.
+function _pivotPersonKey(c){
+  const nm=(c&&c.name||'').trim().toLowerCase();
+  const px=(c&&c.pidx!==undefined&&c.pidx!==null&&c.pidx!=='')?String(c.pidx).trim():'';
+  return px?nm+'|pidx:'+px:nm;
+}
+
 function analyzePivots(){
   const src=playerDB.length?playerDB:DEFAULT_DB;
   const W=c=>(typeof c.copies==='number'&&c.copies>0)?c.copies:1;
@@ -14588,14 +14574,9 @@ function analyzePivots(){
   // the sum can never sit under a buildable squad -- over-estimating slightly is the acceptable
   // direction ("ceiling" means at-or-above). The greedy build is kept and now reported as
   // 'buildable' (a genuine floor), so each candidate shows an honest floor..ceiling band.
-  // v19.0.7: pivot person identity is name+pidx only. Nation, club, league, rating,
-  // type and positions are card-version facts and must never split one real person.
-  // Unambiguous names without pidx retain the historical name-only fallback.
-  const _pivotPersonKey=c=>{
-    const nm=(c&&c.name||'').trim().toLowerCase();
-    const px=(c&&c.pidx!==undefined&&c.pidx!==null&&c.pidx!=='')?String(c.pidx).trim():'';
-    return px?nm+'|pidx:'+px:nm;
-  };
+  // v19.0.7/v19.1.0: pivot person identity is name+pidx only. Nation, club, league, rating,
+  // type and positions are card-version facts and must never split one real person. The shared
+  // _pivotPersonKey() declaration above is also used by the Formation Calibrator.
   const _bestPerName=arr=>{const m={};for(const c of arr){const k=_pivotPersonKey(c);if(!m[k]||c.rating>m[k].rating)m[k]=c;}return Object.values(m).sort(byRating);};
   const _normalsAll=_bestPerName(src.filter(c=>c.type==='normal'));
   const _iconsBest=_bestPerName(iconsArr), _heroesBest=_bestPerName(heroesArr);
@@ -14603,6 +14584,75 @@ function analyzePivots(){
   const _distinctLg=new Set(src.filter(c=>c.type!=='icon').map(c=>leagueOf(c))).size+(iconsArr.length?1:0);
   const _distinctNormalLg=new Set(src.filter(c=>c.type==='normal').map(c=>leagueOf(c))).size; // v16.8.0: leagues NORMALS can actually supply (1 on an all-PL DB) — the league cap must respect where league points can come from, or every candidate inflates to the same fantasy ceiling
   const _distinctClub=new Set(src.filter(c=>c.type==='normal'&&c.club).map(c=>c.club)).size;
+
+  // v21.3.0: reliability gate only. This does NOT score a draft and does not touch either
+  // calibrator. It asks whether the candidate pool can supply every one of the 55 visible cards
+  // on a position-aware 11x5 board. Full pos[] eligibility is used; primary is irrelevant here.
+  // The 35 normal-required cells can use only this pivot's normals. The remaining 20 cells can use
+  // those same normals or global heroes/icons, but never an off-pivot normal. A real person may
+  // appear only once on the board. Ten seeded formation/type layouts are checked; zero completions
+  // marks the pivot unreliable.
+  function pivotDraftReliability(bucketCards,kind,key){
+    if(bucketCards.length<PIVOT_MIN_DRAFT_NORMALS){
+      return {valid:0,attempts:PIVOT_RELIABILITY_TRIALS,underMinimum:true};
+    }
+    const people=new Map();
+    const addCard=(c,isPivotNormal)=>{
+      const pk=_pivotPersonKey(c);
+      let p=people.get(pk);
+      if(!p){p={normalPos:new Set(),allPos:new Set()};people.set(pk,p);}
+      for(const raw of (c.pos||[])){
+        const pos=normPos(String(raw||''));if(!pos)continue;
+        p.allPos.add(pos);if(isPivotNormal)p.normalPos.add(pos);
+      }
+    };
+    bucketCards.forEach(c=>addCard(c,true));
+    iconsArr.forEach(c=>addCard(c,false));
+    heroesArr.forEach(c=>addCard(c,false));
+    const rows=Array.from(people.values());
+    const normalPeople=rows.reduce((n,p)=>n+(p.normalPos.size?1:0),0);
+    if(normalPeople<PIVOT_MIN_DRAFT_NORMALS||rows.length<55){
+      return {valid:0,attempts:PIVOT_RELIABILITY_TRIALS,underMinimum:normalPeople<PIVOT_MIN_DRAFT_NORMALS};
+    }
+    const normalByPos={},allByPos={};
+    rows.forEach((p,id)=>{
+      p.normalPos.forEach(pos=>(normalByPos[pos]=normalByPos[pos]||[]).push(id));
+      p.allPos.forEach(pos=>(allByPos[pos]=allByPos[pos]||[]).push(id));
+    });
+    const seedFor=(trial)=>{
+      let h=((PIVOT_RELIABILITY_SEED>>>0)^2166136261)>>>0;
+      const text=kind+'|'+key+'|'+trial;
+      for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+      return h>>>0;
+    };
+    const shuffle=(arr,rng)=>{for(let i=arr.length-1;i>0;i--){const j=Math.floor(rng()*(i+1)),v=arr[i];arr[i]=arr[j];arr[j]=v;}return arr;};
+    for(let trial=0;trial<PIVOT_RELIABILITY_TRIALS;trial++){
+      const rng=_calRng(seedFor(trial));
+      const form=FORMS[Math.floor(rng()*FORMS.length)];
+      const cells=[];
+      for(const pos of form.slots)for(let k=0;k<5;k++)cells.push({pos,normalOnly:false});
+      shuffle(cells,rng);
+      for(let i=0;i<PIVOT_MIN_DRAFT_NORMALS;i++)cells[i].normalOnly=true;
+      const adj=cells.map(c=>shuffle(((c.normalOnly?normalByPos[c.pos]:allByPos[c.pos])||[]).slice(),rng));
+      if(adj.some(a=>!a.length))continue;
+      const order=adj.map((a,i)=>i).sort((a,b)=>adj[a].length-adj[b].length);
+      const matchPerson=new Int16Array(rows.length);matchPerson.fill(-1);
+      const seen=new Int32Array(rows.length);let stamp=0;
+      const visit=ci=>{
+        for(const pid of adj[ci]){
+          if(seen[pid]===stamp)continue;seen[pid]=stamp;
+          const prev=matchPerson[pid];
+          if(prev<0||visit(prev)){matchPerson[pid]=ci;return true;}
+        }
+        return false;
+      };
+      let full=true;
+      for(const ci of order){stamp++;if(!visit(ci)){full=false;break;}}
+      if(full)return {valid:1,attempts:trial+1,underMinimum:false};
+    }
+    return {valid:0,attempts:PIVOT_RELIABILITY_TRIALS,underMinimum:false};
+  }
+
   function relaxCeil(bucketCards,diversityKind){
     const bucket=_bestPerName(bucketCards);
     if(bucket.length<7)return null; // same sole viability rule as the greedy build
@@ -14635,60 +14685,9 @@ function analyzePivots(){
     }
     return best<0?null:{total:best,shape:bestShape};
   }
-  // ---- v18.18.0 SUPPLY-DISCOUNTED BUILDABLE (expected visible pool) -----------------------------
-  // PROBLEM (found on the first multi-league/multi-nation DB): the old 'buildable' greedy treated
-  // the DB as a SHOP -- it deterministically handed every pivot its top-rated bucket cards, so a
-  // nation with 7 elite prints but only ~250 copies-weighted supply printed the same 155+ buildable
-  // as the EPL with 1300+. Supply only gated viability (>=7 bodies) and broke ties; it never touched
-  // the number. In a real draft you only SEE a limited random sample, so thin buckets can't actually
-  // field their paper-best seven.
-  // MODEL: treat the draft as copies-weighted sampling. E = PIVOT_DRAFT_EXPOSURES * (bucketSupply /
-  // totalNormalSupply) is the expected number of bucket-card sightings. Order statistics: the j-th
-  // best of E draws from a copies-expanded list of total weight Wb sits at expected weighted rank
-  // j*(Wb+1)/(E+1). So instead of feeding greedy ranks 1..7, we feed it the cards at those
-  // discounted weighted ranks -- big supply => ranks collapse toward 1..7 (EPL keeps its top cards),
-  // thin supply => the build is forced deep into its own rating curve, and the number drops honestly.
-  // The final buildable is min(full-pool greedy, expected-pool greedy): greedy is a heuristic, so a
-  // RESTRICTED pool can occasionally luck into a higher-scoring XI than the full pool -- the min()
-  // restores 'subset can never beat the shop' sanity and guarantees buildable <= ceiling still holds
-  // (expected <= full greedy <= relaxation).
-  // CALIBRATION: PIVOT_DRAFT_EXPOSURES is FITTED, not derived -- swept so the EPL (supply 1316 on
-  // the v18.17 DB) lands at exactly its once-achieved real-world record of 155 while every other
-  // candidate falls below (K=200 dropped EPL to 154; K>=350 let LaLiga/France tie at 155; K=300 is
-  // the anchor point). Re-check this anchor whenever the DB grows materially.
-  // REJECTED ALTERNATIVE (documented, unused): Monte Carlo -- deal N synthetic copies-weighted
-  // drafts, greedy-build each pivot per dealt pool, report P90. Strictly more honest, but expensive
-  // for what is a rough advisory estimate whose main job is ranking pivots; the deterministic
-  // order-statistic pool gets the same supply sensitivity in O(bucket) with zero variance. Revisit
-  // only if the deterministic version demonstrably misranks in practice (the ~150-sim calibration
-  // harness infrastructure could be reused; iOS would need a low N or to keep this path).
-  // KNOWN RESIDUAL LIMITATION: the discount works by pushing picks DEEPER into the bucket's own
-  // rating curve, so a bucket with barely more distinct cards than the seven it needs (e.g. a
-  // 7-card league, or Norway's ~41 supply) has no depth to be pushed into and keeps a flattering
-  // number even though E<<7 means a real draft would rarely show even half its bucket. If that
-  // proves misleading once the DB fills out, the candidate fix is a viability/annotation gate on
-  // E<7 ("expected sightings can't fill the seven"), NOT an ad-hoc score penalty -- deliberately
-  // left unimplemented pending a product call.
-  // v18.19.0: the exposure constant moved to the user-tunable PIV settings block (see PIV_DEF).
-  const PIVOT_DRAFT_EXPOSURES=Math.max(1,+PIV.EXPOSURES||PIV_DEF.EXPOSURES);
-  function _expectedVisiblePool(bucketCards,supplyW){
-    const sorted=bucketCards.slice().sort(byRating);
-    const cum=[];let acc=0;for(const c of sorted){acc+=W(c);cum.push(acc);}
-    const Wb=acc;if(!Wb)return [];
-    const E=PIVOT_DRAFT_EXPOSURES*supplyW/totalNormalW;
-    const draws=Math.max(7,Math.floor(E)); // always offer at least 7 sightings so the >=7-distinct viability rule keeps deciding, not this pool
-    const denom=(E>=7?E:7)+1; // E<7: stretch the 7 expected sightings across the whole list (deep, weak picks -- the honest read for near-unviable supply)
-    const pool=[];const usedNames=new Set();
-    for(let j=1;j<=draws;j++){
-      let r=j*(Wb+1)/denom;if(r>Wb)break;
-      let idx=0;while(idx<cum.length&&cum[idx]<r)idx++;
-      let k=idx;while(k<sorted.length&&usedNames.has(sorted[k].name))k++; // two prints of one player are one sighting slot -- walk deeper
-      if(k>=sorted.length){k=idx;while(k>=0&&usedNames.has(sorted[k].name))k--;if(k<0)break;} // deep end exhausted: walk back up so a >=7-distinct bucket always yields >=7 pool entries
-      usedNames.add(sorted[k].name);pool.push(sorted[k]);
-    }
-    return pool;
-  }
-  function greedyCeil(bucketCards,diversityKind,_legacyKindArg,poolOverride){ // v18.18.0: _legacyKindArg preserves the historical 3-arg call shape (the 3rd positional was never read -- see maintainer note in Section Z); poolOverride, when present, is the supply-discounted expected visible pool
+  // v21.2.0: the greedy squad below is the honest, unpenalized buildable value. Supply is
+  // evaluated only after that squad exists, as a separate bounded adjustment used for ranking.
+  function greedyCeil(bucketCards,diversityKind,_legacyKindArg,poolOverride){ // v21.3.1: callers pass the diversity kind as the second argument; the legacy third argument remains unused for compatibility. poolOverride, when present, is the supply-discounted expected visible pool
     if(bucketCards.length<7)return null; // can't fill the pivot's own 7 -- the only null case
     const pool=(poolOverride&&poolOverride.length>=7)?poolOverride:bucketCards.slice().sort(byRating); // a <7-distinct-name expected pool (dup-print buckets) falls back to the undiscounted list rather than dropping the candidate
     const chosen=[];const used=new Set();
@@ -14730,78 +14729,47 @@ function analyzePivots(){
     return {raw:{...raw,chem,total,full:true},total:total+2}; // +2 manager, not a card in the XI
   }
   const out=[];
-  // v18.23.0: relative supply is measured against the deepest VIABLE candidate of either kind.
-  // Candidates below seven distinct cards are excluded from this reference for the same reason they
-  // are excluded from the results: they cannot supply the mandatory seven pivot normals at all.
-  const maxPivotSupply=Math.max(1,
-    ...Object.values(lg).filter(x=>x.cards.length>=7).map(x=>x.w),
-    ...Object.values(nat).filter(x=>x.cards.length>=7).map(x=>x.w));
-  // v19.0.17: the demonstrated 155 calibration belongs to the deepest viable LEAGUE pivot.
-  // Keep that reference separate from maxPivotSupply so a future giant nation bucket cannot steal
-  // the league anchor merely by accumulating cards across many leagues.
-  const maxLeaguePivotSupply=Math.max(1,
-    ...Object.values(lg).filter(x=>x.cards.length>=7).map(x=>x.w));
-  const PIVOT_BUILDABLE_ANCHOR=155;
-  // Buildable = round(discounted greedy - absolute thin-supply - relative supply-gap - diversity-concentration penalties).
-  // The absolute Hill curve is on
-  // copies-weighted supply (see _pivSupplyPenalty): ~0 for deep buckets, brutal for thin ones. It is
-  // subtracted from the ALREADY pool-discounted number, then rounded. The deepest viable league is
-  // then floored at the demonstrated 155 anchor; all other pivots remain fully formula-driven. Penalty
-  // is non-negative and the 155 anchor remains below the validated ceiling, so buildable <= ceiling holds.
-  const _mkBuildable=(gFull,gExp,supplyW,diversity,isLeague)=>{
-    const base=Math.min(gFull.total,gExp?gExp.total:gFull.total);
-    const thinPenalty=_pivSupplyPenalty(supplyW);
-    const relativePenalty=_pivRelativeSupplyPenalty(supplyW,maxPivotSupply);
-    const diversityPenalty=_pivDiversityPenalty(diversity&&diversity.effective);
-    const penalty=thinPenalty+relativePenalty+diversityPenalty;
-    const rounded=Math.round(base-penalty);
-    // v19.0.17: 155 is an observed buildable squad, so the advisory floor must not fall below it
-    // merely because unrelated leagues were appended to the catalogue. Apply the floor to the
-    // deepest viable LEAGUE, never by league name. Other candidates keep their unmodified formula.
-    const isAnchor=!!isLeague&&supplyW>=maxLeaguePivotSupply-1e-9;
-    const buildable=isAnchor?Math.max(PIVOT_BUILDABLE_ANCHOR,rounded):rounded;
-    const anchorBonus=buildable-rounded;
-    return {buildable,rawBuildable:base,penalty,thinPenalty,relativePenalty,diversityPenalty,anchorBonus,isAnchor};
+  const viableBuckets=[
+    ...Object.values(lg).filter(x=>x.cards.length>=7),
+    ...Object.values(nat).filter(x=>x.cards.length>=7)
+  ];
+  const maxPivotSupply=Math.max(1,...viableBuckets.map(x=>x.w));
+  const maxPivotIdentities=Math.max(1,...viableBuckets.map(x=>new Set(x.cards.map(_pivotPersonKey)).size));
+  const _mkPivotScores=(gFull,supplyW,identityCount)=>{
+    const buildable=gFull.total;
+    const supply=_pivSupplyScores(supplyW,maxPivotSupply,identityCount,maxPivotIdentities);
+    const likelyScore=buildable-supply.supplyAdjustment-PIVOT_REALISTIC_OFFSET;
+    return {buildable,likelyScore,...supply};
   };
   for(const L in lg){
-    if(L==='Icons')continue;
-    const g=greedyCeil(lg[L].cards,c=>c.type==='hero'?2:1,'league');
-    const gx=greedyCeil(lg[L].cards,c=>c.type==='hero'?2:1,'league',_expectedVisiblePool(lg[L].cards,lg[L].w)); // v18.18.0: same greedy, supply-discounted pool
-    const rc=relaxCeil(lg[L].cards,'league'); // v16.8.0: the CEILING is the relaxation (true upper bound); greedy is the buildable floor
+    if(L==='Icons'||lg[L].cards.length<7)continue;
+    const identities=new Set(lg[L].cards.map(_pivotPersonKey)).size;
+    const draft=pivotDraftReliability(lg[L].cards,'league',L);
+    if(!draft.valid){out.push({kind:'league',key:L,unreliable:true,draftValid:0,draftAttempts:draft.attempts,normalCardCount:lg[L].cards.length,identityCount:identities,reliability:Math.round(lg[L].w)});continue;}
+    const g=greedyCeil(lg[L].cards,'league');
+    const rc=relaxCeil(lg[L].cards,'league');
     const diversity=_pivDiversityStats(lg[L].cards,'league',W);
-    if(g&&rc){const b=_mkBuildable(g,gx,lg[L].w,diversity,true);out.push({kind:'league',key:L,ceiling:rc.total,buildable:b.buildable,rawBuildable:b.rawBuildable,penalty:b.penalty,thinPenalty:b.thinPenalty,relativePenalty:b.relativePenalty,diversityPenalty:b.diversityPenalty,diversityEffective:diversity.effective,diversityDominantShare:diversity.dominantShare,diversityCategories:diversity.categories,shape:rc.shape,reliability:Math.round(lg[L].w),isAnchor:b.isAnchor,detail:g.raw});} // reliability is copies-weighted NORMALS only: these are the seven bucket bodies the build actually requires
+    if(g&&rc){const b=_mkPivotScores(g,lg[L].w,identities);out.push({kind:'league',key:L,ceiling:rc.total,buildable:b.buildable,likelyScore:b.likelyScore,copiesRatio:b.copiesRatio,identityRatio:b.identityRatio,supplyConfidence:b.supplyConfidence,supplyAdjustment:b.supplyAdjustment,identityCount:identities,diversityEffective:diversity.effective,diversityDominantShare:diversity.dominantShare,diversityCategories:diversity.categories,shape:rc.shape,reliability:Math.round(lg[L].w),detail:g.raw,draftValid:draft.valid,draftAttempts:draft.attempts});}
   }
   for(const N in nat){
-    const g=greedyCeil(nat[N].cards,c=>c.type==='icon'?2:1,'nation');
-    const gx=greedyCeil(nat[N].cards,c=>c.type==='icon'?2:1,'nation',_expectedVisiblePool(nat[N].cards,nat[N].w));
+    if(nat[N].cards.length<7)continue;
+    const identities=new Set(nat[N].cards.map(_pivotPersonKey)).size;
+    const draft=pivotDraftReliability(nat[N].cards,'nation',N);
+    if(!draft.valid){out.push({kind:'nation',key:N,unreliable:true,draftValid:0,draftAttempts:draft.attempts,normalCardCount:nat[N].cards.length,identityCount:identities,reliability:Math.round(nat[N].w)});continue;}
+    const g=greedyCeil(nat[N].cards,'nation');
     const rc=relaxCeil(nat[N].cards,'nation');
     const diversity=_pivDiversityStats(nat[N].cards,'nation',W);
-    if(g&&rc){const b=_mkBuildable(g,gx,nat[N].w,diversity,false);out.push({kind:'nation',key:N,ceiling:rc.total,buildable:b.buildable,rawBuildable:b.rawBuildable,penalty:b.penalty,thinPenalty:b.thinPenalty,relativePenalty:b.relativePenalty,diversityPenalty:b.diversityPenalty,diversityEffective:diversity.effective,diversityDominantShare:diversity.dominantShare,diversityCategories:diversity.categories,shape:rc.shape,reliability:Math.round(nat[N].w),isAnchor:false,detail:g.raw});}
+    if(g&&rc){const b=_mkPivotScores(g,nat[N].w,identities);out.push({kind:'nation',key:N,ceiling:rc.total,buildable:b.buildable,likelyScore:b.likelyScore,copiesRatio:b.copiesRatio,identityRatio:b.identityRatio,supplyConfidence:b.supplyConfidence,supplyAdjustment:b.supplyAdjustment,identityCount:identities,diversityEffective:diversity.effective,diversityDominantShare:diversity.dominantShare,diversityCategories:diversity.categories,shape:rc.shape,reliability:Math.round(nat[N].w),detail:g.raw,draftValid:draft.valid,draftAttempts:draft.attempts});}
   }
-  out.sort((a,b)=>((b.buildable||0)-(a.buildable||0))||((b.isAnchor?1:0)-(a.isAnchor?1:0))||(b.reliability-a.reliability)||(b.ceiling-a.ceiling));
+  out.sort((a,b)=>{
+    if(!!a.unreliable!==!!b.unreliable)return a.unreliable?1:-1;
+    if(a.unreliable)return (b.normalCardCount-a.normalCardCount)||(b.identityCount-a.identityCount)||(b.reliability-a.reliability)||a.key.localeCompare(b.key);
+    return (b.likelyScore-a.likelyScore)||(b.buildable-a.buildable)||(b.reliability-a.reliability)||(b.ceiling-a.ceiling);
+  });
   return out;
 }
-// v18.19.0: advanced pivot-analyzer settings plumbing. Writes straight into PIV, persists, and
-// re-runs the analysis so the table (and the PIVOT_RANK/PIVOT_EDGE it feeds) stays in sync with the
-// knobs.
-// v18.19.1 BUGFIX (the original four inputs refused to be cleared; later inputs, including v18.28 diversity, use the same fixed plumbing): the old handler ran on every keystroke,
-// coerced a BLANK field through `parseFloat('')` -> NaN -> "fall back to the default", clamped it,
-// and then _pivSyncInputs() wrote that default straight back into the box. Net effect: you could
-// never empty a field, so you could never type a value that didn't start with the default's leading
-// digit. Two rules now keep editing sane:
-//   (1) a blank/unparseable field is LEFT ALONE mid-edit -- PIV keeps its last good value for that
-//       knob and nothing is written back into the box, so the field can sit empty while you retype;
-//   (2) clamping to the legal range happens on COMMIT (blur/change), not on keystroke, so typing
-//       "5" on the way to "500" isn't snapped to the minimum under your cursor.
-// _pivSyncInputs() additionally never overwrites the element that currently has focus, which is what
-// makes the startup/analysis-end refresh safe to keep.
-// v19.0.23: _pivRenderPreview()'s math is pure PIV-settings arithmetic and never touched the DB, so
-// it used to render fine even before "Analyze pivots from DB" had ever run -- but runPivotAnalysis()
-// only calls _pivSyncInputs() (which renders this box) on its SUCCESS path, not on its two early
-// returns (analyzePivots() throwing, or 0 candidates reaching threshold). Opening the dropdown before
-// a first successful analysis, or right after either of those early-return cases, left the box
-// permanently blank. _pivAnalyzed now tracks whether an analysis has actually completed, and the
-// preview shows a real "not analysed yet" message instead of silence until one has.
+// v21.2.0: pivot ranking is fixed and has no tuning controls. Freshness tracking remains so a
+// DB edit cannot leave an apparently current ranking on screen.
 let _pivAnalyzed=false;
 let _pivAnalyzedDbHash=null;
 function _pivDbSource(){return playerDB.length?playerDB:DEFAULT_DB;}
@@ -14810,8 +14778,8 @@ function _pivDbHash(db){
   for(const c of (db||[])){
     const cp=(typeof c.copies==='number'&&c.copies>0)?c.copies:1;
     const px=(c.pidx!==undefined&&c.pidx!==null)?c.pidx:'';
-    const s=(c.name||'')+'|'+c.rating+'|'+c.type+'|'+c.nation+'|'+(c.league||'')+'|'+(c.club||'')+'|'+(c.pos||[]).join(',')+'|'+(c.primary||'')+'|'+cp+'|'+px;
-    for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+    const v=(c.name||'')+'|'+c.rating+'|'+c.type+'|'+c.nation+'|'+(c.league||'')+'|'+(c.club||'')+'|'+(c.pos||[]).join(',')+'|'+(c.primary||'')+'|'+cp+'|'+px;
+    for(let i=0;i<v.length;i++){h^=v.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
   }
   return h>>>0;
 }
@@ -14822,59 +14790,11 @@ function _renderPivotDbFreshness(){
   el.textContent=stale?'⚠ Player DB changed since pivots were last analyzed. Re-analyze before trusting these rankings.':'';
 }
 function _pivMarkDbChanged(){_renderPivotDbFreshness();}
-function _pivSyncInputs(){
-  const set=(id,v)=>{const el=$('#'+id);if(!el)return;if(document.activeElement===el)return; // never yank the value out from under a field being typed into
-    el.value=v;};
-  set('pivExposures',PIV.EXPOSURES);set('pivPenMax',PIV.PEN_MAX);set('pivPenKnee',PIV.PEN_KNEE);set('pivPenSteep',PIV.PEN_STEEP);set('pivSupplyLogWeight',PIV.SUPPLY_LOG_WEIGHT);set('pivDiversityWeight',PIV.DIVERSITY_WEIGHT);
-  _pivRenderPreview();
-}
-function _pivRenderPreview(){
-  const box=$('#pivPenPreview');if(!box)return;
-  if(!_pivAnalyzed){box.innerHTML='<span style="color:var(--warn)">Pivot analysis is queued automatically on startup; use the button above to rerun it after DB changes.</span>';return;}
-  const pts=[1300,450,300,180,100,50,15,7];
-  const w=Math.max(0,+PIV.SUPPLY_LOG_WEIGHT||0),dw=Math.max(0,+PIV.DIVERSITY_WEIGHT||0);box.innerHTML='Thin penalty at supply &rarr; '+pts.map(s=>s+': <b>'+_pivSupplyPenalty(s).toFixed(2)+'</b>').join(' \u00b7 ')+'<br>Relative gap penalty &rarr; 100% of deepest: <b>0.00</b> \u00b7 50%: <b>'+(w*Math.log(2)).toFixed(2)+'</b> \u00b7 25%: <b>'+(w*Math.log(4)).toFixed(2)+'</b> \u00b7 10%: <b>'+(w*Math.log(10)).toFixed(2)+'</b>'+'<br>Diversity penalty (effective clubs/leagues) &rarr; 7+: <b>0.00</b> \u00b7 5: <b>'+(dw*Math.log(7/5)).toFixed(2)+'</b> \u00b7 3: <b>'+(dw*Math.log(7/3)).toFixed(2)+'</b> \u00b7 1: <b>'+(dw*Math.log(7)).toFixed(2)+'</b>';
-}
-// oninput: live-update from any field that currently parses; blank/garbage fields are skipped, NOT
-// defaulted, so they can be emptied and retyped freely.
-function onPivSettingChange(){
-  const live=(id,key)=>{const el=$('#'+id);if(!el)return;const raw=String(el.value==null?'':el.value).trim();if(raw==='')return; // empty mid-edit: keep the last good value, write nothing back
-    const v=parseFloat(raw);if(!isFinite(v))return;PIV[key]=v;};
-  live('pivExposures','EXPOSURES');live('pivPenMax','PEN_MAX');live('pivPenKnee','PEN_KNEE');live('pivPenSteep','PEN_STEEP');live('pivSupplyLogWeight','SUPPLY_LOG_WEIGHT');live('pivDiversityWeight','DIVERSITY_WEIGHT');
-  savePivSettings();_pivRenderPreview();runPivotAnalysis();
-}
-// onchange (fires on blur/commit): a field left BLANK -- or holding a value that's illegal for that
-// knob -- reverts to that knob's DEFAULT, matching how every other setting in the app behaves. Legal
-// values are then clamped and re-rendered.
-// v18.19.2: note the deliberate asymmetry. Blank => default for every knob. Zero => default for
-// Exposures and Knee, because zero is genuinely illegal there (Exposures 0 means "the draft shows
-// you no cards"; Knee 0 divides by zero inside the curve). But zero is a MEANINGFUL, supported value
-// for Max -- it's the documented way to switch the thin-supply penalty off entirely and fall back to
-// pure v18.18.0 pool-discount behaviour -- so Max=0 is kept, not reset. Steep=0 is likewise legal
-// (it flattens the curve to a constant max/2 for every pivot; useless, but not invalid).
-function onPivSettingCommit(){
-  const commit=(id,key,{min,zeroIsIllegal})=>{
-    const el=$('#'+id);
-    const raw=el?String(el.value==null?'':el.value).trim():'';
-    let v=parseFloat(raw);
-    if(raw===''||!isFinite(v))v=PIV_DEF[key];              // blank / garbage -> back to default
-    else if(zeroIsIllegal&&v===0)v=PIV_DEF[key];           // 0 is not a usable value for this knob -> back to default
-    else v=Math.max(min,v);                                // otherwise just keep it in range
-    PIV[key]=v;
-  };
-  commit('pivExposures','EXPOSURES',{min:1,zeroIsIllegal:true});
-  commit('pivPenMax','PEN_MAX',{min:0,zeroIsIllegal:false}); // 0 = penalty disabled, a supported setting
-  commit('pivPenKnee','PEN_KNEE',{min:1,zeroIsIllegal:true});
-  commit('pivPenSteep','PEN_STEEP',{min:0,zeroIsIllegal:false});
-  commit('pivSupplyLogWeight','SUPPLY_LOG_WEIGHT',{min:0,zeroIsIllegal:false});
-  commit('pivDiversityWeight','DIVERSITY_WEIGHT',{min:0,zeroIsIllegal:false});
-  savePivSettings();_pivSyncInputs();runPivotAnalysis();
-}
-function resetPivSettings(){PIV={...PIV_DEF};savePivSettings();_pivSyncInputs();runPivotAnalysis();}
 function runPivotAnalysis(){
   if(_PIVOT_AUTO_TIMER!==null){clearTimeout(_PIVOT_AUTO_TIMER);_PIVOT_AUTO_TIMER=null;}
   const box=$('#pivotResult');if(!box)return;
   const t0=performance.now();
-  let res;try{res=analyzePivots();}catch(e){box.innerHTML='<span style="color:var(--warn)">\u26a0 '+(e&&e.message||'Analysis failed')+'</span>';_pivAnalyzed=false;_pivRenderPreview();return;}
+  let res;try{res=analyzePivots();}catch(e){box.innerHTML='<span style="color:var(--warn)">\u26a0 '+(e&&e.message||'Analysis failed')+'</span>';_pivAnalyzed=false;return;}
   // v17.5.0: keep PIVOT_RANK/PIVOT_EDGE in sync with whatever the analyzer just showed -- previously
   // only setHelperPivot()/calibration start refreshed them, so viewing the analyzer (without also
   // switching pivot or recalibrating) left the pick-time rank penalty stale or, on a first-ever load,
@@ -14890,15 +14810,21 @@ function runPivotAnalysis(){
   // pivot the user has since chosen deliberately.
   if(_pivotAutoDefaultPending){
     _pivotAutoDefaultPending=false;
-    if(res.length)setHelperPivot(res[0].kind,res[0].key);
+    const firstReliable=res.find(r=>!r.unreliable);
+    if(firstReliable)setHelperPivot(firstReliable.kind,firstReliable.key);
   }
   const ms=Math.max(1,Math.round(performance.now()-t0));
-  if(!res.length){box.innerHTML='<span class="tiny" style="color:var(--mut)">No candidate reaches the 7-unit pivot threshold in this DB.</span>';_pivAnalyzed=true;_pivAnalyzedDbHash=_pivDbHash(_pivDbSource());_renderPivotDbFreshness();_pivRenderPreview();return;}
+  if(!res.length){box.innerHTML='<span class="tiny" style="color:var(--mut)">No candidate reaches the seven-card pivot threshold in this DB.</span>';_pivAnalyzed=true;_pivAnalyzedDbHash=_pivDbHash(_pivDbSource());_renderPivotDbFreshness();return;}
   const K=getPivotTopK();
   const rowHtml=(r,i)=>{
+    if(r.unreliable){
+      return '<div style="margin:3px 0"><b>'+(i+1)+'.</b> '+(r.kind==='nation'?'\uD83C\uDF10 nation ':'')+r.key
+        +' \u2014 <span style="color:var(--warn)">This pivot cannot reliably make any draft.</span></div>';
+    }
     const useBtn=' <button class="btn gho sm" style="padding:2px 8px;font-size:10.5px" onclick="setHelperPivot(\''+r.kind+'\',\''+r.key.replace(/'/g,"\\'")+'\')">use as helper pivot</button>';
+    const realistic=(Math.round(r.likelyScore*10)/10).toFixed(1),uniqueText=Number(r.identityCount||0).toLocaleString(),totalSupplyText=Number(r.reliability||0).toLocaleString();
     return '<div style="margin:3px 0"><b>'+(i+1)+'.</b> '+(r.kind==='nation'?'\uD83C\uDF10 nation ':'')+r.key
-      +' \u2014 <b>'+(r.buildable!==undefined?r.buildable+'\u2013':'')+r.ceiling+'</b> (buildable\u2013ceiling) \u00b7 supply '+r.reliability+' \u00b7 spread '+(r.diversityEffective||1).toFixed(1)+' '+(r.kind==='league'?'clubs':'leagues')+' (top '+Math.round((r.diversityDominantShare||0)*100)+'%)'+(r.penalty>=0.5?' \u00b7 <span style="color:var(--warn)">total penalty \u2212'+(Math.round(r.penalty*10)/10)+'</span>':'')+(r.diversityPenalty>=0.5?' <span style="color:var(--warn)">[diversity \u2212'+(Math.round(r.diversityPenalty*10)/10)+']</span>':'')+useBtn+'</div>';
+      +' \u2014 <b>Realistic '+realistic+'</b> \u00b7 Perfect '+r.buildable+' \u00b7 Theoretical Maximum '+r.ceiling+' \u00b7 Unique Players '+uniqueText+' / '+totalSupplyText+' Total Supply'+useBtn+'</div>';
   };
   const top=res.slice(0,K).map((r,i)=>rowHtml(r,i)).join('');
   // v16.1.0: candidates ranked outside the chosen top K are no longer dropped — same convention
@@ -14906,7 +14832,7 @@ function runPivotAnalysis(){
   // collapsed block at the bottom instead of being silently sliced away.
   const rest=res.slice(K);
   const restHtml=rest.length?('<details style="margin-top:8px"><summary class="tiny" style="color:var(--mut);cursor:pointer">'+rest.length+' more outside the top '+K+'</summary><div style="margin-top:4px;opacity:.75">'+rest.map((r,i)=>rowHtml(r,K+i)).join('')+'</div></details>'):'';
-  box.innerHTML='<div class="tiny" style="color:var(--mut)">Analyzed in '+ms+' ms \u00b7 buildable = realistic squad size from a real draft, ceiling = best case, supply = eligible card pool. Current helper pivot: <b id="pivotCurrent">'+(PIVOT_KIND==='nation'?'\uD83C\uDF10 ':'')+PIVOT_KEY+'</b> \u00b7 top '+K+' shown</div>'+top+restHtml;
+  box.innerHTML='<div class="tiny" style="color:var(--mut)">Analyzed in '+ms+' ms \u00b7 current helper pivot: <b id="pivotCurrent">'+(PIVOT_KIND==='nation'?'\uD83C\uDF10 ':'')+PIVOT_KEY+'</b> \u00b7 top '+K+' shown</div>'+top+restHtml;
   // v17.8.25: box.innerHTML above wipes any warning setHelperPivot() may have appended earlier in
   // this same call (the auto-default branch above calls setHelperPivot() before this point) --
   // re-render it fresh now that the box's real content is in place.
@@ -14914,257 +14840,227 @@ function runPivotAnalysis(){
   _pivAnalyzed=true;
   _pivAnalyzedDbHash=_pivDbHash(_pivDbSource());
   _renderPivotDbFreshness();
-  _pivSyncInputs(); // v18.19.0: keep the advanced-settings inputs + penalty preview showing the values this run actually used (also populates them on the startup call)
 }
 
-// ============================ v15.0 FORMATION CALIBRATOR ============================
-// Replaces the subjective per-position FW weights with an OBJECTIVE, analytic ranking. No draft is
-// simulated and fillability is irrelevant — every formation has 11 slots and can always be filled.
-// What actually separates shapes is WHICH POSITIONS HOLD THE BEST ELIGIBLE CARDS, judged by the same
-// objective card weights the no-hold calibrator already fits, including its three fitted rarity axes.
-// Eligibility deliberately mirrors the intended pivot draft pool: every icon and hero is allowed;
-// a normal is allowed only when it matches the currently chosen league/nation pivot. Off-pivot
-// normals are dismissed completely rather than merely penalised.
-const _FORMCAL_KEY='pacwyn_formcal_v1';
-var FORM_CAL=null; // {values:{formName:perSlotScore}, source, date} — var (not let) so recomputeFormScores(), which runs at load BEFORE this line, sees `undefined` (falsy) rather than a TDZ throw
-(function restoreFormCal(){try{const raw=localStorage.getItem(_FORMCAL_KEY);if(raw){const s=JSON.parse(raw);if(s&&s.values)FORM_CAL=s;}}catch(e){}})();
+// ============================ FORMATION CALIBRATOR ============================
+// Primary-only seeded draft simulation. Every formation receives X synthetic 11x5 starter boards.
+// A slot may draw only cards whose TRUE primary position matches that slot. Pivot-matching normals
+// are the normal pool; icons and heroes stay global; when the pivot has no normal for a position, an
+// ordinary off-pivot normal fills that normal offer instead of silently turning it into another
+// special. Each 55-offer board uses the same realistic target as the helper calibrator: roughly
+// 35 normals, 15 heroes and 5 icons with bounded variance.
+//
+// Each generated board is searched with a fixed-width deterministic beam. The beam is deliberately
+// not user-tunable: X and seed are the only controls. Candidate lineups are ranked during the search
+// by their live partial squad value, then the surviving full XIs are scored with the real scoreXI()
+// formula plus the normal manager +2. Repeated real people are forbidden via name+pidx. Formation
+// score = 50% mean, 25% best and 25% worst final score across its X boards.
+const _FORMCAL_KEY='pacwyn_formcal_v2';
+const _FORMCAL_CFG_KEY='pacwyn_formcal_cfg_v4';
+const _FCAL_FORMULA_VERSION='primary-only-11x5-sim-v2-range-rank';
+const _FCAL_BEAM=64;
+const _FCAL_CFG_DEF={x:10,seed:12345};
+const _FCAL_CFG_BOUNDS={x:[1,5000],seed:[0,2147483647]};
+var FORM_CAL_CFG={..._FCAL_CFG_DEF};
+var FORM_CAL=null; // {values:{formation:balanced rank score}, stats:{formation:{avg,best,worst,rank}}, x, seed, source, date}
+var _fcalRunning=false;
+(function restoreFormCalConfig(){
+  try{
+    const raw=localStorage.getItem(_FORMCAL_CFG_KEY);
+    if(raw){
+      const v=JSON.parse(raw)||{};
+      for(const k of Object.keys(_FCAL_CFG_DEF)){
+        const b=_FCAL_CFG_BOUNDS[k],n=+v[k];
+        if(Number.isFinite(n))FORM_CAL_CFG[k]=Math.round(Math.max(b[0],Math.min(b[1],n)));
+      }
+    }
+  }catch(e){}
+})();
+(function restoreFormCal(){try{const raw=localStorage.getItem(_FORMCAL_KEY);if(raw){const v=JSON.parse(raw);if(v&&v.values)FORM_CAL=v;}}catch(e){}})();
 
-function _fcalEligible(c){
+function _saveFormCalConfig(){try{localStorage.setItem(_FORMCAL_CFG_KEY,JSON.stringify(FORM_CAL_CFG));}catch(e){}}
+function _fcalConfigSig(){return _FCAL_FORMULA_VERSION+'|beam='+_FCAL_BEAM+'|x='+FORM_CAL_CFG.x+'|seed='+FORM_CAL_CFG.seed+'|mix=shared-slot-iid-35-15-5|manager=2|rank=avg50-best25-worst25';}
+function _fcalRankScore(avg,best,worst){return avg*0.5+best*0.25+worst*0.25;}
+function _fcalSyncInputs(){
+  const x=$('#formCalX'),seed=$('#formCalSeed');
+  if(x&&document.activeElement!==x)x.value=FORM_CAL_CFG.x;
+  if(seed&&document.activeElement!==seed)seed.value=FORM_CAL_CFG.seed;
+}
+function _fcalCommitSetting(id,key){
+  const el=$('#'+id),b=_FCAL_CFG_BOUNDS[key];if(!el||!b)return;
+  let v=+el.value;if(!Number.isFinite(v))v=_FCAL_CFG_DEF[key];
+  v=Math.round(Math.max(b[0],Math.min(b[1],v)));
+  FORM_CAL_CFG[key]=v;el.value=v;_saveFormCalConfig();_formCalContextChanged();
+  const st=$('#formCalStatus');if(st)st.innerHTML='<span style="color:var(--mut)">Test settings changed — simulate formations to apply them.</span>';
+}
+function _calSampleEligible(c){
   if(!c)return false;
   const typ=c.type||'normal';
   return typ==='icon'||typ==='hero'||(typ==='normal'&&_pivotMatches(c));
 }
-function _fcalWeightSig(){return NOHOLD_CAL&&NOHOLD_CAL.weights?JSON.stringify(NOHOLD_CAL.weights):'';}
 function _formCalContextStale(){
   if(!FORM_CAL||!FORM_CAL.values)return false;
-  return FORM_CAL.dbHash!==_calDbHash(playerDB)
-    ||FORM_CAL.calSig!==_fcalWeightSig()
+  return FORM_CAL.dbHash!==_calDbHash(playerDB)||FORM_CAL.calSig!==_fcalConfigSig()
     ||FORM_CAL.pivotKind!==PIVOT_KIND||FORM_CAL.pivotKey!==PIVOT_KEY;
 }
-function _formCalContextChanged(){
-  recomputeFormScores();
+function _formCalContextChanged(){recomputeFormScores();_renderFormCalResult();}
+function _fcalPrimary(c){return normPos(String((c&&c.primary)||((c&&c.pos&&c.pos[0])||'')));}
+function _fcalSeed(base){
+  let h=((base>>>0)^2166136261)>>>0;
+  for(let a=1;a<arguments.length;a++){
+    const str=String(arguments[a]);
+    for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+    h^=124;h=Math.imul(h,16777619)>>>0;
+  }
+  return h>>>0;
+}
+function _fcalBucket(cards){
+  const cum=[];let total=0;
+  for(const c of cards){total+=(typeof c.copies==='number'&&c.copies>0)?c.copies:1;cum.push(total);}
+  return{cards,cum,total};
+}
+function _fcalDraw(bucket,rng,usedPeople){
+  if(!bucket||!bucket.cards.length||!(bucket.total>0))return null;
+  const one=()=>{const r=rng()*bucket.total;let lo=0,hi=bucket.cum.length-1;while(lo<hi){const m=(lo+hi)>>1;if(bucket.cum[m]<r)lo=m+1;else hi=m;}return bucket.cards[lo];};
+  for(let t=0;t<24;t++){const c=one();if(!usedPeople.has(c.personKey))return c;}
+  for(const c of bucket.cards)if(!usedPeople.has(c.personKey))return c;
+  return null;
+}
+function _fcalBuildPools(){
+  const src=playerDB.length?playerDB:DEFAULT_DB;
+  const wrapped=[];
+  for(let i=0;i<src.length;i++){
+    const c=src[i],primary=_fcalPrimary(c);if(!c||!primary)continue;
+    wrapped.push({
+      id:i+1,label:c.name,name:c.name,rating:+c.rating||0,type:c.type||'normal',nation:c.nation||'',
+      league:c.league||'',club:c.club||'',pos:[primary],primary,copies:(typeof c.copies==='number'&&c.copies>0)?c.copies:1,
+      personKey:_pivotPersonKey(c)
+    });
+  }
+  const positions=new Set();FORMS.forEach(f=>{if(f.name!=='Custom')f.slots.forEach(p=>positions.add(p));});
+  const byPos={};
+  for(const p of positions){
+    const at=wrapped.filter(c=>c.primary===p);
+    byPos[p]={
+      normal:_fcalBucket(at.filter(c=>c.type==='normal'&&_pivotMatches(c))),
+      normalFallback:_fcalBucket(at.filter(c=>c.type==='normal')),
+      hero:_fcalBucket(at.filter(c=>c.type==='hero')),
+      icon:_fcalBucket(at.filter(c=>c.type==='icon'))
+    };
+  }
+  return{byPos,total:wrapped.length,pivotNormals:wrapped.filter(c=>c.type==='normal'&&_pivotMatches(c)).length,heroes:wrapped.filter(c=>c.type==='hero').length,icons:wrapped.filter(c=>c.type==='icon').length};
+}
+function _fcalGenerateBoard(form,pools,seed,trial){
+  // Common-random-number comparison: the same seed/trial/position occurrence produces the same
+  // five offers in every formation that contains that slot. A first CB is therefore compared with
+  // the same first-CB pack everywhere, while a third CB, LB or CAM gets its own reproducible pack.
+  // Each offer independently targets 35/55 normal, 15/55 hero and 5/55 icon, so every 11x5 board
+  // averages 35/15/5 with natural test-to-test variance without tying type supply to pivot depth.
+  const occurrence={},offers=[];
+  for(const pos of form.slots){
+    occurrence[pos]=(occurrence[pos]||0)+1;
+    const rng=_calRng(_fcalSeed(seed,'slot',trial,pos,occurrence[pos])),pp=pools.byPos[pos];
+    if(!pp)return null;
+    const usedPeople=new Set(),slot=[];
+    for(let k=0;k<5;k++){
+      const r=rng(),wanted=r<(5/55)?'icon':(r<(20/55)?'hero':'normal');
+      const order=wanted==='normal'?['normal','normalFallback','hero','icon']:(wanted==='hero'?['hero','normal','normalFallback','icon']:['icon','normal','normalFallback','hero']);
+      let c=null;for(const typ of order){c=_fcalDraw(pp[typ],rng,usedPeople);if(c)break;}
+      if(!c)return null;usedPeople.add(c.personKey);slot.push(c);
+    }
+    offers.push(slot);
+  }
+  return offers;
+}
+function _fcalPartialValue(xi){
+  const ratings=xi.map(c=>c.rating),rating=futRatingRaw(ratings),chem=trueChem(xi);
+  const nations=new Set(xi.map(c=>c.nation)).size,leagues=new Set(xi.map(leagueOf)).size;
+  const clubs=new Set(xi.filter(c=>c.type==='normal').map(c=>c.club)).size+(xi.some(c=>c.type==='icon')?1:0)+(xi.some(c=>c.type==='hero')?1:0);
+  return rating+chem+nations+leagues+clubs;
+}
+function _fcalBestBoardScore(offers){
+  let states=[{xi:[],used:[]}];
+  for(const slot of offers){
+    const next=[];
+    for(const st of states){
+      for(const c of slot){
+        if(st.used.includes(c.personKey))continue;
+        const xi=st.xi.concat(c),used=st.used.concat(c.personKey);
+        next.push({xi,used,h:_fcalPartialValue(xi),r:xi.reduce((a,z)=>a+z.rating,0)});
+      }
+    }
+    if(!next.length)return null;
+    next.sort((a,b)=>b.h-a.h||b.r-a.r);
+    states=next.slice(0,_FCAL_BEAM).map(x=>({xi:x.xi,used:x.used}));
+  }
+  let best=-Infinity;
+  for(const st of states){const v=scoreXI(st.xi).total+2;if(v>best)best=v;}
+  return Number.isFinite(best)?best:null;
+}
+function _formCalActive(){return !!(FORM_CAL&&FORM_CAL.values&&!_formCalContextStale());}
+function _fcalGrayFW(on){const g=$('#fwGrid');if(g){g.style.opacity=on?'0.4':'';g.style.pointerEvents=on?'none':'';g.querySelectorAll('input,button').forEach(i=>{i.disabled=on;});}}
+function _fcalSetBusy(on){
+  _fcalRunning=!!on;
+  const btn=$('#formCalBtn'),x=$('#formCalX'),seed=$('#formCalSeed');
+  if(btn)btn.disabled=!!on;if(x)x.disabled=!!on;if(seed)seed.disabled=!!on;
+  // Hide the old-context warning while a replacement simulation is actively running. Re-rendering
+  // here also restores the warning automatically if the run fails and busy state is cleared.
   _renderFormCalResult();
 }
-
-// Build the primary-position pool, deduped by person through the live DB.
-function _buildGoldPool(){
-  // v16.0.0 FAST PATH (section L FUTURE WORK realized): if the live DB itself carries per-entry
-  // TRUE PRIMARY positions on a meaningful share of players (>=60% of distinct names), build the
-  // formation-calibration pool straight from the DB — one entry per person (highest-rated copy),
-  // pos = [primary]. GOLD_DB stays as the fallback for pre-v16 DBs that never captured primaries.
-  try{
-    const src=(playerDB.length?playerDB:DEFAULT_DB).filter(_fcalEligible);
-    const names=new Set(src.map(_pivotPersonKey)), withPr=new Set(src.filter(c=>c.primary).map(_pivotPersonKey));
-    if(names.size>0&&withPr.size/names.size>=0.6){
-      const byPersonPrimary={};
-for(const c of src){
-  if(!c.primary)continue;
-  const pr=normPos(c.primary);
-  if(!pr)continue;
-  // v19.0.7: formation/pivot dedupe uses the same real-person identity as the analyzer.
-  // Primary position is deliberately NOT part of the key: two card versions of one pidx person
-  // remain one person even when nation, club, league or primary position changes.
-  const key=_pivotPersonKey(c);
-  const prev=byPersonPrimary[key];
-  if(!prev||c.rating>prev.rating)byPersonPrimary[key]=c;
-}
-const pool=[];let gid=1;
-for(const k in byPersonPrimary){const c=byPersonPrimary[k];
-        pool.push({id:gid++,label:c.name,name:c.name,rating:c.rating,type:c.type||'normal',
-          nation:c.nation||'',league:leagueOf(c),club:c.club||'',pos:[normPos(c.primary)]});}
-      if(pool.length)return pool; // eligible pivots can legitimately be small; the coverage-ratio gate above is the integrity check
-    }
-  }catch(e){}
-  if(typeof GOLD_DB==='undefined'||!GOLD_DB.length)return [];
-  // index the live DB by name once, to canonicalise nation/league/club where we can
-  const dbByName={};
-  for(const c of playerDB){ if(!dbByName[c.name])dbByName[c.name]=c; }
-  const byPerson={};
-  for(const g of GOLD_DB){
-    const prev=byPerson[g.n];
-    if(!prev||g.rat>prev.rat)byPerson[g.n]={n:g.n,nat:g.nat,club:g.club,pos:g.pos,rat:g.rat};
-  }
-  const pool=[];
-  let _gid=1;
-  for(const k in byPerson){
-    const g=byPerson[k];const m=dbByName[g.n];
-    // TEMPORARY: we don't have a confirmed true primary position for every player yet, so any
-    // gold entry missing `pos` is skipped rather than guessed at. Remove this guard once GOLD_DB
-    // is fully backfilled with primary positions for every entry.
-    if(!g.pos)continue;
-    const cand={
-      id:_gid++, label:g.n,                              // solveBest tracks distinct cards by id; label is for display only
-      name:g.n, rating:g.rat, type:'normal',
-      nation:g.nat||(m&&m.nation)||'', // gold is authoritative; live DB only fills a blank
-      league:(m&&m.league)||'England Premier League',
-      club:g.club||(m&&m.club)||'',
-      pos:[normPos(g.pos)]                              // TRUE primary position ONLY — the whole point of this fallback pool
-    };
-    if(_fcalEligible(cand))pool.push(cand);
-  }
-  return pool;
-}
-// A calibration is only meaningful if every position some formation needs is actually stocked in
-// the pool (a single ST card can't populate 25-card draws). Uses the outfield need only; GK is
-// handled the same as any other position (the pool has GKs).
-// Objective value of ONE card, using the no-hold calibrated per-factor weights but with each
-// boolean "is this a NEW nation/league/club" replaced by its RARITY (the probability that factor
-// actually fires on a real squad). This is the key: the no-hold weights say what a new-nation slot
-// is WORTH; rarity says how LIKELY this specific card is to be that new-nation slot. A rare nation
-// (Ecuador) is almost always new, so it earns nearly the full newNat weight; a common one (England)
-// rarely is, so it earns little. That makes the score "how valuable is this card in expectation",
-// which is exactly the currency that should decide which POSITIONS hold the best players.
-function _fcalCardValue(c,w,rarityCtx){
-  let v=w.rating*c.rating;
-  const typ=c.type||'normal',lg=leagueOf(c);
-  // Expected-newness rarity follows the same structural gates as the fitted rarity terms below:
-  // a pivot-normal never earns rarity credit on the axis the strategy has already fixed.
-  if(!(typ==='normal'&&PIVOT_KIND==='nation'))v+=w.newNat*rarityNat(c.nation);
-  if(typ==='hero'||(typ==='normal'&&PIVOT_KIND==='nation'&&DB_MULTILEAGUE))v+=w.newLg*rarityLg(lg);
-  if(typ==='normal')v+=w.newClub*clubRare(c.club);
-  if(c.type==='icon')v+=(w.iconBias||0);
-  else if(c.type==='hero')v+=(w.heroBias||0);
-  if(c.type==='icon')v+=w.firstIcon;
-  if(c.type==='hero')v+=w.firstHero;
-  const rr=_calRarityAxes(c,rarityCtx);
-  v+=(w.rarityNat||0)*rr.nat+(w.rarityClub||0)*rr.club+(w.rarityLg||0)*rr.lg;
-  return v;
-}
-// Analytic formation ranking — NO draft simulation, NO fillability. Every formation fills 11 slots
-// either way; what differs is which positions those slots sit at, and therefore WHICH PLAYERS the
-// draft is likely to hand you. Steps:
-//   1. value every deduped Gold player with _fcalCardValue (calibrated weights x rarity),
-//   2. bucket players by TRUE PRIMARY position and sort each bucket by value,
-//   3. positional value = a rank-decayed weighted average of the top X values at that position
-//      (X = user knob, uncapped besides the bucket's own size). Rank 1 carries full weight, rank 2
-//      carries _FCAL_DECAY as much, rank 3 that squared, etc. — so a deep X keeps adding real signal
-//      from a position's bench strength without ever letting the 30th-best card matter as much as
-//      the best one. This is what makes a large X safe/meaningful instead of just flattening
-//      everything into a plain top-K mean.
-//   4. formation score = sum of its 11 slots' positional values / 11 (per-slot scale, comparable
-//      to the old FW scores' scale convention). Duplicate slots (2xCM) count the positional value
-//      once per slot: each slot is its own independent chance at that position's best cards.
-// So if Xhaka (rare Switzerland, Sunderland) and Caicedo (rare Ecuador) are the highest-value
-// players and both are PRIMARY CDM, formations with CDM slots rise — while a CM slot gains nothing
-// from them, exactly the CM/CDM-vs-CDM/CM distinction older systems collapsed.
-const _FCAL_DECAY=0.85; // per-rank weight multiplier; rank i (0-indexed) weighs _FCAL_DECAY^i
-function _fcalibrateAnalytic(pool,forms,w,topX){
-  const rarityCtx=_calBuildRarityContext(playerDB,true);
-  const byPos={};
-  for(const c of pool){const p=c.pos[0];(byPos[p]||(byPos[p]=[])).push({v:_fcalCardValue(c,w,rarityCtx),n:c.name});}
-  const posVal={},posTop={};
-  for(const p in byPos){
-    byPos[p].sort((a,b)=>b.v-a.v);
-    const k=Math.min(topX,byPos[p].length);
-    let wSum=0,vSum=0;
-    for(let i=0;i<k;i++){const wt=Math.pow(_FCAL_DECAY,i);wSum+=wt;vSum+=wt*byPos[p][i].v;}
-    posVal[p]=Math.round(vSum/wSum*100)/100;
-    const shown=Math.min(k,10); // display list stays readable regardless of how deep X goes
-    posTop[p]=byPos[p].slice(0,shown).map(e=>e.n+' ('+e.v.toFixed(1)+')');
-  }
-  const values={};
-  forms.filter(f=>f.name!=='Custom').forEach(f=>{
-    let total=0;for(const p of f.slots)total+=(posVal[p]||0);
-    values[f.name]=Math.round(total/f.slots.length*100)/100;
-  });
-  return {values,posVal,posTop};
-}
-// Active whenever a calibration result exists — no separate on/off checkbox; Clear turns it off.
-function _formCalActive(){return !!(FORM_CAL&&FORM_CAL.values&&!_formCalContextStale());}
-// Gray the manual FW grid while the calibrated ranking owns f.score (parallels _calGrayManual).
-function _fcalGrayFW(on){const g=$('#fwGrid');if(g){g.style.opacity=on?'0.4':'';g.style.pointerEvents=on?'none':'';g.querySelectorAll('input,button').forEach(i=>{i.disabled=on;});}}
-
-// ---- formation-cal UI glue ----
 function _renderFormCalResult(){
-  const box=$('#formCalResult');
-  _fcalGrayFW(_formCalActive());
-  if(!box)return;
+  const box=$('#formCalResult');_fcalGrayFW(_formCalActive());if(!box)return;
   if(!FORM_CAL||!FORM_CAL.values){box.innerHTML='';return;}
-  const stale=_formCalContextStale();
-  const ranked=Object.entries(FORM_CAL.values).sort((a,b)=>b[1]-a[1]);
-  const top=ranked.slice(0,3).map(([n,v])=>n+' ('+v.toFixed(2)+')').join(', ');
-  const bot=ranked.slice(-3).map(([n,v])=>n+' ('+v.toFixed(2)+')').join(', ');
-  let posHtml='';
-  if(FORM_CAL.posVal){
-    const posRanked=Object.entries(FORM_CAL.posVal).sort((a,b)=>b[1]-a[1]);
-    posHtml='<details class="hlp" style="margin-top:6px"><summary class="tiny">Per-position values (top '+(FORM_CAL.topX||'?')+' primary-position players each)</summary><div class="tiny" style="color:var(--mut);margin-top:4px">'
-      +posRanked.map(([p,v])=>'<div style="margin:2px 0"><b>'+p+'</b> '+v.toFixed(2)+((FORM_CAL.posTop&&FORM_CAL.posTop[p])?(' \u2014 '+FORM_CAL.posTop[p].join(', ')):'')+'</div>').join('')
-      +'</div></details>';
-  }
-  const staleHtml=stale?'<div class="note" style="border-color:var(--warn);color:var(--warn);margin:0 0 6px;padding:6px 8px;font-size:11px">\u26a0 Formation calibration is stale for the current DB, pivot, or objective helper calibration. Manual formation weights are active until you recalibrate.</div>':'';
-  box.innerHTML=staleHtml+'<div class="tiny" style="color:var(--mut)">Calibrated '+FORM_CAL.date+' \u00b7 top '+(FORM_CAL.topX||'?')+' per position \u00b7 weights: '+(FORM_CAL.source||'no-hold calibration')
-    +'<br><b style="color:var(--good)">Best:</b> '+top+'<br><b style="color:var(--warn)">Weakest:</b> '+bot+'</div>'+posHtml;
+  const stale=_formCalContextStale(),stats=FORM_CAL.stats||{};
+  const ranked=Object.keys(FORM_CAL.values).map(name=>{
+    const old=+FORM_CAL.values[name]||0,s=stats[name]||{avg:old,best:old,worst:old,rank:old};
+    return{name,avg:+s.avg||0,best:+s.best||0,worst:+s.worst||0,rank:Number.isFinite(+s.rank)?+s.rank:old};
+  }).sort((a,b)=>b.rank-a.rank||b.avg-a.avg||b.worst-a.worst||b.best-a.best||a.name.localeCompare(b.name));
+  const staleHtml=(stale&&!_fcalRunning)?'<div class="note" style="border-color:var(--warn);color:var(--warn);margin:0 0 7px;padding:6px 8px;font-size:11px">⚠ These results are stale for the current DB, pivot, X, or seed. Manual formation weights are active until you simulate again.</div>':'';
+  const head='<div style="display:grid;grid-template-columns:minmax(92px,1fr) repeat(4,48px);gap:4px;padding:0 0 4px;border-bottom:1px solid var(--line);font-size:9px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;text-align:right"><span style="text-align:left">Formation</span><span>Rank</span><span>Avg</span><span>Best</span><span>Worst</span></div>';
+  const rows=ranked.map((r,i)=>'<div style="display:grid;grid-template-columns:minmax(92px,1fr) repeat(4,48px);gap:4px;align-items:center;padding:5px 0;border-bottom:1px solid #112030;font-size:12px;text-align:right"><span style="text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><b style="display:inline-block;width:24px;color:'+(i===0?'var(--good)':'var(--mut)')+'">'+(i+1)+'.</b> '+r.name+'</span><b style="color:'+(i===0?'var(--good)':'var(--ink)')+'">'+r.rank.toFixed(2)+'</b><span>'+r.avg.toFixed(2)+'</span><span>'+r.best.toFixed(0)+'</span><span>'+r.worst.toFixed(0)+'</span></div>').join('');
+  box.innerHTML=staleHtml+'<div class="tiny" style="color:var(--mut);margin-bottom:5px">'+FORM_CAL.x+' drafts per formation · seed '+FORM_CAL.seed+' · all scores include manager</div><div class="tiny" style="color:var(--mut);margin-bottom:7px">Rank = 50% average + 25% best + 25% worst.</div>'+head+rows;
 }
 async function runFormCalibration(){
-  const st=$('#formCalStatus'), btn=$('#formCalBtn');
-  if(btn&&btn.disabled)return;
-  if(btn)btn.disabled=true;
+  if(_fcalRunning)return;
+  _fcalSyncInputs();
+  const x=FORM_CAL_CFG.x,seed=FORM_CAL_CFG.seed,st=$('#formCalStatus');
+  _fcalSetBusy(true);
   try{
-    // Paint a visible running state before either synchronous stage starts. Without this yield the
-    // browser cannot render the status until AFTER calibration finishes, which makes the button/tab
-    // look frozen even though formCalStatus was already updated in memory. This mirrors the normal
-    // no-hold calibrator's paint-before-fit path; the maths and fitted result are unchanged.
-    if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Preparing formation calibration\u2026</span>';
+    if(st)st.innerHTML='<span style="color:var(--mut)">⏳ Building primary-position draft pools…</span>';
     await _calYield();
-
-    // v15.1: card weights used to be a hard precondition (error + bail if uncalibrated), on the theory
-    // that the user should run + see that step themselves. In practice this just blocks anyone who
-    // wants formation ranking but doesn't want live no-hold pick-time ranking turned on — the two are
-    // independent (formation calibration only ever reads NOHOLD_CAL.weights; it never reads or flips
-    // the "No-hold drafting" checkbox that governs live picking). So now: if the weights aren't fitted
-    // yet, auto-fit them with the same fast default "Calibrate from DB" uses (150 simulated drafts,
-    // auto seed) — quick, and good enough to rank formations by. Anyone who wants a hand-tuned or
-    // larger-sample fit can still run "Calibrate from DB" themselves first; this just removes the
-    // requirement to do so before formations can be ranked at all. v18.14 raises this quick default
-    // from 150 to 300 now that the obsolete fitted pivot-pool dimension has been removed.
-    if(!_calActive()||_pivotCalStale()){
-      if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Card weights aren\u2019t calibrated yet \u2014 fitting them first (quick, ~300 drafts)\u2026</span>';
-      await _calYield();
-      const wres=_calibrateNoHold(playerDB,FORMS,{nScripts:300,seed:null});
-      if(wres.error){
-        if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+wres.error+'</span>';
-        return;
-      }
-      NOHOLD_CAL=wres;
-      NOHOLD_CAL.pivotKind=PIVOT_KIND;NOHOLD_CAL.pivotKey=PIVOT_KEY; // v17.8.24: same pivot stamp as _calFinish
-      try{localStorage.setItem(_NOHOLD_CAL_KEY,JSON.stringify(wres));}catch(e){}
-      _renderCalResult(); // reflects the auto-fit in the Weights tab too, same as a manual "Calibrate from DB"
-      _recLog&&_recLog('no-hold weights auto-calibrated for formation ranking \u2014 DB '+(wres.hash>>>0).toString(16).slice(0,8));
-    }
-    const xEl=$('#formCalTopX'); let topX=xEl?parseInt(xEl.value,10):15; if(!topX||topX<1||isNaN(topX))topX=15; topX=Math.min(500,topX); if(xEl)xEl.value=topX;
-    const pool=_buildGoldPool();
-    if(!pool.length){if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 Player pool is empty \u2014 nothing to calibrate from.</span>';return;}
-
-    if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Ranking formations across '+pool.length+' eligible players\u2026</span>';
-    await _calYield();
+    const pools=_fcalBuildPools(),forms=FORMS.filter(f=>f.name!=='Custom');
+    for(const f of forms)for(const pos of f.slots){const p=pools.byPos[pos];if(!p||!(p.normal.cards.length||p.normalFallback.cards.length||p.hero.cards.length||p.icon.cards.length))throw new Error('No primary-position cards are available for '+pos+'.');}
+    const values={},stats={};let completed=0,total=forms.length*x;
     const t0=performance.now();
-    const r=_fcalibrateAnalytic(pool,FORMS,NOHOLD_CAL.weights,topX);
-    const res={values:r.values,posVal:r.posVal,posTop:r.posTop,topX,source:'no-hold cal \u00b7 pivot '+(PIVOT_KIND==='nation'?'nation ':'')+PIVOT_KEY+' \u00b7 type I/H '+_fmtW(NOHOLD_CAL.weights.iconBias||0)+'/'+_fmtW(NOHOLD_CAL.weights.heroBias||0)+' \u00b7 fitted rarity N/C/L '+_fmtW(NOHOLD_CAL.weights.rarityNat||0)+'/'+_fmtW(NOHOLD_CAL.weights.rarityClub||0)+'/'+_fmtW(NOHOLD_CAL.weights.rarityLg||0)+' \u00b7 DB '+(NOHOLD_CAL.hash>>>0).toString(16).slice(0,8),date:new Date().toISOString().slice(0,10),dbHash:_calDbHash(playerDB),pivotKind:PIVOT_KIND,pivotKey:PIVOT_KEY,calSig:_fcalWeightSig()};
-    FORM_CAL=res;
-    try{localStorage.setItem(_FORMCAL_KEY,JSON.stringify(res));}catch(e){}
-    const ms=Math.max(1,Math.round(performance.now()-t0));
-    if(st)st.innerHTML='<span style="color:var(--good)">\u2714 Done in '+ms+' ms across '+pool.length+' eligible players.</span>';
-    recomputeFormScores();
-    _renderFormCalResult();
-    _recLog&&_recLog('formations calibrated \u2014 primary positions \u00b7 top'+topX+' \u00b7 '+res.source);
-  }catch(e){
-    if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+(e&&e.message?e.message:'Formation calibration failed.')+'</span>';
-  }finally{
-    if(btn)btn.disabled=false;
-  }
+    for(let fi=0;fi<forms.length;fi++){
+      const f=forms[fi];let sum=0,count=0,best=-Infinity,worst=Infinity;
+      for(let t=0;t<x;t++){
+        const offers=_fcalGenerateBoard(f,pools,seed,t),score=offers&&_fcalBestBoardScore(offers);
+        if(score===null)continue;
+        sum+=score;count++;if(score>best)best=score;if(score<worst)worst=score;completed++;
+        if((t+1)%20===0||t===x-1){
+          if(st)st.innerHTML='<span style="color:var(--mut)">⏳ '+f.name+' · '+(t+1)+'/'+x+' drafts · '+Math.round(completed/total*100)+'%</span>';
+          await _calYield();
+        }
+      }
+      if(!count)throw new Error('No valid simulated drafts were produced for '+f.name+'.');
+      const avg=sum/count,rank=_fcalRankScore(avg,best,worst);values[f.name]=rank;stats[f.name]={avg,best,worst,rank};
+    }
+    const res={values,stats,x,seed,beam:_FCAL_BEAM,source:'primary-only 11×5 seeded simulation · shared position packs · average 35 normal / 15 hero / 5 icon offers · pivot normals + global specials · real squad score + manager · rank 50% average / 25% best / 25% worst',date:new Date().toISOString(),dbHash:_calDbHash(playerDB),pivotKind:PIVOT_KIND,pivotKey:PIVOT_KEY,calSig:_fcalConfigSig(),poolStats:{pivotNormals:pools.pivotNormals,heroes:pools.heroes,icons:pools.icons}};
+    FORM_CAL=res;try{localStorage.setItem(_FORMCAL_KEY,JSON.stringify(res));}catch(e){}
+    const ranked=Object.entries(values).sort((a,b)=>b[1]-a[1]),ms=Math.max(1,Math.round(performance.now()-t0));
+    if(st)st.innerHTML='<span style="color:var(--good)">✔ '+(forms.length*x).toLocaleString()+' drafts scored in '+ms.toLocaleString()+' ms. Top ranked: '+ranked[0][0]+' '+ranked[0][1].toFixed(2)+'.</span>';
+    recomputeFormScores();_renderFormCalResult();
+    _recLog&&_recLog('formations simulated — primary-only 11x5 · X '+x+' · seed '+seed+' · balanced winner '+ranked[0][0]+' '+ranked[0][1].toFixed(2));
+  }catch(e){if(st)st.innerHTML='<span style="color:var(--warn)">⚠ '+(e&&e.message?e.message:'Formation simulation failed.')+'</span>';}
+  finally{_fcalSetBusy(false);}
 }
 function clearFormCalibration(){
-  FORM_CAL=null;
-  try{localStorage.removeItem(_FORMCAL_KEY);}catch(e){}
-  const st=$('#formCalStatus');if(st)st.innerHTML='<span style="color:var(--mut)">Cleared \u2014 manual formation weights back in charge.</span>';
-  recomputeFormScores();
-  _renderFormCalResult();
+  FORM_CAL=null;try{localStorage.removeItem(_FORMCAL_KEY);}catch(e){}
+  const st=$('#formCalStatus');if(st)st.innerHTML='<span style="color:var(--mut)">Cleared — manual formation weights are active.</span>';
+  recomputeFormScores();_renderFormCalResult();
 }
-// Reflect whatever calibration was restored from storage at load.
-(function initFormCal(){
-  try{recomputeFormScores();}catch(e){}
-  try{_renderFormCalResult();}catch(e){}
-})();
+(function initFormCal(){try{_fcalSyncInputs();}catch(e){}try{recomputeFormScores();}catch(e){}try{_renderFormCalResult();}catch(e){}})();
 
 // ---- UI glue ----
 // v13.4.1: starterBoost/benchPenalty (in the misc SHAPE group) are the one pair of manual weights
@@ -15267,8 +15163,8 @@ function _renderCalResult(){
   // Translate to the icon/hero/normal split the user knows (12/10/8 today), as an at-equal-rating
   // intrinsic type comparison. Normal is the zero baseline; pivot commitment is deliberately separate.
   html+='<div class="tiny" style="margin-top:7px;padding-top:6px;border-top:1px solid var(--line)">'
-    +'<b>Intrinsic type value at equal rating:</b> '
-    +'<b>Icon '+_fmtW(iconBias)+'</b> / <b>hero '+_fmtW(heroBias)+'</b> / <b>normal +0.00</b> beyond rating.'
+    +'<b>Type value relative to a normal of equal rating:</b> '
+    +'<b>Icon '+_fmtW(iconBias)+'</b> / <b>hero '+_fmtW(heroBias)+'</b>.'
     +'</div>';
   html+='<div class="tiny" style="margin-top:6px;color:var(--mut)">Fit: '+NOHOLD_CAL.nScripts+' scenarios, K='+NOHOLD_CAL.K+' &middot; DB '+(NOHOLD_CAL.hash>>>0).toString(16).slice(0,8)+' &middot; seed '+(NOHOLD_CAL.seed>>>0)+' &middot; '+NOHOLD_CAL.date
     +(typeof NOHOLD_CAL.maxScore==='number'?' &middot; best simulated draft scored <b>'+NOHOLD_CAL.maxScore+'</b> (with manager)':'')
@@ -15303,6 +15199,7 @@ function clearNoHoldCalibration(){
   if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
 }
 function _calFinish(res,st,btn,t0){
+  _calUnlockSoon();
   if(res.error){
     if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+res.error+'</span>';
     if(btn)btn.disabled=false; return;
@@ -15325,30 +15222,32 @@ function _calFinish(res,st,btn,t0){
 }
 // v16.15.0: silent background auto-calibration. Runs once on load (deferred so first paint isn't
 // blocked) whenever no valid calibration exists for the current DB (hash mismatch or never run).
-// Uses the chunked async engine so the tab stays responsive; v18.14 defaults to 300 drafts, so
+// Uses the chunked async engine so the tab stays responsive; the current default is 500 drafts, so
 // it's normally finished before the Helper tab is even opened. Manual "Calibrate from DB" with a
 // custom count/seed still works exactly as before and takes precedence (it just overwrites).
 function _autoCalibrateOnLoad(){
   _AUTO_CAL_SCHEDULED=false;_renderHelperCalPending();
   try{
-    if(_calActive()){_AUTO_CAL_RUNNING=false;return;} // a valid, hash-matching calibration already owns ranking
-    if(!playerDB||!playerDB.length){_AUTO_CAL_RUNNING=false;return;}
-    _AUTO_CAL_RUNNING=true;_renderHelperCalPending();
+    if(_calActive()){_AUTO_CAL_RUNNING=false;_CALIBRATION_RUNNING=false;return;} // a valid, hash-matching calibration already owns ranking
+    if(!playerDB||!playerDB.length){_AUTO_CAL_RUNNING=false;_CALIBRATION_RUNNING=false;return;}
+    if(_CALIBRATION_RUNNING)return;
+    _AUTO_CAL_RUNNING=true;_CALIBRATION_RUNNING=true;_renderHelperCalPending();
     const st=$('#calStatus'), btn=$('#calBtn');
     if(btn)btn.disabled=true;
     if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Auto-calibrating from your DB in the background\u2026</span>';
     const t0=performance.now();
-    _calibrateNoHoldAsync(playerDB,FORMS,{nScripts:300,seed:null},null)
+    _calibrateNoHoldAsync(playerDB,FORMS,{nScripts:500,seed:null},null)
       .then(function(res){_AUTO_CAL_RUNNING=false;_renderHelperCalPending();_calFinish(res,st,btn,t0);
-        if(st&&!res.error)st.innerHTML='<span style="color:var(--good)">\u2714 Auto-calibrated on load ('+Math.round(performance.now()-t0)+' ms \u00b7 300 drafts \u00b7 auto seed). Recalibrate manually any time.</span>';})
-      .catch(function(e){_AUTO_CAL_RUNNING=false;_renderHelperCalPending();if(st)st.innerHTML='';if(btn)btn.disabled=false;if(typeof renderHelperPrompt==='function')try{renderHelperPrompt();}catch(_e){}});
-  }catch(e){_AUTO_CAL_RUNNING=false;_renderHelperCalPending();}
+        if(st&&!res.error)st.innerHTML='<span style="color:var(--good)">\u2714 Auto-calibrated on load ('+Math.round(performance.now()-t0)+' ms \u00b7 500 drafts \u00b7 auto seed'+(typeof res.maxScore==='number'?' \u00b7 best scored '+res.maxScore:'')+'). Recalibrate manually any time.</span>';})
+      .catch(function(e){_AUTO_CAL_RUNNING=false;_calUnlockSoon();_renderHelperCalPending();if(st)st.innerHTML='';if(btn)btn.disabled=false;if(typeof renderHelperPrompt==='function')try{renderHelperPrompt();}catch(_e){}});
+  }catch(e){_AUTO_CAL_RUNNING=false;_calUnlockSoon();_renderHelperCalPending();}
 }
 function runNoHoldCalibration(){
+  if(_CALIBRATION_RUNNING||performance.now()<_CALIBRATION_COOLDOWN_UNTIL)return;
   const st=$('#calStatus'), btn=$('#calBtn');
   const nEl=$('#calNScripts');
-  let nScripts=nEl?parseInt(nEl.value,10):300;
-  if(!nScripts||isNaN(nScripts))nScripts=300;
+  let nScripts=nEl?parseInt(nEl.value,10):500;
+  if(!nScripts||isNaN(nScripts))nScripts=500;
   nScripts=Math.max(20,nScripts); // v18.14.1: fewer than 20 scenarios cannot produce a valid train/holdout calibration
   if(nEl)nEl.value=nScripts; // visibly show the clamped value actually used
   const big=nScripts>1000;
@@ -15360,6 +15259,7 @@ function runNoHoldCalibration(){
     if(isNaN(seed))seed=null;
     else{seed=Math.min(4294967295,Math.max(0,seed));seedEl.value=seed;} // clamp visibly, so the box always shows what was actually used
   }
+  _CALIBRATION_RUNNING=true;
   if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Simulating drafts on your DB\u2026 please wait (a few seconds).</span>';
   if(btn)btn.disabled=true;
   if(big){
@@ -15370,14 +15270,20 @@ function runNoHoldCalibration(){
     _calibrateNoHoldAsync(playerDB,FORMS,{nScripts:nScripts,seed:seed},function(msg){
       if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 '+msg+'</span>';
     }).then(function(res){_calFinish(res,st,btn,t0);})
-      .catch(function(e){if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+(e&&e.message?e.message:'Calibration failed.')+'</span>';if(btn)btn.disabled=false;});
+      .catch(function(e){_calUnlockSoon();if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+(e&&e.message?e.message:'Calibration failed.')+'</span>';if(btn)btn.disabled=false;});
     return;
   }
   // yield so the please-wait paints before the synchronous fit blocks the thread
   setTimeout(function(){
     const t0=performance.now();
-    const res=_calibrateNoHold(playerDB,FORMS,{nScripts:nScripts,seed:seed});
-    _calFinish(res,st,btn,t0);
+    try{
+      const res=_calibrateNoHold(playerDB,FORMS,{nScripts:nScripts,seed:seed});
+      _calFinish(res,st,btn,t0);
+    }catch(e){
+      _calUnlockSoon();
+      if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+(e&&e.message?e.message:'Calibration failed.')+'</span>';
+      if(btn)btn.disabled=false;
+    }
   },30);
 }
 // Cache the committed-board snapshot the live helper is judging against, so the calibrated scorer
