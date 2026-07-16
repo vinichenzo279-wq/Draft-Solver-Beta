@@ -150,7 +150,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v21.8.5</title>
+<title>Draft Solver v21.9.0</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -5996,7 +5996,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <!-- v21.8.3 — A previous “No score was found” result is hidden while a new helper calibration is running, then restored or replaced when the run finishes. -->
 <!-- v21.8.4 — Pivot changes are blocked while helper or formation calibration is running. The combined special cap is now the sole normal-count constraint during simulations, so its default of four still guarantees seven normals while deliberate higher caps can produce special-heavy squads. -->
 <!-- v21.8.5 — Helper calibration now always uses the yielding async fitter, keeping navigation and scrolling responsive while only repeat calibration clicks and pivot changes remain blocked. -->
-<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v21.8.5</span></h1>
+<!-- v21.9.0 — Calibration now fits and displays only identifiable factors: Icon/Hero coefficients show “not measured” when that type is unselectable (average and spread both zero, or its XI cap is zero), zeroed types no longer reappear as positional fallbacks, and league-pivot new-league/league-rarity terms are not fitted when Heroes are unavailable. -->
+<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v21.9.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -14191,7 +14192,32 @@ function resetCalMix(){
   const st=$('#calStatus');if(st)st.innerHTML='<span style="color:var(--mut)">'+((NOHOLD_CAL&&NOHOLD_CAL.mixSig!==_calMixSig())?'Calibration settings reset &mdash; recalibrate to apply them.':'Calibration settings reset.')+'</span>';
 }
 const _CAL_NONNEG_DIMS=new Set(['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg']); // v18.14: objective freshness/rarity may help or settle at zero, but repetition/commonness is never rewarded
-let NOHOLD_CAL=null; // {hash, weights, trainMean, holdMean, nScripts, K, date, mixSig, mix}
+// v21.9.0: only fit coefficients that can actually affect a selectable card under this calibration.
+// Average 0 alone is NOT enough to disable a type because non-zero spread can still generate offers;
+// average 0 + spread 0 is the explicit no-offers state. A zero XI cap also makes that type
+// unselectable even when its cards still appear in offers. On a league pivot, league rarity exists
+// only through heroes, and without heroes the generic new-league term is not separately identifiable
+// from the first-icon credit, so both are left unfitted rather than displaying arbitrary numbers.
+function _calMeasurementMask(mix,pivotKind){
+  const c=_calMixSanitize(mix||CAL_MIX_CFG);
+  const iconOff=(c.iconAvg===0&&c.iconSpread===0)||c.maxIconsXI===0||c.maxSpecialsXI===0;
+  const heroOff=(c.heroAvg===0&&c.heroSpread===0)||c.maxHeroesXI===0||c.maxSpecialsXI===0;
+  const leagueHeroAxesOff=pivotKind==='league'&&heroOff;
+  return{
+    iconBias:!iconOff,firstIcon:!iconOff,
+    heroBias:!heroOff,firstHero:!heroOff,
+    newLg:!leagueHeroAxesOff,rarityLg:!leagueHeroAxesOff
+  };
+}
+function _calRandomWeights(R,measured){
+  const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),rarityNat:R(0,4),rarityClub:R(0,4),rarityLg:R(0,4),clash:-R(0,8),iconBias:R(-3,3),heroBias:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)};
+  for(const k of Object.keys(measured||{}))if(measured[k]===false&&Object.prototype.hasOwnProperty.call(w,k))w[k]=0;
+  return w;
+}
+function _calMeasuredDims(measured){
+  return['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg','clash','iconBias','heroBias','firstIcon','firstHero'].filter(d=>!measured||measured[d]!==false);
+}
+let NOHOLD_CAL=null; // {hash, weights, measured, trainMean, holdMean, nScripts, K, date, mixSig, mix}
 let _CALIBRATION_RUNNING=false; // shared lock: result-panel/main-button re-clicks are ignored until the active manual/auto fit finishes
 let _CALIBRATION_COOLDOWN_UNTIL=0;
 function _setZeroCalResultRunning(on){
@@ -14385,6 +14411,10 @@ function _calMakeScripts(db,forms,nScripts,K,rng,normalFallbackDb,mixCfg){
     return b.cards[lo];
   };
   const mix=_calMixSanitize(mixCfg||CAL_MIX_CFG);
+  // Explicitly zeroing both average and spread means that type must not sneak back in as a
+  // positional fallback. With a non-zero spread, average 0 still intentionally allows occasional
+  // offers, so the type remains available and measurable.
+  const offerEnabled={normal:true,icon:!(mix.iconAvg===0&&mix.iconSpread===0),hero:!(mix.heroAvg===0&&mix.heroSpread===0)};
   const bell=spread=>(rng()+rng()+rng()+rng()-2)*spread;
   const planCounts=totalOffers=>{
     const scale=totalOffers/55;
@@ -14418,12 +14448,15 @@ function _calMakeScripts(db,forms,nScripts,K,rng,normalFallbackDb,mixCfg){
       const opts=[];
       for(let i=0;i<K;i++){
         const wanted=typePlan[offerIx++];
-        const order=wanted==='normal'
+        const order=(wanted==='normal'
           ?['normal','hero','icon']
-          :(wanted==='hero'?['hero','normal','icon']:['icon','normal','hero']);
+          :(wanted==='hero'?['hero','normal','icon']:['icon','normal','hero']))
+          .filter(typ=>offerEnabled[typ]);
         let use=null;for(const typ of order){if(pools[typ].cards.length){use=pools[typ];break;}}
+        if(!use){ok=false;break;}
         opts.push(draw(use));
       }
+      if(!ok)break;
       steps.push({pos,options:opts});
     }
     if(ok)scripts.push({formName:f.name,steps});
@@ -14516,6 +14549,7 @@ function _calibrateNoHold(db,forms,opts){
   const seed=(opts.seed!=null&&!isNaN(opts.seed))?(Math.min(4294967295,Math.max(0,Math.floor(opts.seed)))>>>0):hash;
   const rng=_calRng(seed);
   const mix=_calMixSanitize(opts.mix||CAL_MIX_CFG);
+  const measured=_calMeasurementMask(mix,PIVOT_KIND);
   const scripts=_calMakeScripts(pool,forms,nScripts,K,rng,db,mix);
   const rarityCtx=_calBuildRarityContext(db);
   if(scripts.length<20)return{error:'Could not build enough valid draft scenarios from this DB.'};
@@ -14524,15 +14558,15 @@ function _calibrateNoHold(db,forms,opts){
   const R=(a,b)=>a+rng()*(b-a);
   let best=null,bestV=-Infinity;
   for(let v=0;v<nVec;v++){
-    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),rarityNat:R(0,4),rarityClub:R(0,4),rarityLg:R(0,4),clash:-R(0,8),iconBias:R(-3,3),heroBias:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)}; // v18.14: all objective freshness/rarity starts non-negative; fitted pivot-pool term removed; icon and hero effects remain separate.
+    const w=_calRandomWeights(R,measured); // v21.9.0: inactive/unselectable dimensions stay fixed at zero instead of retaining random seed values.
     const m=_calMean(train,_calMakeScorer(w,rarityCtx));if(m>bestV){bestV=m;best=w;}
   }
-  const dims=['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg','clash','iconBias','heroBias','firstIcon','firstHero'];
+  const dims=_calMeasuredDims(measured);
   let improved=true,cur=bestV;
   while(improved){improved=false;for(const d of dims){for(const step of[1,-1,0.5,-0.5,0.2,-0.2]){const raw=best[d]+step;const next=_CAL_NONNEG_DIMS.has(d)?Math.max(0,raw):raw;if(next===best[d])continue;const w2={...best,[d]:next};const m=_calMean(train,_calMakeScorer(w2,rarityCtx));if(m>cur+1e-9){cur=m;best=w2;improved=true;}}}}
   const finalScorer=_calMakeScorer(best,rarityCtx);
   const peakScore=_calMaxScore(scripts,finalScorer);
-  return{hash,seed,weights:best,trainMean:cur,holdMean:_calMean(hold,finalScorer),maxScore:peakScore,scoreHist:_calScoreHist(scripts,finalScorer,peakScore,5),nScripts:scripts.length,K,mix,mixSig:_calMixSig(mix),date:new Date().toISOString().slice(0,10)};
+  return{hash,seed,weights:best,measured,trainMean:cur,holdMean:_calMean(hold,finalScorer),maxScore:peakScore,scoreHist:_calScoreHist(scripts,finalScorer,peakScore,5),nScripts:scripts.length,K,mix,mixSig:_calMixSig(mix),date:new Date().toISOString().slice(0,10)};
 }
 
 // Is the calibrated no-hold path currently the ACTIVE ranking source?
@@ -14553,6 +14587,7 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
   const seed=(opts.seed!=null&&!isNaN(opts.seed))?(Math.min(4294967295,Math.max(0,Math.floor(opts.seed)))>>>0):hash;
   const rng=_calRng(seed);
   const mix=_calMixSanitize(opts.mix||CAL_MIX_CFG);
+  const measured=_calMeasurementMask(mix,PIVOT_KIND);
   const scripts=_calMakeScripts(pool,forms,nScripts,K,rng,db,mix);
   const rarityCtx=_calBuildRarityContext(db);
   if(scripts.length<20)return{error:'Could not build enough valid draft scenarios from this DB.'};
@@ -14562,7 +14597,7 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
   let best=null,bestV=-Infinity;
   let tYield=performance.now();
   for(let v=0;v<nVec;v++){
-    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),rarityNat:R(0,4),rarityClub:R(0,4),rarityLg:R(0,4),clash:-R(0,8),iconBias:R(-3,3),heroBias:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)}; // v18.14: mirrors the sync fitter exactly — non-negative objective freshness/rarity, no fitted pivot-pool term, separate icon/hero effects
+    const w=_calRandomWeights(R,measured); // v21.9.0: exact async mirror of the sync fitter's measured-dimension mask.
     const m=_calMean(train,_calMakeScorer(w,rarityCtx));if(m>bestV){bestV=m;best=w;}
     if(performance.now()-tYield>40){ // ~once per animation frame's worth of work, not every iteration -- keeps overhead negligible
       if(onProgress)onProgress('Searching weight space\u2026 '+Math.round(((v+1)/nVec)*100)+'%');
@@ -14570,7 +14605,7 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
       tYield=performance.now();
     }
   }
-  const dims=['newNat','newClub','newLg','rarityNat','rarityClub','rarityLg','clash','iconBias','heroBias','firstIcon','firstHero'];
+  const dims=_calMeasuredDims(measured);
   let improved=true,cur=bestV;
   tYield=performance.now();
   while(improved){
@@ -14590,7 +14625,7 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
   }
   const finalScorer=_calMakeScorer(best,rarityCtx);
   const peakScore=_calMaxScore(scripts,finalScorer);
-  return{hash,seed,weights:best,trainMean:cur,holdMean:_calMean(hold,finalScorer),maxScore:peakScore,scoreHist:_calScoreHist(scripts,finalScorer,peakScore,5),nScripts:scripts.length,K,mix,mixSig:_calMixSig(mix),date:new Date().toISOString().slice(0,10)};
+  return{hash,seed,weights:best,measured,trainMean:cur,holdMean:_calMean(hold,finalScorer),maxScore:peakScore,scoreHist:_calScoreHist(scripts,finalScorer,peakScore,5),nScripts:scripts.length,K,mix,mixSig:_calMixSig(mix),date:new Date().toISOString().slice(0,10)};
 }
 
 // ============================ v16.0.0 MULTI-PIVOT ANALYZER ============================
@@ -15283,8 +15318,11 @@ function _renderCalResult(){
     if(typeof _renderHelperCalPending==='function')_renderHelperCalPending();
     return;
   }
-  // interpretable "type value beyond a normal of equal rating" reading, plus per-factor lines
+  // Interpretable "type value beyond a normal of equal rating" reading, plus per-factor lines.
+  // Values with no selectable signal are explicitly shown as not measured, never as a fitted zero.
+  const measured=NOHOLD_CAL.measured||_calMeasurementMask(NOHOLD_CAL.mix||_CAL_MIX_DEF,NOHOLD_CAL.pivotKind||PIVOT_KIND);
   const iconBias=w.iconBias||0, heroBias=w.heroBias||0;
+  const showW=(key,value)=>measured[key]===false?'<span style="color:var(--mut)">not measured</span>':_fmtW(value||0);
   let html='';
   if(dbStale){
     html+='<div class="note" style="border-color:var(--warn);color:var(--warn);margin:0 0 6px;padding:6px 8px;font-size:11px">\u26a0 DB changed since this calibration &mdash; the manual weights are being used until you recalibrate.</div>';
@@ -15303,22 +15341,22 @@ function _renderCalResult(){
     +'<span style="color:var(--mut)">(in rating points; a card&rsquo;s own rating counts as 1.00/point)</span><br>'
     +'&bull; new nation on the board: <b>'+_fmtW(w.newNat)+'</b> rating pts<br>'
     +'&bull; new club (normals): <b>'+_fmtW(w.newClub)+'</b><br>'
-    +'&bull; new league: <b>'+_fmtW(w.newLg)+'</b><br>'
+    +'&bull; new league: <b>'+showW('newLg',w.newLg)+'</b><br>'
     +'&bull; nation rarity (common&rarr;rare): <b>'+_fmtW(w.rarityNat||0)+'</b><br>'
     +'&bull; club rarity (normals): <b>'+_fmtW(w.rarityClub||0)+'</b><br>'
-    +'&bull; league rarity (heroes / nation-pivot normals): <b>'+_fmtW(w.rarityLg||0)+'</b><br>'
+    +'&bull; league rarity (heroes / nation-pivot normals): <b>'+showW('rarityLg',w.rarityLg)+'</b><br>'
     +'&bull; brings nothing new (clash): <b>'+_fmtW(w.clash)+'</b><br>'
-    +'&bull; is an icon (beyond its rating): <b>'+_fmtW(iconBias)+'</b><br>'
-    +'&bull; is a hero (beyond its rating): <b>'+_fmtW(heroBias)+'</b><br>'
-    +'&bull; 1st icon on the board (club credit): <b>'+_fmtW(w.firstIcon)+'</b><br>'
-    +'&bull; 1st hero on the board (club credit): <b>'+_fmtW(w.firstHero)+'</b>'
+    +'&bull; is an icon (beyond its rating): <b>'+showW('iconBias',iconBias)+'</b><br>'
+    +'&bull; is a hero (beyond its rating): <b>'+showW('heroBias',heroBias)+'</b><br>'
+    +'&bull; 1st icon on the board (club credit): <b>'+showW('firstIcon',w.firstIcon)+'</b><br>'
+    +'&bull; 1st hero on the board (club credit): <b>'+showW('firstHero',w.firstHero)+'</b>'
     +'</div>'
     +'<div class="tiny" style="margin-top:5px;color:var(--mut)">Newness and rarity can add value or settle at +0.00, but never reward repetition or commonness.</div>';
   // Translate to the icon/hero/normal split the user knows (12/10/8 today), as an at-equal-rating
   // intrinsic type comparison. Normal is the zero baseline; pivot commitment is deliberately separate.
   html+='<div class="tiny" style="margin-top:7px;padding-top:6px;border-top:1px solid var(--line)">'
     +'<b>Type value relative to a normal of equal rating:</b> '
-    +'<b>Icon '+_fmtW(iconBias)+'</b> / <b>hero '+_fmtW(heroBias)+'</b>.'
+    +'<b>Icon '+showW('iconBias',iconBias)+'</b> / <b>hero '+showW('heroBias',heroBias)+'</b>.'
     +'</div>';
   const cm=_calMixSanitize(NOHOLD_CAL.mix||_CAL_MIX_DEF);
   html+='<div class="tiny" style="margin-top:6px;color:var(--mut)">Fit: '+NOHOLD_CAL.nScripts+' scenarios, K='+NOHOLD_CAL.K+' &middot; mix '+cm.iconAvg+'/'+cm.heroAvg+'/'+cm.normalAvg+' &middot; DB '+(NOHOLD_CAL.hash>>>0).toString(16).slice(0,8)+' &middot; seed '+(NOHOLD_CAL.seed>>>0)+' &middot; '+NOHOLD_CAL.date
@@ -15373,7 +15411,8 @@ function _calFinish(res,st,btn,t0){
   _solveCache=null;
   _renderCalResult();
   if(typeof _formCalContextChanged==='function')_formCalContextChanged();
-  _recLog&&_recLog('no-hold weights calibrated \u2014 DB '+(res.hash>>>0).toString(16).slice(0,8)+' \u00b7 best sim score '+(typeof res.maxScore==='number'?res.maxScore:'n/a')+' \u00b7 newNat '+res.weights.newNat.toFixed(1)+' newClub '+res.weights.newClub.toFixed(1)+' newLg '+res.weights.newLg.toFixed(1)+' rareNat '+(res.weights.rarityNat||0).toFixed(1)+' rareClub '+(res.weights.rarityClub||0).toFixed(1)+' rareLg '+(res.weights.rarityLg||0).toFixed(1)+' clash '+res.weights.clash.toFixed(1)+' icon '+(res.weights.iconBias||0).toFixed(1)+' hero '+(res.weights.heroBias||0).toFixed(1)+' 1stIcon '+res.weights.firstIcon.toFixed(1)+' 1stHero '+res.weights.firstHero.toFixed(1));
+  const _logW=(key,value)=>res.measured&&res.measured[key]===false?'n/a':(+value||0).toFixed(1);
+  _recLog&&_recLog('no-hold weights calibrated \u2014 DB '+(res.hash>>>0).toString(16).slice(0,8)+' \u00b7 best sim score '+(typeof res.maxScore==='number'?res.maxScore:'n/a')+' \u00b7 newNat '+res.weights.newNat.toFixed(1)+' newClub '+res.weights.newClub.toFixed(1)+' newLg '+_logW('newLg',res.weights.newLg)+' rareNat '+(res.weights.rarityNat||0).toFixed(1)+' rareClub '+(res.weights.rarityClub||0).toFixed(1)+' rareLg '+_logW('rarityLg',res.weights.rarityLg)+' clash '+res.weights.clash.toFixed(1)+' icon '+_logW('iconBias',res.weights.iconBias)+' hero '+_logW('heroBias',res.weights.heroBias)+' 1stIcon '+_logW('firstIcon',res.weights.firstIcon)+' 1stHero '+_logW('firstHero',res.weights.firstHero));
   if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
   if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
 }
