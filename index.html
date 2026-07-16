@@ -150,7 +150,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v21.4.4</title>
+<title>Draft Solver v21.5.2</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -5980,7 +5980,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <!-- v21.4.2 — Formation calibration hides the stale-results warning while a replacement simulation is actively running. -->
 <!-- v21.4.3 — Clarified the calibrated type-value label by treating normal as the reference instead of displaying a misleading +0.00 value. -->
 <!-- v21.4.4 — Pivot Analyzer now shows the top 10 pivots and uses a shorter total-supply label. -->
-<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v21.4.4</span></h1>
+<!-- v21.5.0 — CONSISTENT / HIGH SCORE / THEORETICAL MAX + sim fallback + version-gated calibration. (1) Pivot numbers renamed and re-grounded. High Score is the honest, supply-BLIND best XI the pivot pool could build if the draws fall right (the greedy build, never made supply-aware — that would misrepresent it); it proxies the supply-blind sim, which draws only from the pivot as it should. Consistent is what you'll reliably hit: High Score minus (a) a fixed ~2.5 best-to-typical gap the sim histogram shows even at full supply, (b) the supply shortfall (thinner pools are offered their own cards less often, so they land further under the sim's number — PIVOT_CONSISTENT_GAP grows via the existing copies×distinct-player confidence term), and (c) for NATION pivots only, a league-diversity penalty. Theoretical Max is the unchanged relaxed ceiling. Ranking is by Consistent; Premier League leads at ~153.5 with a 156 High Score. (2) TASK 1 — nation-vs-league: a nation pivot scores on league diversity, which is far scarcer than nations in the DB (distinct leagues vs nations, computed live, ~0.5 here), so each league it banks beyond the ~4 any pivot gets free from specials is discounted; league pivots pay nothing (nation diversity is cheap). (3) TASK 3 — the formation simulator no longer falls back to off-pivot normals; a normal offer draws only a pivot-matching normal, else the universal hero/icon specials. The separate helper-weight calibrator (_calMakeScripts) still uses its own fallback by design and is untouched. (4) A version bump now genuinely invalidates the stored helper calibration: fits are stamped with the app version and dropped on restore if it differs, so a new build always refits. Both calibrators' fitting logic remain byte-identical to v21.2.0 (only the 500-draft default differs). -->
+<!-- v21.5.1 — CONSISTENT diversity term reworked from a nation-only heuristic to a symmetric within-pivot DENSITY penalty, and recalibrated to the sim. The v21.5.0 nation-vs-league penalty was too harsh (it put Spain-nation ~3 under Spain-LaLiga; the sim shows ~1-2). Within-pivot concentration was already computed by _pivDiversityStats (dominant share of the weak diversity axis: biggest CLUB's pool share for a league pivot, biggest LEAGUE's share for a nation pivot) but was diagnostic-only. It now feeds Consistent: penalty = PIVOT_DENSITY_WEIGHT(4) × max(0, dominantShare − 0.12), applied to BOTH kinds. A concentrated pool keeps re-offering the same club/league, so the diverse build High Score assumes is realized less often. Effects: Ligue 1 finally pays for its PSG-heavy club concentration (dominant share 0.27); home-clustered nations pay a little (Spain now ~1.4 under LaLiga, matching the sim) while globally-spread nations (Argentina, share 0.14) pay almost nothing and rise accordingly. The blanket nation-league scarcity term is removed. High Score, supply shortfall, the 2.5 best-to-typical gap, the reliability gate and both calibrators are unchanged. -->
+<!-- v21.5.2 — Pivot results UI, display only. Each result is now a compact two-line card instead of a single wrapping run-on: line one is the rank + pivot name with the Consistent score shown prominently on the right (the ranking figure); line two is a muted, flex-wrapping detail row — High, Max, "<n> unique players · <n> supply" (the two supply numbers are now labelled — distinct real people vs copies-weighted total), and a small inline "use as pivot" button instead of the previous full-width one. The layout wraps at natural chunk boundaries so it stays clean across screen sizes and fits far more pivots on screen. The legend is shortened and its labels match the row shorthands (Consistent / High / Max). No scoring, ranking, or data changes. -->
+<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v21.5.2</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -6546,7 +6549,9 @@ let FW={...FW_DEF};
 // a seven-card core. Seven is not fitted: it is the exact number of matching normals a pivot needs.
 // The adjustment is therefore transparent and bounded at seven, unlike the removed penalty curves.
 const PIVOT_REQUIRED_NORMALS=7;
-const PIVOT_REALISTIC_OFFSET=2; // flat realism gap below the best supply-adjusted build
+const PIVOT_CONSISTENT_GAP=2.5;      // sim-grounded best-to-typical gap: even the deepest pool's typical draft lands ~2.5 below its greedy High Score (Prem: build 156, sim max 155, typical 153-154)
+const PIVOT_DENSITY_WEIGHT=4;        // points removed per unit of weak-axis over-concentration (calibrated so Spain-nation lands ~1.5 under Spain-LaLiga, matching the sim)
+const PIVOT_DENSITY_FREE_SHARE=0.12; // a pool at least as evenly spread as a full 20-club league pays nothing for concentration
 const PIVOT_MIN_DRAFT_NORMALS=35;
 const PIVOT_RELIABILITY_TRIALS=10;
 const PIVOT_RELIABILITY_SEED=12345;
@@ -14116,7 +14121,15 @@ function _calUnlockSoon(){
   setTimeout(function(){_CALIBRATION_RUNNING=false;},0);
 }
 let _AUTO_CAL_SCHEDULED=false,_AUTO_CAL_RUNNING=false; // helper visibility only: true while load-time DB calibration is queued/running
-(function restoreCal(){try{const raw=localStorage.getItem(_NOHOLD_CAL_KEY);if(!raw)return;const s=JSON.parse(raw);if(s&&s.weights)NOHOLD_CAL=s;}catch(e){}})();
+(function restoreCal(){try{const raw=localStorage.getItem(_NOHOLD_CAL_KEY);if(!raw)return;const s=JSON.parse(raw);
+  // v21.5.0: a version bump now invalidates the stored helper calibration. The fitted weights depend
+  // on the scorer, script builder and rng draw order, any of which can change between versions, so a
+  // fit stamped with a different app version is treated as stale and dropped here (localStorage is
+  // cleared so it can't linger); _autoCalibrateOnLoad then refits from scratch on the current build.
+  const _calVer=(document.querySelector('h1 span')||{}).textContent||'';
+  if(s&&s.weights&&s.appVersion===_calVer){NOHOLD_CAL=s;}
+  else if(s){try{localStorage.removeItem(_NOHOLD_CAL_KEY);}catch(e){}}
+}catch(e){}})();
 
 function _calDbHash(db){
   let h=2166136261>>>0;
@@ -14735,11 +14748,27 @@ function analyzePivots(){
   ];
   const maxPivotSupply=Math.max(1,...viableBuckets.map(x=>x.w));
   const maxPivotIdentities=Math.max(1,...viableBuckets.map(x=>new Set(x.cards.map(_pivotPersonKey)).size));
-  const _mkPivotScores=(gFull,supplyW,identityCount)=>{
-    const buildable=gFull.total;
+  // High Score is the honest, supply-blind best XI the pool could build if the draws fall right (never
+  // renamed to hide that it ignores supply, and it may legitimately exceed the record — those builds
+  // just aren't realistically draftable). Consistent is what you'd reliably hit: High Score minus
+  //   (a) a best-to-typical gap the sim shows even for the deepest pool (~2.5: Prem sim max 155, greedy
+  //       build 156, typical 153-154),
+  //   (b) the supply shortfall (the thinner the pool, the less often you're offered its own cards, so
+  //       you land further under the supply-blind sim number), and
+  //   (c) a within-pivot DENSITY penalty. _pivDiversityStats gives the dominant share of the pivot's
+  //       weak diversity axis — biggest CLUB's share for a league pivot (PSG in Ligue 1), biggest
+  //       LEAGUE's share for a nation pivot (Spain clustering in LaLiga). A concentrated pool keeps
+  //       re-offering the same club/league, so the diverse build High Score assumes is realized less
+  //       often. This is symmetric across kinds and replaces the old nation-only league penalty, which
+  //       the sim showed was too harsh: it now makes home-clustered nations pay a little (Spain ~1.5
+  //       under LaLiga, matching the sim) while globally-spread nations (Argentina) pay almost nothing,
+  //       and it finally charges dense leagues like Ligue 1 for their club concentration.
+  const _mkPivotScores=(gFull,supplyW,identityCount,kind,dominantShare)=>{
+    const highScore=gFull.total;
     const supply=_pivSupplyScores(supplyW,maxPivotSupply,identityCount,maxPivotIdentities);
-    const likelyScore=buildable-supply.supplyAdjustment-PIVOT_REALISTIC_OFFSET;
-    return {buildable,likelyScore,...supply};
+    const diversityPenalty=PIVOT_DENSITY_WEIGHT*Math.max(0,(+dominantShare||0)-PIVOT_DENSITY_FREE_SHARE);
+    const consistent=highScore-supply.supplyAdjustment-diversityPenalty-PIVOT_CONSISTENT_GAP;
+    return {buildable:highScore,likelyScore:consistent,diversityPenalty,...supply};
   };
   for(const L in lg){
     if(L==='Icons'||lg[L].cards.length<7)continue;
@@ -14749,7 +14778,7 @@ function analyzePivots(){
     const g=greedyCeil(lg[L].cards,'league');
     const rc=relaxCeil(lg[L].cards,'league');
     const diversity=_pivDiversityStats(lg[L].cards,'league',W);
-    if(g&&rc){const b=_mkPivotScores(g,lg[L].w,identities);out.push({kind:'league',key:L,ceiling:rc.total,buildable:b.buildable,likelyScore:b.likelyScore,copiesRatio:b.copiesRatio,identityRatio:b.identityRatio,supplyConfidence:b.supplyConfidence,supplyAdjustment:b.supplyAdjustment,identityCount:identities,diversityEffective:diversity.effective,diversityDominantShare:diversity.dominantShare,diversityCategories:diversity.categories,shape:rc.shape,reliability:Math.round(lg[L].w),detail:g.raw,draftValid:draft.valid,draftAttempts:draft.attempts});}
+    if(g&&rc){const b=_mkPivotScores(g,lg[L].w,identities,'league',diversity.dominantShare);out.push({kind:'league',key:L,ceiling:rc.total,buildable:b.buildable,likelyScore:b.likelyScore,copiesRatio:b.copiesRatio,identityRatio:b.identityRatio,supplyConfidence:b.supplyConfidence,supplyAdjustment:b.supplyAdjustment,identityCount:identities,diversityEffective:diversity.effective,diversityDominantShare:diversity.dominantShare,diversityCategories:diversity.categories,shape:rc.shape,reliability:Math.round(lg[L].w),detail:g.raw,draftValid:draft.valid,draftAttempts:draft.attempts});}
   }
   for(const N in nat){
     if(nat[N].cards.length<7)continue;
@@ -14759,7 +14788,7 @@ function analyzePivots(){
     const g=greedyCeil(nat[N].cards,'nation');
     const rc=relaxCeil(nat[N].cards,'nation');
     const diversity=_pivDiversityStats(nat[N].cards,'nation',W);
-    if(g&&rc){const b=_mkPivotScores(g,nat[N].w,identities);out.push({kind:'nation',key:N,ceiling:rc.total,buildable:b.buildable,likelyScore:b.likelyScore,copiesRatio:b.copiesRatio,identityRatio:b.identityRatio,supplyConfidence:b.supplyConfidence,supplyAdjustment:b.supplyAdjustment,identityCount:identities,diversityEffective:diversity.effective,diversityDominantShare:diversity.dominantShare,diversityCategories:diversity.categories,shape:rc.shape,reliability:Math.round(nat[N].w),detail:g.raw,draftValid:draft.valid,draftAttempts:draft.attempts});}
+    if(g&&rc){const b=_mkPivotScores(g,nat[N].w,identities,'nation',diversity.dominantShare);out.push({kind:'nation',key:N,ceiling:rc.total,buildable:b.buildable,likelyScore:b.likelyScore,copiesRatio:b.copiesRatio,identityRatio:b.identityRatio,supplyConfidence:b.supplyConfidence,supplyAdjustment:b.supplyAdjustment,identityCount:identities,diversityEffective:diversity.effective,diversityDominantShare:diversity.dominantShare,diversityCategories:diversity.categories,shape:rc.shape,reliability:Math.round(nat[N].w),detail:g.raw,draftValid:draft.valid,draftAttempts:draft.attempts});}
   }
   out.sort((a,b)=>{
     if(!!a.unreliable!==!!b.unreliable)return a.unreliable?1:-1;
@@ -14817,14 +14846,23 @@ function runPivotAnalysis(){
   if(!res.length){box.innerHTML='<span class="tiny" style="color:var(--mut)">No candidate reaches the seven-card pivot threshold in this DB.</span>';_pivAnalyzed=true;_pivAnalyzedDbHash=_pivDbHash(_pivDbSource());_renderPivotDbFreshness();return;}
   const K=getPivotTopK();
   const rowHtml=(r,i)=>{
+    const head='<b>'+(i+1)+'.</b> '+(r.kind==='nation'?'\uD83C\uDF10 nation ':'')+r.key;
     if(r.unreliable){
-      return '<div style="margin:3px 0"><b>'+(i+1)+'.</b> '+(r.kind==='nation'?'\uD83C\uDF10 nation ':'')+r.key
-        +' \u2014 <span style="color:var(--warn)">This pivot cannot reliably make any draft.</span></div>';
+      return '<div style="margin:7px 0;padding-bottom:6px;border-bottom:1px solid var(--line)">'+head
+        +' <span class="tiny" style="color:var(--warn)">\u00b7 can\u2019t reliably make any draft</span></div>';
     }
-    const useBtn=' <button class="btn gho sm" style="padding:2px 8px;font-size:10.5px" onclick="setHelperPivot(\''+r.kind+'\',\''+r.key.replace(/'/g,"\\'")+'\')">use as helper pivot</button>';
-    const realistic=(Math.round(r.likelyScore*10)/10).toFixed(1),uniqueText=Number(r.identityCount||0).toLocaleString(),totalSupplyText=Number(r.reliability||0).toLocaleString();
-    return '<div style="margin:3px 0"><b>'+(i+1)+'.</b> '+(r.kind==='nation'?'\uD83C\uDF10 nation ':'')+r.key
-      +' \u2014 <b>Realistic '+realistic+'</b> \u00b7 Perfect '+r.buildable+' \u00b7 Theoretical Maximum '+r.ceiling+' \u00b7 Unique Players '+uniqueText+' / '+totalSupplyText+' Total Supply'+useBtn+'</div>';
+    const consistent=(Math.round(r.likelyScore*10)/10).toFixed(1),uniqueText=Number(r.identityCount||0).toLocaleString(),totalSupplyText=Number(r.reliability||0).toLocaleString();
+    const useBtn='<button class="btn gho sm" style="padding:1px 8px;font-size:10px;margin-left:auto" onclick="setHelperPivot(\''+r.kind+'\',\''+r.key.replace(/'/g,"\\'")+'\')">use as pivot</button>';
+    return '<div style="margin:7px 0;padding-bottom:6px;border-bottom:1px solid var(--line)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
+        +'<span>'+head+'</span>'
+        +'<span style="white-space:nowrap"><b style="font-size:15px">'+consistent+'</b> <span class="tiny" style="color:var(--mut)">consistent</span></span>'
+      +'</div>'
+      +'<div class="tiny" style="color:var(--mut);margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 12px;align-items:center">'
+        +'<span>High '+r.buildable+'</span><span>Max '+r.ceiling+'</span>'
+        +'<span>'+uniqueText+' unique players \u00b7 '+totalSupplyText+' supply</span>'
+        +useBtn
+      +'</div></div>';
   };
   const top=res.slice(0,K).map((r,i)=>rowHtml(r,i)).join('');
   // v16.1.0: candidates ranked outside the chosen top K are no longer dropped — same convention
@@ -14832,7 +14870,7 @@ function runPivotAnalysis(){
   // collapsed block at the bottom instead of being silently sliced away.
   const rest=res.slice(K);
   const restHtml=rest.length?('<details style="margin-top:8px"><summary class="tiny" style="color:var(--mut);cursor:pointer">'+rest.length+' more outside the top '+K+'</summary><div style="margin-top:4px;opacity:.75">'+rest.map((r,i)=>rowHtml(r,K+i)).join('')+'</div></details>'):'';
-  box.innerHTML='<div class="tiny" style="color:var(--mut)">Analyzed in '+ms+' ms \u00b7 current helper pivot: <b id="pivotCurrent">'+(PIVOT_KIND==='nation'?'\uD83C\uDF10 ':'')+PIVOT_KEY+'</b> \u00b7 top '+K+' shown</div>'+top+restHtml;
+  box.innerHTML='<div class="tiny" style="color:var(--mut);margin-bottom:2px">Consistent = you\u2019ll reliably hit it \u00b7 High = best-case draws \u00b7 Max = absolute ceiling \u00b7 pivot: <b id="pivotCurrent">'+(PIVOT_KIND==='nation'?'\uD83C\uDF10 ':'')+PIVOT_KEY+'</b> \u00b7 '+ms+' ms</div>'+top+restHtml;
   // v17.8.25: box.innerHTML above wipes any warning setHelperPivot() may have appended earlier in
   // this same call (the auto-default branch above calls setHelperPivot() before this point) --
   // re-render it fresh now that the box's real content is in place.
@@ -14943,7 +14981,6 @@ function _fcalBuildPools(){
     const at=wrapped.filter(c=>c.primary===p);
     byPos[p]={
       normal:_fcalBucket(at.filter(c=>c.type==='normal'&&_pivotMatches(c))),
-      normalFallback:_fcalBucket(at.filter(c=>c.type==='normal')),
       hero:_fcalBucket(at.filter(c=>c.type==='hero')),
       icon:_fcalBucket(at.filter(c=>c.type==='icon'))
     };
@@ -14964,7 +15001,12 @@ function _fcalGenerateBoard(form,pools,seed,trial){
     const usedPeople=new Set(),slot=[];
     for(let k=0;k<5;k++){
       const r=rng(),wanted=r<(5/55)?'icon':(r<(20/55)?'hero':'normal');
-      const order=wanted==='normal'?['normal','normalFallback','hero','icon']:(wanted==='hero'?['hero','normal','normalFallback','icon']:['icon','normal','normalFallback','hero']);
+      // v21.5.0: off-pivot normals removed from every formation-sim fallback chain. A normal offer
+      // only draws a pivot-matching normal; where the pivot has none at this primary position it
+      // falls through to the universal specials (hero/icon) any draft can obtain. Filling a thin
+      // pivot's gaps with random off-pivot normals inflated its sim score with cards that carry no
+      // information about the pivot itself.
+      const order=wanted==='normal'?['normal','hero','icon']:(wanted==='hero'?['hero','normal','icon']:['icon','normal','hero']);
       let c=null;for(const typ of order){c=_fcalDraw(pp[typ],rng,usedPeople);if(c)break;}
       if(!c)return null;usedPeople.add(c.personKey);slot.push(c);
     }
@@ -15029,7 +15071,7 @@ async function runFormCalibration(){
     if(st)st.innerHTML='<span style="color:var(--mut)">⏳ Building primary-position draft pools…</span>';
     await _calYield();
     const pools=_fcalBuildPools(),forms=FORMS.filter(f=>f.name!=='Custom');
-    for(const f of forms)for(const pos of f.slots){const p=pools.byPos[pos];if(!p||!(p.normal.cards.length||p.normalFallback.cards.length||p.hero.cards.length||p.icon.cards.length))throw new Error('No primary-position cards are available for '+pos+'.');}
+    for(const f of forms)for(const pos of f.slots){const p=pools.byPos[pos];if(!p||!(p.normal.cards.length||p.hero.cards.length||p.icon.cards.length))throw new Error('No primary-position cards are available for '+pos+'.');}
     const values={},stats={};let completed=0,total=forms.length*x;
     const t0=performance.now();
     for(let fi=0;fi<forms.length;fi++){
@@ -15209,6 +15251,7 @@ function _calFinish(res,st,btn,t0){
   // can tell whether the user has since switched pivots (the head-start/rank-penalty terms baked
   // into `res` were computed relative to whatever PIVOT_KIND/PIVOT_KEY was active at fit time).
   NOHOLD_CAL.pivotKind=PIVOT_KIND;NOHOLD_CAL.pivotKey=PIVOT_KEY;
+  NOHOLD_CAL.appVersion=(document.querySelector('h1 span')||{}).textContent||''; // v21.5.0: stamp version so a later bump invalidates this fit on restore
   try{localStorage.setItem(_NOHOLD_CAL_KEY,JSON.stringify(res));}catch(e){}
   const ms=Math.round(performance.now()-t0);
   if(st)st.innerHTML='<span style="color:var(--good)">\u2714 Done in '+ms+' ms. Fitted on '+res.nScripts+' simulated drafts'+(typeof res.maxScore==='number'?' &middot; best scored '+res.maxScore:'')+'.</span>';
