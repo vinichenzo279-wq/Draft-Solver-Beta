@@ -135,7 +135,7 @@
         not mean no other bug could possibly exist — it's just guidance for what to check first.
      ================================================================================================ -->
 
-<!-- DATA BUILD CHECKPOINT — v21.10.0.1-COMPLETE
+<!-- DATA BUILD CHECKPOINT — v21.11.0-COMPLETE
      COMPLETE CLEAN DB: 10,080 unique rows / 10,495 expanded cards, embedded exactly from synchronized JSON v4.97.1.
      DATA: complete Inter Milan normal-card block from the supplied screenshots. The two Calhanoglu 89 cards are one CDM/CM row with copies:2; the apparent CAM label was obscured and misread.
      IDENTITY: Brazilian Ronaldo uses displayed name Ronaldo and needs no pidx. Every Cristiano card uses displayed name Cristiano Ronaldo, including the corrected Saudi 97 row. Inter fullback Maicon and Al Taawoun defender Maicon remain correctly split.
@@ -151,7 +151,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v21.10.0.1</title>
+<title>Draft Solver v21.11.0.1</title>
 <!-- ABOUT THIS APP / DATA SOURCE:
      This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
      real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
@@ -6000,7 +6000,9 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <!-- v21.9.0 — Calibration now fits and displays only identifiable factors: Icon/Hero coefficients show “not measured” when that type is unselectable (average and spread both zero, or its XI cap is zero), zeroed types no longer reappear as positional fallbacks, and league-pivot new-league/league-rarity terms are not fitted when Heroes are unavailable. -->
 <!-- v21.10.0 — Rebuilt the complete Inter Milan normal-card block from the seven supplied screenshots: restored the missing historical cards and Dumfries 96, corrected positions and Bonny 95 nationality, split the two different Calhanoglu 89 position cards, retained only genuine copies, and added Ronaldo/Maicon pidx identity splits. Embedded synchronized JSON v4.97. -->
 <!-- v21.10.0.1 — Correction: renamed the misentered Saudi Ronaldo 97 to Cristiano Ronaldo and removed the unnecessary Ronaldo pidx registry; merged the misread Calhanoglu 89 CAM/CM row into the genuine CDM/CM card as copies:2. Embedded synchronized JSON v4.97.1. -->
-<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v21.10.0.1</span></h1>
+<!-- v21.11.0 — Pivot-switch guard feedback is now shown directly in the Pivot Analyzer and as a visible toast whenever “use as pivot” is blocked by a running helper or formation calibration; the pivot remains unchanged. -->
+<!-- v21.11.0.1 — Correction: removed the redundant persistent Pivot Analyzer copy of the blocked-switch warning; the toast now clears as soon as the running calibration finishes. -->
+<h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v21.11.0.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -6945,17 +6947,46 @@ function _renderPivotWarn(){
     box.insertBefore(warn,box.firstChild);
   }
 }
+let _pivotBlockedWarnTimer=null;
+function _clearPivotChangeBlockedWarning(){
+  const formCalRunning=typeof _fcalRunning!=='undefined'&&_fcalRunning;
+  const helperCalRunning=(typeof _CALIBRATION_RUNNING!=='undefined'&&_CALIBRATION_RUNNING)||(typeof _AUTO_CAL_RUNNING!=='undefined'&&_AUTO_CAL_RUNNING);
+  if(formCalRunning||helperCalRunning)return;
+  const inline=$('#_pivotBlockedWarn');if(inline)inline.remove(); // clean up any lingering v21.11.0 DOM
+  const toast=$('#_pivotBlockedToast');if(toast)toast.style.display='none';
+  if(_pivotBlockedWarnTimer){clearTimeout(_pivotBlockedWarnTimer);_pivotBlockedWarnTimer=null;}
+}
+function _showPivotChangeBlockedWarning(calibrationName){
+  const label=calibrationName||'Calibration';
+  const body='<b>Pivot not changed.</b> '+label+' is still running. Try again when it finishes.';
+
+  // One viewport-fixed warning is enough. The v21.11.0 inline copy was redundant and lingered after
+  // calibration finished, so it is deliberately removed instead of being re-created here.
+  const inline=$('#_pivotBlockedWarn');if(inline)inline.remove();
+  let toast=$('#_pivotBlockedToast');
+  if(!toast){
+    toast=document.createElement('div');toast.id='_pivotBlockedToast';toast.setAttribute('role','alert');toast.setAttribute('aria-live','assertive');
+    toast.style.cssText='display:none;position:fixed;z-index:260;left:12px;right:12px;top:76px;max-width:560px;margin:0 auto;background:#251b09;border:1px solid var(--warn);border-radius:10px;padding:11px 13px;color:var(--warn);font-size:13px;box-shadow:0 8px 28px rgba(0,0,0,.65);pointer-events:none';
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML='⚠ '+body;toast.style.display='block';
+  if(_pivotBlockedWarnTimer)clearTimeout(_pivotBlockedWarnTimer);
+  _pivotBlockedWarnTimer=setTimeout(function(){toast.style.display='none';_pivotBlockedWarnTimer=null;},4500);
+}
 function setHelperPivot(kind,key){
   kind=(kind==='nation')?'nation':'league';
   key=key||(kind==='league'?'England Premier League':'');
   const changing=kind!==PIVOT_KIND||key!==PIVOT_KEY;
-  // A calibration captures the pivot at its start. Switching during the run would let the result
-  // finish under a different label/context than the drafts it actually simulated, so block it.
-  if(changing&&((typeof _CALIBRATION_RUNNING!=='undefined'&&_CALIBRATION_RUNNING)||(typeof _AUTO_CAL_RUNNING!=='undefined'&&_AUTO_CAL_RUNNING)||(typeof _fcalRunning!=='undefined'&&_fcalRunning))){
-    const msg='Wait for calibration to finish before switching pivots.';
-    const st=(typeof _fcalRunning!=='undefined'&&_fcalRunning)?$('#formCalStatus'):$('#calStatus');
-    if(st)st.innerHTML='<span style="color:var(--warn)">⚠ '+msg+'</span>';
-    else if(typeof alert==='function')alert(msg);
+  // v21.11.0: a calibration captures the pivot at its start. Switching during the run would let
+  // the result finish under a different label/context than the drafts it actually simulated, so
+  // block it and show one clear viewport-fixed warning without leaving a persistent analyzer copy.
+  const formCalRunning=typeof _fcalRunning!=='undefined'&&_fcalRunning;
+  const helperCalRunning=(typeof _CALIBRATION_RUNNING!=='undefined'&&_CALIBRATION_RUNNING)||(typeof _AUTO_CAL_RUNNING!=='undefined'&&_AUTO_CAL_RUNNING);
+  if(changing&&(helperCalRunning||formCalRunning)){
+    const label=formCalRunning?'Formation calibration':'Helper calibration';
+    _showPivotChangeBlockedWarning(label);
+    const st=formCalRunning?$('#formCalStatus'):$('#calStatus');
+    if(st)st.innerHTML='<span style="color:var(--warn)">⚠ Pivot not changed — '+label.toLowerCase()+' is still running.</span>';
     return false;
   }
   // v17.4.0: the analyzer/helper can't tell the user WHEN to switch pivots mid-draft (that
@@ -14229,7 +14260,7 @@ function _setZeroCalResultRunning(on){
 }
 function _calUnlockSoon(){
   _CALIBRATION_COOLDOWN_UNTIL=performance.now()+350; // also catches a click event queued during a synchronous blocked fit but delivered just after unlock
-  setTimeout(function(){_CALIBRATION_RUNNING=false;},0);
+  setTimeout(function(){_CALIBRATION_RUNNING=false;if(typeof _clearPivotChangeBlockedWarning==='function')_clearPivotChangeBlockedWarning();},0);
 }
 let _AUTO_CAL_SCHEDULED=false,_AUTO_CAL_RUNNING=false; // helper visibility only: true while load-time DB calibration is queued/running
 (function restoreCal(){try{const raw=localStorage.getItem(_NOHOLD_CAL_KEY);if(!raw)return;const s=JSON.parse(raw);
@@ -15182,6 +15213,7 @@ function _fcalSetBusy(on){
   // Hide the old-context warning while a replacement simulation is actively running. Re-rendering
   // here also restores the warning automatically if the run fails and busy state is cleared.
   _renderFormCalResult();
+  if(!on&&typeof _clearPivotChangeBlockedWarning==='function')_clearPivotChangeBlockedWarning();
 }
 function _renderFormCalResult(){
   const box=$('#formCalResult');_fcalGrayFW(_formCalActive());if(!box)return;
